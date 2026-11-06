@@ -6,7 +6,6 @@ lock lets 1 caller send. The others wait, then read the answer or the failure th
 
 import asyncio
 import hashlib
-import itertools
 import json
 import math
 import os
@@ -140,11 +139,11 @@ def _prune(where: Path) -> None:
     """Remove old entries of this folder only. A ledger is outside it, and it must stay."""
     limit = datetime.now(UTC).timestamp() - PRUNE_SECONDS
     with os.scandir(where) as found:
-        # A lock file stays for good, so it must not use up the batch.
-        entries = (item.path for item in found if item.name.endswith(".json"))
-        names = list(itertools.islice(entries, PRUNE_BATCH))
-    for name in names:
-        path = Path(name)
+        # Oldest first: a lock file or a fresh entry must not use up the batch.
+        entries = [item for item in found if item.name.endswith(".json")]
+    entries.sort(key=lambda item: item.stat().st_mtime)
+    for item in entries[:PRUNE_BATCH]:
+        path = Path(item.path)
         lock_file = where / f"{path.name.split('.')[0]}.lock"
         with lock_file.open("a") as lock, suppress(OSError):
             quota.try_lock(lock)
