@@ -5,9 +5,11 @@ A read-only stdio MCP server. Python, uv, ruff, mypy, pytest. Run `just check` b
 ## Rules
 
 - Read-only. A provider calls only the endpoints in its `ENDPOINTS` list. `net.py` is the only module that opens a connection.
-- Results, errors, and logs never hold a secret. A reason is fixed text, never exception text or an upstream body.
+- Results, errors, and logs never hold a secret. A reason is fixed text, never exception text or an upstream body. 1 exception: on HTTP 400, `query_api` shows the `error.message` field of a Google API. `net.request(explain=True)` asks for it. The text is scrubbed, then cut.
 - Scrub first, then cut text.
 - The repo holds no private data: no real site, property id, home path, or key. `scripts/private_scan.py` checks files and git history.
 - Tests mock only the network edge (`net.transport`).
-- Keep it small. One file for each provider. Do not add a tool: add a source.
+- Keep it small. One file for each provider. Do not add a tool: add a source, or add a method to `APIS` for `query_api`.
+- A source never ignores a parameter. It declares what it applies in `ACCEPTS`, and it does not run with any other parameter.
+- Each live Clarity call goes through `_cached` in `clarity.py`, so that it spends from the ledger.
 - Commits use Conventional Commits. Work on a branch and open a PR.

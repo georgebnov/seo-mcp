@@ -23,7 +23,7 @@ FIXTURE_ID = "123456789"
 SKIP_FILES = {"uv.lock"}
 PUBLIC_HOST = re.compile(
     r"(^|\.)(example\.com|test|googleapis\.com|google\.com|bing\.com|clarity\.ms"
-    r"|microsoft\.com|github\.com|modelcontextprotocol\.io|astral\.sh)$"
+    r"|microsoft\.com|chrome\.com|github\.com|modelcontextprotocol\.io|astral\.sh)$"
 )
 SHAPES = {
     "home path": re.compile(r"/(Users|home)/[a-z]"),

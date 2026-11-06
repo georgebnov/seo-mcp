@@ -19,7 +19,7 @@ def payload(result) -> dict:
     return json.loads(result.content[0].text)
 
 
-async def test_two_tools_and_an_honest_result(write_config, repo, tmp_path):
+async def test_three_tools_and_an_honest_result(write_config, repo, tmp_path):
     path = write_config()
     with open(tmp_path / "stderr.log", "w") as errlog:
         async with stdio_client(server(str(path), str(repo)), errlog=errlog) as streams:
@@ -29,7 +29,7 @@ async def test_two_tools_and_an_honest_result(write_config, repo, tmp_path):
                 sites = payload(await session.call_tool("list_sites", {}))
                 data = await session.call_tool("get_seo_data", {"sources": ["bing_links"]})
                 data = payload(data)
-    assert sorted(tool.name for tool in tools) == ["get_seo_data", "list_sites"]
+    assert sorted(tool.name for tool in tools) == ["get_seo_data", "list_sites", "query_api"]
     assert all(tool.annotations.read_only_hint for tool in tools)
     assert sites["rows"][0]["host"] == "www.example.com"
     assert data["site"] == "www.example.com"

@@ -20,7 +20,12 @@ READ_POSTS = {
     ("searchconsole.googleapis.com", r"/webmasters/v3/sites/[^/]+/searchAnalytics/query"),
     ("searchconsole.googleapis.com", r"/v1/urlInspection/index:inspect"),
     ("analyticsdata.googleapis.com", r"/v1beta/properties/\d+:runReport"),
+    ("analyticsdata.googleapis.com", r"/v1beta/properties/\d+:runPivotReport"),
+    ("analyticsdata.googleapis.com", r"/v1beta/properties/\d+:runRealtimeReport"),
     ("chromeuxreport.googleapis.com", r"/v1/records:queryRecord"),
+    ("chromeuxreport.googleapis.com", r"/v1/records:queryHistoryRecord"),
+    ("clarity.microsoft.com", r"/mcp/recordings/sample"),
+    ("clarity.microsoft.com", r"/mcp/dashboard/query"),
 }
 
 

@@ -3,8 +3,11 @@ from pathlib import Path
 
 import httpx2
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from seo_mcp import config, net, secrets
+from seo_mcp.providers import _google
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +37,24 @@ def write_config(tmp_path, monkeypatch, repo):
         return path
 
     return write
+
+
+@pytest.fixture
+def account(tmp_path):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    path = tmp_path / "account.json"
+    path.write_text(
+        json.dumps(
+            {"private_key": pem, "private_key_id": "fake-key-id", "client_email": "a@example.com"}
+        )
+    )
+    _google._tokens.clear()
+    return {"google_service_account": {"file": str(path)}}
 
 
 @pytest.fixture

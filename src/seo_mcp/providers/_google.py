@@ -15,6 +15,8 @@ GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
 ENDPOINTS = (net.Endpoint("POST", "oauth2.googleapis.com", r"/token"),)
 SOURCES: dict[str, Any] = {}
+ACCEPTS: dict[str, frozenset[str]] = {}
+APIS: dict[str, Any] = {}
 TOKEN_SECONDS = 3600
 REFRESH_MARGIN_SECONDS = 60
 

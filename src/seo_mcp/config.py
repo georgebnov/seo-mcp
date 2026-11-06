@@ -11,7 +11,7 @@ from seo_mcp.results import NotConnected
 
 CONFIG_ENV = NAME.upper().replace("-", "_") + "_CONFIG"
 DEFAULT_PATH = f"~/.config/{NAME}/sites.json"
-SITE_FIELDS = {"host", "gsc_property", "ga4_property_id", "bing_site_url"}
+SITE_FIELDS = {"host", "gsc_property", "ga4_property_id", "bing_site_url", "clarity_project"}
 SOURCE_KINDS = ({"env"}, {"file"}, {"file", "json_key"}, {"keychain"})
 
 
