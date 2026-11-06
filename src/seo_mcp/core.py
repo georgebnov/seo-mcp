@@ -11,7 +11,7 @@ from seo_mcp.secrets import safe_reason, scrub
 SOURCE_TIMEOUT_SECONDS: float = 100
 STATUS_HINTS = {
     401: "The credentials were refused.",
-    403: "The account has no access to this property, or the API is off.",
+    403: "The token or key is invalid or cut, the account has no access, or the API is off.",
     404: "The property or the URL does not exist.",
     429: "The API rate limit is reached.",
 }

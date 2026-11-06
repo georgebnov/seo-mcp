@@ -15,12 +15,12 @@ LIVE = [
         "information": [
             {
                 "totalSessionCount": "20",
-                "distantUserCount": "4",
+                "distinctUserCount": "4",
                 "Url": "https://www.example.com/a",
             },
             {
                 "totalSessionCount": "90",
-                "distantUserCount": "9",
+                "distinctUserCount": "9",
                 "Url": "https://www.example.com/b",
             },
         ],
@@ -108,6 +108,15 @@ async def test_a_failure_is_not_cached(write_config, fake_net):
     assert result["status"] == "error"
     assert "rate limit" in result["reason"]
     assert not clarity.cache_path("www.example.com").exists()
+
+
+async def test_403_names_a_cut_token_as_a_cause(write_config, fake_net):
+    write_config(SITE)
+    fake_net(lambda _: httpx2.Response(403))
+    result = await get()
+    assert result["status"] == "error"
+    assert "HTTP 403" in result["reason"]
+    assert "invalid or cut" in result["reason"]
 
 
 async def test_no_token_is_not_connected(write_config):
