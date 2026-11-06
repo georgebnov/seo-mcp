@@ -1,13 +1,12 @@
 """Microsoft Clarity live insights, cached for the UTC day."""
 
 import asyncio
-import fcntl
 import hashlib
 import json
 import math
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,7 +16,7 @@ from seo_mcp import NAME, net, quota
 from seo_mcp.api import Api, Method, Quota, answer, as_rows, one_of, whole
 from seo_mcp.config import Site
 from seo_mcp.params import BadInput, Params
-from seo_mcp.results import Unsupported, ok
+from seo_mcp.results import Refused, Unsupported, ok
 
 API = "https://www.clarity.ms/export-data/api/v1/project-live-insights"
 # The official Clarity MCP server calls these, with the same token. Both read.
@@ -42,7 +41,6 @@ MISS_REASON = (
     f"Clarity has no row for this page. An answer has at most {API_ROWS} rows for each metric, "
     "so this is not proof of zero traffic."
 )
-LOCK_POLL_SECONDS = 0.05
 # A failed call can count at the API, so the same request waits this long. This stops a burst
 # of agents. It does not protect the day: a long outage still spends 1 call in each window.
 FAILURE_WINDOW_SECONDS = 60
@@ -136,17 +134,11 @@ async def _only_fetcher(path: Path) -> AsyncIterator[None]:
     """Let 1 caller fetch an answer, in this process or another, while the others wait.
 
     Parallel agents run separate server processes on 1 cache folder, and each miss spends a
-    call. Each open file has its own flock, so this also separates 2 runs in 1 process. The
-    source timeout ends a wait, and the kernel frees the lock when a process dies.
+    call.
     """
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with path.with_suffix(".lock").open("a") as lock:
-        while True:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                await asyncio.sleep(LOCK_POLL_SECONDS)
+        await quota.take_lock(lock)
         yield
 
 
@@ -168,16 +160,18 @@ async def _cached(
         if failure:
             raise failure
         headers = _headers(site)
-        receipt = quota.spend(LEDGER, key)
+        receipt = await quota.spend(LEDGER, key)
         try:
             reply = await call(headers, receipt)
             if not good(reply):
                 raise net.ApiError(200, net.BAD_SHAPE)
         except net.ApiError as exc:
-            if daily_429 and exc.status == 429:
-                quota.block(LEDGER, key, receipt)
             if exc.sent:
                 _mark_failure(path, exc.status, exc.detail)
+            if daily_429 and exc.status == 429:
+                # A stuck ledger must not hide the 429. The next call gets its own 429.
+                with suppress(Refused):
+                    await quota.block(LEDGER, key, receipt)
             raise
         except asyncio.CancelledError:
             # The source timeout ended a call in flight, and the API can have counted it.

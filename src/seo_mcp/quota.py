@@ -4,16 +4,18 @@ A ledger counts the calls of 1 key in the cache folder, before each call goes ou
 session runs its own server process, so a count is safe only under a file lock.
 """
 
+import asyncio
 import fcntl
 import json
 import os
 import tempfile
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+import time
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import IO, Any, NamedTuple
 from urllib.parse import quote
 
 from seo_mcp import NAME, net
@@ -22,6 +24,10 @@ from seo_mcp.results import Refused
 CACHE_ENV = NAME.upper().replace("-", "_") + "_CACHE_DIR"
 COUNTED = "Only the calls of this machine, through this cache folder."
 RESET_ASSUMED = "The docs state no reset time, so this time is an assumption."
+
+LOCK_POLL_SECONDS = 0.05
+# A holder keeps a ledger lock only to read and write 1 small file, so this wait is long.
+LOCK_WAIT_SECONDS: float = 2
 
 Reader = Callable[[], dict[str, Any]]
 
@@ -50,11 +56,32 @@ def write_json(target: Path, stored: dict[str, Any]) -> None:
     Path(name).replace(target)
 
 
-@contextmanager
-def locked(target: Path) -> Iterator[None]:
+async def take_lock(lock: IO[str], wait: float | None = None) -> bool:
+    """Poll for a lock, so that a stuck process cannot freeze the event loop of this server.
+
+    Each open file has its own flock, so this also separates 2 tasks of 1 process. The kernel
+    frees the lock when a process dies. With no wait, the source timeout ends the poll.
+    """
+    deadline = None if wait is None else time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(LOCK_POLL_SECONDS)
+
+
+@asynccontextmanager
+async def locked(target: Path) -> AsyncIterator[None]:
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with target.with_suffix(".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not await take_lock(lock, LOCK_WAIT_SECONDS):
+            raise Refused(
+                f"The file {target.name} is busy: another process held its lock for "
+                f"{LOCK_WAIT_SECONDS:g} seconds, so the server sends no call. Call again soon."
+            )
         yield
 
 
@@ -142,10 +169,10 @@ def _refusal(ledger: Ledger, used: int, blocked: bool, count: int) -> str:
     )
 
 
-def spend(ledger: Ledger, key: str, count: int = 1) -> net.Receipt:
+async def spend(ledger: Ledger, key: str, count: int = 1) -> net.Receipt:
     """Count calls before they go out, all or none. A failed call counts: the API can too."""
     file = path(ledger, key)
-    with locked(file):
+    async with locked(file):
         today = _today()
         used, blocked = _read(ledger, file, today)
         if blocked or used + count > ledger.limit:
@@ -154,10 +181,10 @@ def spend(ledger: Ledger, key: str, count: int = 1) -> net.Receipt:
     return net.Receipt(ledger.name, count, today)
 
 
-def block(ledger: Ledger, key: str, receipt: net.Receipt) -> None:
+async def block(ledger: Ledger, key: str, receipt: net.Receipt) -> None:
     """Keep the real count, and stop the day. A late answer must not stop the next day."""
     file = path(ledger, key)
-    with locked(file):
+    async with locked(file):
         used, _ = _read(ledger, file, receipt.day)
         if _today() == receipt.day:
             write_json(file, {"day": receipt.day, "used": used, "blocked": True})

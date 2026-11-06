@@ -6,7 +6,7 @@ CONSTANT Limit
 VARIABLES pc, api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt
 vars == <<pc, api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
 
-Ends == {"hit", "repeated", "badAnswer", "notConnected", "refused", "stored", "failed", "dayBlocked"}
+Ends == {"hit", "repeated", "badAnswer", "busy", "notConnected", "refused", "stored", "failed", "dayBlocked"}
 
 Init ==
   /\ pc = "start"
@@ -37,6 +37,8 @@ FailureOld == pc = "lock" /\ cache = "failedBefore" /\ pc' = "token" /\ Same
 TokenMissing == pc = "token" /\ pc' = "notConnected" /\ Same
 TokenRead == pc = "token" /\ pc' = "ledger" /\ Same
 
+\* quota.locked: a stuck process holds the ledger lock past the wait.
+LockBusy == pc = "ledger" /\ pc' = "busy" /\ Same
 \* quota._read raises Refused on text that does not parse, or on a bad count.
 RefuseBroken == pc = "ledger" /\ ledger = "brokenText" /\ pc' = "refused" /\ Same
 \* quota.spend: a good ledger of today.
@@ -73,6 +75,8 @@ BadShape ==
 Export429 ==
   /\ pc = "flight" /\ api = "export" /\ pc' = "dayBlocked" /\ blocked' = TRUE
   /\ UNCHANGED <<api, cache, ledger, count, sent, count0, sent0, blocked0, receipt>>
+\* The ledger is stuck after the 429: the day does not stop, and the next call gets its own 429.
+Export429LockBusy == pc = "flight" /\ api = "export" /\ pc' = "failed" /\ Same
 Mcp429 == pc = "flight" /\ api = "mcp" /\ pc' = "failed" /\ Same
 OtherError == pc = "flight" /\ pc' = "failed" /\ Same
 TimesOut == pc = "flight" /\ pc' = "failed" /\ Same
@@ -81,8 +85,8 @@ Done == pc \in Ends /\ UNCHANGED vars
 
 Next ==
   TakeLock \/ CacheHit \/ CacheOld \/ CacheNone \/ CacheBad \/ FailureRepeat \/ FailureOld \/ TokenMissing \/ TokenRead
-  \/ RefuseBroken \/ RefuseBlocked \/ RefuseLimit \/ Reserve \/ ReserveNewDay
-  \/ RefuseWrongDate \/ Send \/ ConnectFails \/ Answer \/ BadShape \/ Export429 \/ Mcp429
+  \/ LockBusy \/ RefuseBroken \/ RefuseBlocked \/ RefuseLimit \/ Reserve \/ ReserveNewDay
+  \/ RefuseWrongDate \/ Send \/ ConnectFails \/ Answer \/ BadShape \/ Export429 \/ Export429LockBusy \/ Mcp429
   \/ OtherError \/ TimesOut \/ Done
 
 Spec == Init /\ [][Next]_vars
@@ -91,6 +95,8 @@ Spec == Init /\ [][Next]_vars
 CacheHitSpendsNothing == pc = "hit" => (count = count0 /\ sent = sent0)
 \* A repeat of a failed request inside the window spends nothing.
 RepeatInWindowSpendsNothing == pc = "repeated" => (count = count0 /\ sent = sent0)
+\* A ledger that a stuck process holds sends nothing and spends nothing.
+BusyLedgerSendsNothing == pc = "busy" => (count = count0 /\ sent = sent0)
 \* A bad HTTP 200 answer is never saved.
 BadAnswerIsNotSaved == pc = "badAnswer" => cache # "today"
 \* A saved answer that goes back has a good shape.

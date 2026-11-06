@@ -96,6 +96,8 @@ The server spends no call to show quota. `list_sites` has a `quota` object for e
 
 An answer that spends a counted quota shows `calls_used_today`, `daily_limit`, `calls_left`, `resets_at`, and `reset_stated`, also when the call fails or times out, because a failed call can count at the API. With few calls left, `quota_warning` appears: at most 2 for Clarity, at most 200 for URL Inspection. A call that the ledger refuses never reaches the network, and `reason` gives the reset time. `index_status` spends 1 call for each URL, all or none.
 
+A ledger lock waits at most 2 seconds. If a stuck process holds it, the call fails with a `reason` that names the file, sends nothing, and spends nothing, and the other sources of the call go on. A read of the quota needs no lock.
+
 The ledger counts only this machine, through this cache folder. It does not see another machine, another cache folder, or another client of the same key, so the real count can be higher. `calls_left` is a local budget, not a promise from the API. The Clarity and Search Console docs state no reset time, so `resets_at` (00:00 UTC) is an assumption, and `reset_stated` is `false`.
 
 When the Clarity Data Export API answers HTTP 429, its documented daily limit, the server keeps the real count, sets `blocked_by_api`, shows `calls_left` as 0, and refuses each Clarity path until the next UTC day. A 429 of an `/mcp/` endpoint has no documented meaning, so it does not stop the day. If a count is broken, the server shows it as unknown and spends no call until you write the real count in the file.

@@ -170,7 +170,7 @@ async def test_a_ledger_with_a_wrong_day_fails_closed(live, day, api, call, ledg
 async def test_a_late_429_leaves_the_ledger_of_the_next_day(live):
     set_ledger(clarity.LEDGER, HOST, used=2)
     yesterday = (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
-    quota.block(clarity.LEDGER, HOST, net.Receipt(clarity.LEDGER.name, 0, yesterday))
+    await quota.block(clarity.LEDGER, HOST, net.Receipt(clarity.LEDGER.name, 0, yesterday))
     assert quota.view(clarity.LEDGER, HOST)["calls_used_today"] == 2
     assert "blocked_by_api" not in quota.view(clarity.LEDGER, HOST)
 
