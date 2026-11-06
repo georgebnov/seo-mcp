@@ -8,6 +8,7 @@ import httpx2
 
 REQUEST_TIMEOUT_SECONDS = 90
 
+BAD_SHAPE = "The answer does not have the shape that this server reads, so it is not saved."
 NOT_SENT = (httpx2.ConnectError, httpx2.ConnectTimeout, httpx2.PoolTimeout)
 
 # Tests replace this. Nothing else mocks the network.
@@ -110,4 +111,4 @@ async def request(
     try:
         return response.json()
     except ValueError:
-        raise ApiError(response.status_code) from None
+        raise ApiError(response.status_code, BAD_SHAPE) from None
