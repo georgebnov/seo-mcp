@@ -47,7 +47,7 @@ NONE = Params()
 
 def _date(name: str, text: str) -> date:
     try:
-        if not DATE_SHAPE.fullmatch(text):
+        if not isinstance(text, str) or not DATE_SHAPE.fullmatch(text):
             raise ValueError
         return date.fromisoformat(text)
     except ValueError:
@@ -73,6 +73,8 @@ def period(
 def page_url(host: str, value: str, name: str = "page") -> str:
     """Give the full URL of a page on this site. A URL of another host is refused, not rewritten."""
     wrong = f"{name} must be a path that starts with / or an https URL on {host}."
+    if not isinstance(value, str):
+        raise BadInput(wrong)
     if not value or len(value) > MAX_TEXT or re.search(r"[\s\x00-\x1f#]", value):
         raise BadInput(f"{wrong} It holds no space or fragment, and at most {MAX_TEXT} characters.")
     if value.startswith("/") and not value.startswith("//"):

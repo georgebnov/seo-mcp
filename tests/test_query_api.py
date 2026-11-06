@@ -266,6 +266,30 @@ async def test_search_analytics_checks_nested_values_before_the_network(live, ch
     assert not live
 
 
+@pytest.mark.parametrize(
+    ("name", "method", "request_body", "named"),
+    [
+        (
+            "search_console",
+            "search_analytics",
+            {"startDate": 5, "endDate": "2026-01-02"},
+            "startDate",
+        ),
+        ("search_console", "url_inspection", {"inspectionUrl": 5}, "inspectionUrl"),
+        ("pagespeed", "run", {"url": ["/a"]}, "url"),
+        ("bing", "GetUrlInfo", {"url": None}, "url"),
+    ],
+)
+async def test_a_value_of_the_wrong_type_gets_a_clear_reason(
+    live, name, method, request_body, named
+):
+    data = await ask(name, method, request_body)
+    assert data["status"] == "error"
+    assert named in data["reason"]
+    assert "TypeError" not in data["reason"]
+    assert not live
+
+
 async def test_search_analytics_requires_the_dates(live):
     data = await ask("search_console", "search_analytics", {})
     assert data["status"] == "error"
