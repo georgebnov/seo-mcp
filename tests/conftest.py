@@ -1,4 +1,3 @@
-import asyncio
 import json
 from pathlib import Path
 
@@ -8,14 +7,12 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from seo_mcp import config, net, secrets
-from seo_mcp.providers import _google, clarity
+from seo_mcp.providers import _google
 
 
 @pytest.fixture(autouse=True)
 def clean_state(tmp_path, monkeypatch):
     monkeypatch.setenv("SEO_MCP_CACHE_DIR", str(tmp_path / "cache"))
-    # Each test has its own event loop, and a lock stays with the loop that it first waited in.
-    monkeypatch.setattr(clarity, "_lock", asyncio.Lock())
     secrets.reset()
     yield
     net.transport = None

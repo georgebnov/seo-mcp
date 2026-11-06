@@ -7,8 +7,9 @@ from typing import Any
 from urllib.parse import quote
 
 from seo_mcp import net
+from seo_mcp.api import Api, Method, answer, one_of, row_limit, whole
 from seo_mcp.config import Site
-from seo_mcp.params import DATES, NONE, Params
+from seo_mcp.params import DATES, MAX_TEXT, NONE, BadInput, Params, page_url, period
 from seo_mcp.providers import _google
 from seo_mcp.results import ok
 
@@ -20,6 +21,7 @@ INSPECT_API = f"https://{HOST}/v1/urlInspection/index:inspect"
 ENDPOINTS = (
     net.Endpoint("POST", HOST, r"/webmasters/v3/sites/[^/]+/searchAnalytics/query"),
     net.Endpoint("GET", HOST, r"/webmasters/v3/sites/[^/]+/sitemaps"),
+    net.Endpoint("GET", HOST, r"/webmasters/v3/sites/[^/]+/sitemaps/[^/]+"),
     net.Endpoint("POST", HOST, r"/v1/urlInspection/index:inspect"),
 )
 WINDOW_DAYS = 28
@@ -83,7 +85,6 @@ async def _rows(
     window: dict[str, str],
     params: Params,
 ) -> list[dict[str, Any]]:
-    prop = quote(site.field("gsc_property"), safe="")
     body = {
         "startDate": window["start"],
         "endDate": window["end"],
@@ -91,8 +92,16 @@ async def _rows(
         "rowLimit": FETCH_ROWS,
         **_filters(params),
     }
+    return await _analytics(site, body, headers)
+
+
+async def _analytics(
+    site: Site, body: dict[str, Any], headers: dict[str, str], *, explain: bool = False
+) -> Rows:
+    prop = quote(site.field("gsc_property"), safe="")
+    dimensions = body.get("dimensions", [])
     url = f"{SITES_API}/{prop}/searchAnalytics/query"
-    answer = await net.request(ENDPOINTS, "POST", url, json=body, headers=headers)
+    reply = await net.request(ENDPOINTS, "POST", url, json=body, headers=headers, explain=explain)
     return [
         {
             **dict(zip(dimensions, row.get("keys", []), strict=True)),
@@ -101,7 +110,7 @@ async def _rows(
             "ctr": row["ctr"],
             "position": row["position"],
         }
-        for row in answer.get("rows", [])
+        for row in reply.get("rows", [])
     ]
 
 
@@ -158,7 +167,7 @@ async def quick_wins(site: Site, params: Params) -> dict[str, Any]:
 async def sitemaps(site: Site, params: Params) -> dict[str, Any]:
     prop = quote(site.field("gsc_property"), safe="")
     url = f"{SITES_API}/{prop}/sitemaps"
-    answer = await net.request(ENDPOINTS, "GET", url, headers=await _headers(site))
+    reply = await net.request(ENDPOINTS, "GET", url, headers=await _headers(site))
     rows = [
         {
             "path": item["path"],
@@ -168,7 +177,7 @@ async def sitemaps(site: Site, params: Params) -> dict[str, Any]:
             "warnings": int(item.get("warnings") or 0),
             "submitted": sum(int(part.get("submitted") or 0) for part in item.get("contents", [])),
         }
-        for item in answer.get("sitemap", [])
+        for item in reply.get("sitemap", [])
     ]
     return ok(rows, thin=not rows, reason=None if rows else "Search Console lists no sitemap.")
 
@@ -176,10 +185,10 @@ async def sitemaps(site: Site, params: Params) -> dict[str, Any]:
 async def _inspect(site: Site, url: str, headers: dict[str, str]) -> dict[str, Any]:
     body = {"inspectionUrl": url, "siteUrl": site.field("gsc_property")}
     try:
-        answer = await net.request(ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers)
+        reply = await net.request(ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers)
     except net.ApiError as exc:
         return {"url": url, "error": str(exc), "status": exc.status}
-    status = answer.get("inspectionResult", {}).get("indexStatusResult", {})
+    status = reply.get("inspectionResult", {}).get("indexStatusResult", {})
     return {
         "url": url,
         "verdict": status.get("verdict"),
@@ -224,4 +233,161 @@ ACCEPTS = {
     "quick_wins": ANALYTICS,
     "sitemaps": frozenset[str](),
     "index_status": frozenset({"page"}),
+}
+
+DIMENSIONS = ("country", "device", "page", "query", "searchAppearance", "date", "hour")
+FILTER_DIMENSIONS = DIMENSIONS[:5]
+OPERATORS = ("equals", "notEquals", "contains", "notContains", "includingRegex", "excludingRegex")
+TYPES = ("web", "image", "video", "news", "discover", "googleNews")
+AGGREGATIONS = ("auto", "byPage", "byProperty", "byNewsShowcasePanel")
+DATA_STATES = ("final", "all", "hourly_all")
+
+
+def _check_filter(item: Any) -> None:
+    if not isinstance(item, dict):
+        raise BadInput("Each filter of dimensionFilterGroups must be an object.")
+    unknown = sorted(set(item) - {"dimension", "operator", "expression"})
+    if unknown:
+        raise BadInput(f"A filter has no field {', '.join(unknown)}.")
+    one_of("A filter dimension", item.get("dimension"), FILTER_DIMENSIONS)
+    one_of("A filter operator", item.get("operator", "equals"), OPERATORS)
+    expression = item.get("expression")
+    if not isinstance(expression, str) or len(expression) > MAX_TEXT:
+        raise BadInput(f"A filter expression must be text of at most {MAX_TEXT} characters.")
+
+
+def _check_groups(groups: Any) -> None:
+    if not isinstance(groups, list) or not all(isinstance(group, dict) for group in groups):
+        raise BadInput("dimensionFilterGroups must be a list of objects.")
+    for group in groups:
+        unknown = sorted(set(group) - {"groupType", "filters"})
+        if unknown:
+            raise BadInput(f"A filter group has no field {', '.join(unknown)}.")
+        one_of("groupType", group.get("groupType", "and"), ("and",))
+        filters = group.get("filters")
+        if not isinstance(filters, list):
+            raise BadInput("Each filter group needs a filters list.")
+        for item in filters:
+            _check_filter(item)
+
+
+async def _search_analytics(site: Site, request: dict[str, Any]) -> dict[str, Any]:
+    start, end = period("startDate", "endDate", request["startDate"], request["endDate"])
+    dimensions = request.get("dimensions", [])
+    if not isinstance(dimensions, list):
+        raise BadInput("dimensions must be a list.")
+    for name in dimensions:
+        one_of("Each of dimensions", name, DIMENSIONS)
+    for field, allowed in (
+        ("type", TYPES),
+        ("aggregationType", AGGREGATIONS),
+        ("dataState", DATA_STATES),
+    ):
+        if field in request:
+            one_of(field, request[field], allowed)
+    _check_groups(request.get("dimensionFilterGroups", []))
+    whole("startRow", request.get("startRow", 0), 0, 2**31 - 1)
+    limit = row_limit("rowLimit", request.get("rowLimit"), "startRow")
+    body = {**request, "rowLimit": limit}
+    rows = await _analytics(site, body, await _headers(site), explain=True)
+    gaps = _gaps(Params(start, end))
+    return answer(
+        rows,
+        more_rows="possible" if len(rows) == limit else "no",
+        reason=" ".join(gaps) or None,
+        applied=body,
+        **({"incomplete": True} if gaps else {}),
+    )
+
+
+async def _url_inspection(site: Site, request: dict[str, Any]) -> dict[str, Any]:
+    url = page_url(site.host, request["inspectionUrl"], "inspectionUrl")
+    body = {**request, "inspectionUrl": url, "siteUrl": site.field("gsc_property")}
+    headers = await _headers(site)
+    reply = await net.request(
+        ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers, explain=True
+    )
+    return answer([reply.get("inspectionResult", {})], more_rows="no", applied=body)
+
+
+async def _sitemap_list(site: Site, request: dict[str, Any]) -> dict[str, Any]:
+    prop = quote(site.field("gsc_property"), safe="")
+    query = {}
+    if "sitemapIndex" in request:
+        query["sitemapIndex"] = page_url(site.host, request["sitemapIndex"], "sitemapIndex")
+    url = f"{SITES_API}/{prop}/sitemaps"
+    headers = await _headers(site)
+    reply = await net.request(ENDPOINTS, "GET", url, params=query, headers=headers, explain=True)
+    return answer(reply.get("sitemap", []), more_rows="no", applied=query)
+
+
+async def _sitemap_get(site: Site, request: dict[str, Any]) -> dict[str, Any]:
+    prop = quote(site.field("gsc_property"), safe="")
+    feed = page_url(site.host, request["feedpath"], "feedpath")
+    url = f"{SITES_API}/{prop}/sitemaps/{quote(feed, safe='')}"
+    reply = await net.request(ENDPOINTS, "GET", url, headers=await _headers(site), explain=True)
+    return answer([reply], more_rows="no", applied={"feedpath": feed})
+
+
+APIS = {
+    "search_console": Api(
+        title="Google Search Console",
+        docs="https://developers.google.com/webmaster-tools/v1/api_reference_index",
+        methods={
+            "search_analytics": Method(
+                _search_analytics,
+                "The Performance report: clicks, impressions, CTR, and position.",
+                frozenset(
+                    {
+                        "startDate",
+                        "endDate",
+                        "dimensions",
+                        "type",
+                        "dimensionFilterGroups",
+                        "aggregationType",
+                        "rowLimit",
+                        "startRow",
+                        "dataState",
+                    }
+                ),
+                frozenset({"startDate", "endDate"}),
+            ),
+            "url_inspection": Method(
+                _url_inspection,
+                "The Google index state of 1 URL.",
+                frozenset({"inspectionUrl", "languageCode"}),
+                frozenset({"inspectionUrl"}),
+            ),
+            "sitemaps": Method(
+                _sitemap_list, "The sitemaps of the property.", frozenset({"sitemapIndex"})
+            ),
+            "sitemap": Method(
+                _sitemap_get,
+                "1 sitemap.",
+                frozenset({"feedpath"}),
+                frozenset({"feedpath"}),
+            ),
+        },
+        options={
+            "dimensions": list(DIMENSIONS),
+            "filter_dimensions": list(FILTER_DIMENSIONS),
+            "operators": list(OPERATORS),
+            "types": list(TYPES),
+            "aggregation_types": list(AGGREGATIONS),
+            "data_states": list(DATA_STATES),
+            "group_types": ["and"],
+            "dates": "YYYY-MM-DD in Pacific Time, inclusive.",
+            "max_filter_text": MAX_TEXT,
+            "row_limit": "1 to 1000 for each call here. Read more rows with startRow.",
+        },
+        gaps=(
+            "Page indexing, Core Web Vitals, Links, Manual actions, and Security issues "
+            "reports: the API has no method for them.",
+            "History older than 16 months.",
+            "Rare queries: Search Console hides them, so rows can sum to less than the totals.",
+            "More than 50,000 rows for each day and search type: the API stops there, "
+            "sorted by clicks.",
+            "The live URL test: URL Inspection gives only the state in the Google index.",
+        ),
+    )
 }

@@ -23,11 +23,12 @@ class NotAllowed(Exception):
 
 
 class ApiError(Exception):
-    """A failed call. It holds a status only: a URL or a body can hold a key."""
+    """A failed call. It holds a status, and the API's own message only when a caller asks."""
 
-    def __init__(self, status: int | None) -> None:
+    def __init__(self, status: int | None, detail: str | None = None) -> None:
         super().__init__(f"HTTP {status}" if status else "The connection failed.")
         self.status = status
+        self.detail = detail
 
 
 def _check(allowed: tuple[Endpoint, ...], method: str, url: str) -> None:
@@ -46,7 +47,19 @@ def _check(allowed: tuple[Endpoint, ...], method: str, url: str) -> None:
         raise NotAllowed(f"{method} to {parts.hostname} is not in the ENDPOINTS list.")
 
 
-async def request(allowed: tuple[Endpoint, ...], method: str, url: str, **kwargs: Any) -> Any:
+def _google_message(response: httpx2.Response) -> str | None:
+    """Read the 1 text field of a Google validation error. All other text stays out."""
+    try:
+        error = response.json()["error"]
+        message = error["message"] if isinstance(error, dict) else None
+    except (ValueError, KeyError, TypeError):
+        return None
+    return message if isinstance(message, str) else None
+
+
+async def request(
+    allowed: tuple[Endpoint, ...], method: str, url: str, *, explain: bool = False, **kwargs: Any
+) -> Any:
     _check(allowed, method, url)
     try:
         async with httpx2.AsyncClient(
@@ -59,7 +72,8 @@ async def request(allowed: tuple[Endpoint, ...], method: str, url: str, **kwargs
     except httpx2.HTTPError:
         raise ApiError(None) from None
     if not response.is_success:
-        raise ApiError(response.status_code)
+        detail = _google_message(response) if explain and response.status_code == 400 else None
+        raise ApiError(response.status_code, detail)
     try:
         return response.json()
     except ValueError:

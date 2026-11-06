@@ -54,7 +54,7 @@ def _date(name: str, text: str) -> date:
         raise BadInput(f"{name} must be a real date in the form YYYY-MM-DD.") from None
 
 
-def _period(
+def period(
     first: str, last: str, start_text: str | None, end_text: str | None
 ) -> tuple[date | None, date | None]:
     if start_text is None and end_text is None:
@@ -103,7 +103,7 @@ def parse(
     compare_page: str | None = None,
 ) -> tuple[Params, Params | None, set[str]]:
     """Give the main params, the params of the comparison, and the names that the call used."""
-    start, end = _period("start_date", "end_date", start_date, end_date)
+    start, end = period("start_date", "end_date", start_date, end_date)
     if last_days is not None:
         if start:
             raise BadInput("Give last_days or start_date and end_date, not both.")
@@ -116,7 +116,7 @@ def parse(
         page_url(host, page) if page is not None else None,
         _query(query),
     )
-    other_start, other_end = _period(
+    other_start, other_end = period(
         "compare_start_date", "compare_end_date", compare_start_date, compare_end_date
     )
     if other_start and compare_page is not None:
