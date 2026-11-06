@@ -4,7 +4,7 @@ A read-only [MCP](https://modelcontextprotocol.io) server that gives an agent th
 
 ## Tools
 
-- `list_sites`: the sites in your sites file, and what each one has connected.
+- `list_sites`: the sites in your sites file, what each one has connected, and the quota of each connected API. It makes no network call.
 - `get_seo_data`: the simple path. Name a site, the sources that you need, and optionally a time frame, a page, a query, or a comparison.
 - `query_api`: the full path. It sends 1 official read query of 1 API, for a question that `get_seo_data` cannot ask. With `task`, it finds the call for a thing that you want.
 
@@ -75,9 +75,32 @@ Each row of the result is 1 provider. `steps` holds the exact calls in order, wi
 | `queries_of_page` | Search Console, Bing; not GA4 |
 | `core_web_vitals` | Chrome UX Report, PageSpeed |
 
-The Clarity click tasks ask `dashboard_query` for the count first, then `recordings` for the elements. They look back 90 days, because a short window often holds no such click.
+The Clarity click tasks ask `dashboard_query` for the count first, then `recordings` for the elements. They look back 90 days, because a short window often holds no such click. When the dashboard count is 0, do not call `recordings`: it spends 1 call on a sample that cannot show such a click. The step shows this rule in `skip_if`, for `dead_clicks`, `rage_clicks`, and `quickback_clicks`.
 
 `tests/test_tasks.py` runs each step through the real tools, so a task cannot name a method, a field, or a filter that does not exist. It cannot prove what Clarity answers: each `read` text says when a question is not yet proven on real data.
+
+### Quota
+
+The server spends no call to show quota. `list_sites` has a `quota` object for each site, with 1 entry for each connected API. `query_api` discovery has a `quota` object too: the doc link and the published limits, and with a `site`, the count in `now`. A row of a `task` has the same object.
+
+| API | Published limit | What the server does |
+| --- | --- | --- |
+| [Clarity](https://learn.microsoft.com/en-us/clarity/setup-and-installation/clarity-data-export-api) | 10 requests for each project each day. HTTP 429 means that the daily limit is passed. No reset time stated. | Counts each live call and refuses at 10. |
+| [Search Console](https://developers.google.com/webmaster-tools/limits) URL Inspection | 2,000 for each site each day, 600 each minute. For each project, 10,000,000 each day and 15,000 each minute. No reset time stated. | Counts each URL and refuses at 2,000. It does not enforce the limit of each minute. |
+| [Search Console](https://developers.google.com/webmaster-tools/limits) Search Analytics | 1,200 each minute for each site and for each user. For each project, 30,000,000 each day and 40,000 each minute. The load quota has no number. | Shows the limit. A local count changes no decision. |
+| [Search Console](https://developers.google.com/webmaster-tools/limits) other resources | 20 each second and 200 each minute for each user. For each project, 100,000,000 each day. | Shows the limit. |
+| [GA4](https://developers.google.com/analytics/devguides/reporting/data/v1/quotas) | Core and realtime pools: 200,000 tokens for each property each day, 40,000 each hour, 14,000 for each project each hour. Analytics 360: 2,000,000, 400,000, and 140,000. Daily quotas refresh at midnight Pacific. | Reads the real value from the API. It warns and never refuses, because a token cost is known only after the call. |
+| [PageSpeed Insights](https://developers.google.com/speed/docs/insights/v5/get-started) | The docs state no number. The Quotas page in the Google Cloud console shows the limit of your project. | Shows that the docs state no number. |
+| [Chrome UX Report](https://developer.chrome.com/docs/crux/api) | 150 queries each minute for each Google Cloud project. No daily limit stated. | Shows the limit. |
+| [Bing](https://learn.microsoft.com/en-us/bingwebmaster/getting-access) | The docs state no number for the read methods. | Shows that the docs state no number. |
+
+An answer that spends a counted quota shows `calls_used_today`, `daily_limit`, `calls_left`, `resets_at`, and `reset_stated`, also when the call fails or times out, because a failed call can count at the API. With few calls left, `quota_warning` appears: at most 2 for Clarity, at most 200 for URL Inspection. A call that the ledger refuses never reaches the network, and `reason` gives the reset time. `index_status` spends 1 call for each URL, all or none.
+
+The ledger counts only this machine, through this cache folder. It does not see another machine, another cache folder, or another client of the same key, so the real count can be higher. `calls_left` is a local budget, not a promise from the API. The Clarity and Search Console docs state no reset time, so `resets_at` (00:00 UTC) is an assumption, and `reset_stated` is `false`.
+
+When the Clarity Data Export API answers HTTP 429, its documented daily limit, the server keeps the real count, sets `blocked_by_api`, shows `calls_left` as 0, and refuses each Clarity path until the next UTC day. A 429 of an `/mcp/` endpoint has no documented meaning, so it does not stop the day. If a count is broken, the server shows it as unknown and spends no call until you write the real count in the file.
+
+Each GA4 report asks for `returnPropertyQuota`, unless the request sets it to `false`. `tokens_left` is the value of the API at `seen_at`, and it goes stale when another client spends. `tokens_used_today` sums only the tokens of this machine. The API does not say the tier of a property, so `daily_token_limit` shows both limits. With no reading since the last reset, `tokens_left` is `null`.
 
 ### What a dashboard shows and the API does not give
 
@@ -142,7 +165,7 @@ To store a key in the macOS Keychain, copy it and run `security add-generic-pass
 - **Search Console and GA4:** create a [service account](https://console.cloud.google.com/iam-admin/serviceaccounts) and download its JSON key. Enable the Search Console API and the Google Analytics Data API. Add the account's email to the Search Console property and to the GA4 property as a viewer. Put the file in `google_service_account`.
 - **PageSpeed and Chrome UX Report:** create an API key in the [Google Cloud console](https://console.cloud.google.com/apis/credentials) and enable both APIs. Put it in `google_api_key`.
 - **Bing:** create an API key in [Bing Webmaster Tools](https://www.bing.com/webmasters) under Settings, API access. Put it in `bing_api_key`.
-- **Clarity:** a project admin creates a token in the [Clarity](https://clarity.microsoft.com) project under Settings, Data Export. Each project has its own token, so put `clarity_token` in the `secrets` object of the site. The API allows 10 calls for each project each day, so the server saves each answer in `~/.cache/seo-mcp` (`SEO_MCP_CACHE_DIR` overrides it) and serves it for the rest of the UTC day. The result shows `cached_at`. The cache key holds the project, the days, the dimensions, and the request, so a changed `clarity_project` cannot read the answer of the old project. A ledger file counts each live call, also a failed one, for the UTC day. At 10 the server refuses before the network. All Clarity paths share this count, and parallel agents wait for 1 fetch of the same answer. The ledger counts only the calls of this machine, and the docs do not say when the API quota resets. If 2 sites share 1 Clarity project, give both the same `clarity_project` field so that they share 1 count.
+- **Clarity:** a project admin creates a token in the [Clarity](https://clarity.microsoft.com) project under Settings, Data Export. Each project has its own token, so put `clarity_token` in the `secrets` object of the site. The API allows 10 calls for each project each day, so the server saves each answer in `~/.cache/seo-mcp` (`SEO_MCP_CACHE_DIR` overrides it) and serves it for the rest of the UTC day. The result shows `cached_at`. The cache key holds the project, the days, the dimensions, and the request, so a changed `clarity_project` cannot read the answer of the old project. A ledger file counts each live call, also a failed one, for the UTC day. At 10 the server refuses before the network. All Clarity paths share this count, and parallel agents wait for 1 fetch of the same answer. See [Quota](#quota). If 2 sites share 1 Clarity project, give both the same `clarity_project` field so that they share 1 count and 1 cache.
 
 ## Add a provider
 
@@ -150,12 +173,14 @@ To store a key in the macOS Keychain, copy it and run `security add-generic-pass
    - `ENDPOINTS`: each call that the provider makes, as `net.Endpoint(method, host, path_regex)`. `net.request` refuses all other calls.
    - `SOURCES`: a map from source name to `async def source(site: Site, params: Params) -> dict`. Return `ok(rows, thin=...)`. Use `site.field(...)` and `site.secret(...)`, which give `not_connected` when the value is missing.
    - `ACCEPTS`: a map from source name to the parameters that it applies. The tool description comes from this map, and `tests/test_params.py` fails when a source declares a parameter that changes nothing.
-   - `APIS`: the read methods for `query_api`. Each method lists its request fields, and the API lists what it does not give.
+   - `APIS`: the read methods for `query_api`. Each method lists its request fields, and the API lists what it does not give and its published limits, with a doc link. If the docs state no number, say so.
 2. Add the module to `MODULES` in `providers/__init__.py`.
 3. Add a test with the `fake_net` fixture, and add the sources to the table above.
 4. Add a recipe to `src/seo_mcp/tasks.py`. `tests/test_tasks.py` fails when an API has no task.
 
 A `POST` endpoint fails `tests/test_read_only.py` until you add it to the pinned list. Add only a call that reads.
+
+An endpoint with a daily call limit names its ledger in `metered`. `net.request` refuses it without a receipt from `quota.spend`, and `tests/test_quota.py` pins the list.
 
 ## Checks
 

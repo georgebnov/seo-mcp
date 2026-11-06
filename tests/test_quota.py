@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx2
 import pytest
@@ -402,3 +403,9 @@ def test_each_api_states_its_limit_with_a_doc_link(name):
     assert any(char.isdigit() for text in entry.limits for char in text) or "no number" in str(
         entry.limits
     )
+
+
+def test_the_readme_links_the_quota_docs_of_each_api():
+    readme = (Path(__file__).parent.parent / "README.md").read_text()
+    for name, entry in providers.APIS.items():
+        assert entry.quota.docs in readme, name
