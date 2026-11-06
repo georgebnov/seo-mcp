@@ -579,6 +579,22 @@ async def test_dashboard_query_sends_text_and_time_zone(live):
     assert data["status"] == "ok"
 
 
+async def test_dashboard_rows_come_from_the_data_list(live, fake_net):
+    reply = {"query": "q", "data": [{"Device": "PC"}, {"Device": "Mobile"}], "dataErrorType": 0}
+    fake_net(lambda _: httpx2.Response(200, json=reply))
+    data = await ask("clarity", "dashboard_query", {"query": "q"})
+    assert data["rows"] == [{"Device": "PC"}, {"Device": "Mobile"}]
+    assert data["reason"] is None
+
+
+async def test_dashboard_error_type_is_not_an_empty_success(live, fake_net):
+    reply = {"query": "q", "data": [], "dataErrorType": 3}
+    fake_net(lambda _: httpx2.Response(200, json=reply))
+    data = await ask("clarity", "dashboard_query", {"query": "q"})
+    assert data["thin_data"] is True
+    assert "3" in data["reason"]
+
+
 async def test_all_clarity_paths_share_1_budget(live, write_config):
     project = clarity.ledger_path(HOST)
     project.parent.mkdir(parents=True)

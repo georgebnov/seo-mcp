@@ -399,8 +399,14 @@ async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any
         return await net.request(ENDPOINTS, "POST", DASHBOARD_API, json=body, headers=headers)
 
     stored, hit = await _cached(site, path, call)
-    rows = as_rows(stored["answer"])
-    return answer(rows, more_rows="no", applied=body, **_stored_fields(site, stored, hit))
+    reply = stored["answer"]
+    data = reply.get("data") if isinstance(reply, dict) else None
+    rows = as_rows(reply if data is None else data)
+    code = reply.get("dataErrorType") if isinstance(reply, dict) else None
+    reason = f"Clarity gave data error type {code} for this question." if code else None
+    return answer(
+        rows, more_rows="no", reason=reason, applied=body, **_stored_fields(site, stored, hit)
+    )
 
 
 APIS = {
