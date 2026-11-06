@@ -21,15 +21,13 @@ from seo_mcp.params import BadInput, Params
 from seo_mcp.results import Refused, Unsupported, ok
 
 API = "https://www.clarity.ms/export-data/api/v1/project-live-insights"
-# The official Clarity MCP server calls these 3, with the same token. All 3 read.
+# The official Clarity MCP server calls these, with the same token. Both read.
 RECORDINGS_API = "https://clarity.microsoft.com/mcp/recordings/sample"
 DASHBOARD_API = "https://clarity.microsoft.com/mcp/dashboard/query"
-DOCUMENTATION_API = "https://clarity.microsoft.com/mcp/documentation/query"
 ENDPOINTS = (
     net.Endpoint("GET", "www.clarity.ms", r"/export-data/api/v1/project-live-insights"),
     net.Endpoint("POST", "clarity.microsoft.com", r"/mcp/recordings/sample"),
     net.Endpoint("POST", "clarity.microsoft.com", r"/mcp/dashboard/query"),
-    net.Endpoint("POST", "clarity.microsoft.com", r"/mcp/documentation/query"),
 )
 CACHE_ENV = NAME.upper().replace("-", "_") + "_CACHE_DIR"
 # The API allows 10 calls for each project each day, for the last 1 to 3 days.
@@ -52,14 +50,16 @@ def _folder() -> Path:
     return Path(os.environ.get(CACHE_ENV) or f"~/.cache/{NAME}").expanduser()
 
 
-def cache_path(host: str, days: int = WINDOW_DAYS, dimensions: tuple[str, ...] = ("URL",)) -> Path:
+def cache_path(
+    project_id: str, days: int = WINDOW_DAYS, dimensions: tuple[str, ...] = ("URL",)
+) -> Path:
     key = "-".join(quote(name, safe="") for name in dimensions)
-    return _folder() / f"clarity-{quote(host, safe='')}-{days}d-{key}.json"
+    return _folder() / f"clarity-{quote(project_id, safe='')}-{days}d-{key}.json"
 
 
-def _body_path(host: str, kind: str, body: dict[str, Any]) -> Path:
+def _body_path(project_id: str, kind: str, body: dict[str, Any]) -> Path:
     digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:24]
-    return _folder() / f"clarity-{quote(host, safe='')}-{kind}-{digest}.json"
+    return _folder() / f"clarity-{quote(project_id, safe='')}-{kind}-{digest}.json"
 
 
 def ledger_path(project: str) -> Path:
@@ -166,7 +166,7 @@ async def _insights(
     async def call(headers: dict[str, str]) -> Any:
         return await net.request(ENDPOINTS, "GET", API, params=params, headers=headers)
 
-    return await _cached(site, cache_path(site.host, days, dimensions), call)
+    return await _cached(site, cache_path(project(site), days, dimensions), call)
 
 
 def _number(text: Any) -> float:
@@ -532,7 +532,7 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
         "filters": filters,
         "count": count,
     }
-    path = _body_path(site.host, "recordings", body)
+    path = _body_path(project(site), "recordings", body)
 
     async def call(headers: dict[str, str]) -> Any:
         return await net.request(ENDPOINTS, "POST", RECORDINGS_API, json=body, headers=headers)
@@ -548,7 +548,7 @@ async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any
     if not isinstance(text, str) or not text.strip():
         raise BadInput("query must be text.")
     body = {"query": text, "timezone": request.get("timezone", "UTC")}
-    path = _body_path(site.host, "dashboard", body)
+    path = _body_path(project(site), "dashboard", body)
 
     async def call(headers: dict[str, str]) -> Any:
         return await net.request(ENDPOINTS, "POST", DASHBOARD_API, json=body, headers=headers)
@@ -564,21 +564,6 @@ async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any
     return answer(
         rows, more_rows="no", reason=reason, answered_question=answered, applied=body, **fields
     )
-
-
-async def _documentation(site: Site, request: dict[str, Any]) -> dict[str, Any]:
-    text = request["query"]
-    if not isinstance(text, str) or not text.strip():
-        raise BadInput("query must be text.")
-    body = {"query": text}
-    path = _body_path(site.host, "documentation", body)
-
-    async def call(headers: dict[str, str]) -> Any:
-        return await net.request(ENDPOINTS, "POST", DOCUMENTATION_API, json=body, headers=headers)
-
-    stored, hit = await _cached(site, path, call)
-    rows = as_rows(stored["answer"])
-    return answer(rows, more_rows="no", applied=body, **_stored_fields(site, stored, hit))
 
 
 APIS = {
@@ -602,12 +587,6 @@ APIS = {
                 _dashboard_query,
                 "1 plain-language question about dashboard data, with a time frame in the text.",
                 frozenset({"query", "timezone"}),
-                frozenset({"query"}),
-            ),
-            "documentation": Method(
-                _documentation,
-                "1 plain-language question about the Clarity product and its documentation.",
-                frozenset({"query"}),
                 frozenset({"query"}),
             ),
         },
@@ -636,7 +615,6 @@ APIS = {
             "and Clarity has no recording download.",
             "live_insights data older than 3 days.",
             "More than 1,000 rows in live_insights: the API has no paging.",
-            "The documentation method: the endpoint answered HTTP 500 to each real question.",
             "A retention limit: recordings and dashboard_query refuse no time frame, and rows "
             "of old days are simply absent. Empty rows do not prove zero activity.",
         ),

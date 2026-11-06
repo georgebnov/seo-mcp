@@ -26,7 +26,6 @@ READ_POSTS = {
     ("chromeuxreport.googleapis.com", r"/v1/records:queryHistoryRecord"),
     ("clarity.microsoft.com", r"/mcp/recordings/sample"),
     ("clarity.microsoft.com", r"/mcp/dashboard/query"),
-    ("clarity.microsoft.com", r"/mcp/documentation/query"),
 }
 
 
@@ -43,6 +42,11 @@ def imported_modules(path: Path) -> set[str]:
 def test_only_listed_posts_exist():
     posts = {(e.host, e.path) for e in providers.ENDPOINTS if e.method == "POST"}
     assert posts <= READ_POSTS, f"New POST endpoint. Read it, then pin it: {posts - READ_POSTS}"
+
+
+def test_a_post_pin_has_an_endpoint():
+    posts = {(e.host, e.path) for e in providers.ENDPOINTS if e.method == "POST"}
+    assert READ_POSTS <= posts, f"A pin outlived its endpoint. Remove it: {READ_POSTS - posts}"
 
 
 def test_every_other_endpoint_is_get():
