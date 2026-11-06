@@ -25,3 +25,4 @@
 - Share identical requests of all sources and methods: parallel agents send 1 live call, and a saved answer serves repeats for 5 minutes (30 seconds for a GA4 realtime report). Each answer shows `from_cache`, `cached_at`, `cache_age_seconds`, and `cache_expires_at`.
 - Extend the failure window of 60 seconds and the shape check to all sources and methods.
 - Trim the outer spaces of a Clarity dashboard question, so that they do not spend a new call.
+- Fix the reason of a connection failure: it read `The connection failed. from the API.`
