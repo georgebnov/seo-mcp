@@ -40,3 +40,4 @@ ignore = ["S101"]
 [tool.mypy]
 files = ["src", "scripts"]
 strict = true
+untyped_calls_exclude = ["google.auth"]
