@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -411,3 +412,40 @@ def test_the_readme_links_the_quota_docs_of_each_api():
     readme = (Path(__file__).parent.parent / "README.md").read_text()
     for name, entry in providers.APIS.items():
         assert entry.quota.docs in readme, name
+
+
+def metered_requests(calls):
+    return [
+        call
+        for call in calls
+        for endpoint in providers.ENDPOINTS
+        if endpoint.metered
+        and endpoint.host == call.url.host
+        and re.fullmatch(endpoint.path, call.url.path)
+    ]
+
+
+def spent_calls():
+    keys = ((clarity.LEDGER, HOST), (gsc.LEDGER, SITE["gsc_property"]))
+    return sum(quota.view(ledger, key)["calls_used_today"] for ledger, key in keys)
+
+
+# The fact that the whole design rests on: the count equals the calls that went out.
+@pytest.mark.parametrize("source", sorted(providers.SOURCES))
+async def test_each_source_counts_each_metered_call(live, source):
+    await core.get_seo_data(HOST, [source])
+    assert len(metered_requests(live)) == spent_calls()
+
+
+@pytest.mark.parametrize(
+    ("api", "call"),
+    [
+        ("clarity", INSIGHTS),
+        ("clarity", RECORDINGS),
+        ("clarity", DASHBOARD),
+        ("search_console", INSPECT),
+    ],
+)
+async def test_each_metered_method_counts_each_call(live, api, call):
+    await run(api, call)
+    assert len(metered_requests(live)) == spent_calls() == 1
