@@ -7,27 +7,27 @@ from seo_mcp import core, net, providers
 from seo_mcp.results import NotConnected, ok
 
 
-async def good(site):
+async def good(site, params):
     return ok([{"a": 1}, {"a": 2}], thin=False)
 
 
-async def thin(site):
+async def thin(site, params):
     return ok([], thin=True)
 
 
-async def absent(site):
+async def absent(site, params):
     raise NotConnected("no field")
 
 
-async def broken(site):
+async def broken(site, params):
     raise RuntimeError("secret-text-from-an-exception")
 
 
-async def api_down(site):
+async def api_down(site, params):
     raise net.ApiError(403)
 
 
-async def slow(site):
+async def slow(site, params):
     await asyncio.sleep(30)
 
 
@@ -91,7 +91,7 @@ async def test_top_status_when_all_fail(sources):
 async def test_timeout_cancels_the_source(sources, monkeypatch):
     seen = []
 
-    async def waits(site):
+    async def waits(site, params):
         try:
             await asyncio.sleep(30)
         except asyncio.CancelledError:
@@ -104,7 +104,7 @@ async def test_timeout_cancels_the_source(sources, monkeypatch):
 
 
 async def test_output_is_scrubbed(sources, monkeypatch):
-    async def leaky(site):
+    async def leaky(site, params):
         return ok([{"url": "https://x.test/?apikey=abc123"}], thin=False)
 
     monkeypatch.setitem(sources, "leaky", leaky)

@@ -4,6 +4,7 @@ from typing import Any
 
 from seo_mcp import net
 from seo_mcp.config import Site
+from seo_mcp.params import Params
 from seo_mcp.results import ok
 
 PSI_API = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
@@ -35,11 +36,11 @@ def _key_header(key: str | None) -> dict[str, str]:
     return {"X-Goog-Api-Key": key} if key else {}
 
 
-async def page_speed(site: Site) -> dict[str, Any]:
-    params = [("url", f"https://{site.host}/"), ("strategy", "mobile")]
-    params += [("category", name) for name in CATEGORIES]
+async def page_speed(site: Site, params: Params) -> dict[str, Any]:
+    query = [("url", params.page or f"https://{site.host}/"), ("strategy", "mobile")]
+    query += [("category", name) for name in CATEGORIES]
     headers = _key_header(site.optional_secret("google_api_key"))
-    answer = await net.request(ENDPOINTS, "GET", PSI_API, params=params, headers=headers)
+    answer = await net.request(ENDPOINTS, "GET", PSI_API, params=query, headers=headers)
     lighthouse = answer["lighthouseResult"]
     audits = lighthouse.get("audits", {})
     rows: list[dict[str, Any]] = [
@@ -82,14 +83,15 @@ def _rating(metric: str, p75: float) -> str | None:
     return "needs-improvement" if p75 <= poor else "poor"
 
 
-async def chrome_field_data(site: Site) -> dict[str, Any]:
+async def chrome_field_data(site: Site, params: Params) -> dict[str, Any]:
     headers = _key_header(site.secret("google_api_key"))
-    body = {"origin": f"https://{site.host}"}
+    body = {"url": params.page} if params.page else {"origin": f"https://{site.host}"}
     try:
         answer = await net.request(ENDPOINTS, "POST", CRUX_API, json=body, headers=headers)
     except net.ApiError as exc:
         if exc.status == 404:
-            return ok([], thin=True, reason="Chrome has no field data for this site.")
+            scope = "page" if params.page else "site"
+            return ok([], thin=True, reason=f"Chrome has no field data for this {scope}.")
         raise
     record = answer["record"]
     rows = []
@@ -102,3 +104,4 @@ async def chrome_field_data(site: Site) -> dict[str, Any]:
 
 
 SOURCES = {"page_speed": page_speed, "chrome_field_data": chrome_field_data}
+ACCEPTS = {name: frozenset({"page"}) for name in SOURCES}

@@ -10,6 +10,7 @@
       "gsc_property": "sc-domain:example.com",
       "ga4_property_id": "123456789",
       "bing_site_url": "https://www.example.com/",
+      "clarity_project": "example-project",
       "secrets": {
         "clarity_token": { "keychain": "clarity-example-token" }
       }

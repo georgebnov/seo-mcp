@@ -4,6 +4,7 @@ from typing import Any
 
 from seo_mcp import net
 from seo_mcp.config import Site
+from seo_mcp.params import Params
 from seo_mcp.results import ok
 
 API = "https://ssl.bing.com/webmaster/api.svc/json"
@@ -11,11 +12,11 @@ ENDPOINTS = (net.Endpoint("GET", "ssl.bing.com", r"/webmaster/api\.svc/json/GetL
 THIN_INBOUND_LINKS = 10
 
 
-async def bing_links(site: Site) -> dict[str, Any]:
+async def bing_links(site: Site, params: Params) -> dict[str, Any]:
     site_url = site.field("bing_site_url")
     # The Bing API takes its key only in the query string.
-    params = {"siteUrl": site_url, "page": 0, "apikey": site.secret("bing_api_key")}
-    body = await net.request(ENDPOINTS, "GET", f"{API}/GetLinkCounts", params=params)
+    query = {"siteUrl": site_url, "page": 0, "apikey": site.secret("bing_api_key")}
+    body = await net.request(ENDPOINTS, "GET", f"{API}/GetLinkCounts", params=query)
     data = body["d"]
     rows = [{"url": row["Url"], "inbound_links": row["Count"]} for row in data.get("Links") or []]
     rows.sort(key=lambda row: row["inbound_links"], reverse=True)
@@ -28,3 +29,4 @@ async def bing_links(site: Site) -> dict[str, Any]:
 
 
 SOURCES = {"bing_links": bing_links}
+ACCEPTS = {"bing_links": frozenset[str]()}
