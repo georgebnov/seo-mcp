@@ -81,8 +81,8 @@ Spec == Init /\ [][Next]_vars
 TwoCallersSpendOneCall == sent <= 1
 \* Added: when the first call gives an answer, the other caller spends nothing.
 FirstAnswerIsShared == firstOk => sent = 1
-\* The ledger count equals the metered requests sent.
-CountEqualsRequestsSent == count = sent
+\* The count is never below the requests sent. A connection that fails before the send counts.
+CountNeverBelowRequestsSent == count >= sent
 \* The server never sends a metered call past the limit.
 NeverPastTheLimit == sent <= Limit
 \* After the daily limit answer, no caller sends again on that day.
