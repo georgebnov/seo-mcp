@@ -230,11 +230,12 @@ async def index_status(site: Site, params: Params) -> dict[str, Any]:
         found = list(await asyncio.gather(*(_inspect(site, url, headers, spent) for url in urls)))
         failures = [row.pop("failure") for row in found if "failure" in row]
         if len(failures) == len(found):
-            raise failures[0]
+            # 1 sent request of the batch is enough to keep the failure window.
+            raise next((failure for failure in failures if failure.sent), failures[0])
         return {"rows": found}
 
     # 1 failed URL of many stays in the saved answer: a repeat must not spend all URLs again.
-    path = shared.entry(site, "index_status", sorted(urls))
+    path = shared.entry(site, "index_status", key, sorted(urls))
     rows = (await shared.once(path, send, prepare=prepare))["rows"]
     bad = [row for row in rows if "error" in row]
     reason = f"{len(bad)} of {len(rows)} URLs failed inspection." if bad else None

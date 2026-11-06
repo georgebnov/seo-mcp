@@ -140,12 +140,12 @@ def _prune(where: Path) -> None:
     """Remove old entries of this folder only. A ledger is outside it, and it must stay."""
     limit = datetime.now(UTC).timestamp() - PRUNE_SECONDS
     with os.scandir(where) as found:
-        names = [item.path for item in itertools.islice(found, PRUNE_BATCH)]
+        # A lock file stays for good, so it must not use up the batch.
+        entries = (item.path for item in found if item.name.endswith(".json"))
+        names = list(itertools.islice(entries, PRUNE_BATCH))
     for name in names:
         path = Path(name)
         lock_file = where / f"{path.name.split('.')[0]}.lock"
-        if path.suffix != ".json":
-            continue
         with lock_file.open("a") as lock, suppress(OSError):
             quota.try_lock(lock)
             if path.stat().st_mtime < limit:
@@ -200,10 +200,13 @@ async def once(
             _mark_failure(path, None, None)
             raise
         at = datetime.now(UTC)
-        quota.write_json(path, {"cached_at": at.isoformat(), "answer": scrub(reply)})
         _note(False, at, until(at))
+        # The answer is paid for: a full disk must not lose it.
+        with suppress(OSError):
+            quota.write_json(path, {"cached_at": at.isoformat(), "answer": scrub(reply)})
     if path.parent == folder():
-        _prune(path.parent)
+        with suppress(OSError):
+            _prune(path.parent)
     return reply
 
 
@@ -224,7 +227,7 @@ async def request(
     name the property, so a saved answer ends at the latest after keep seconds.
     """
     net.check(allowed, method, url)
-    path = entry(site, method, url, kwargs.get("params"), kwargs.get("json"), explain)
+    path = entry(site, method, url, kwargs.get("params"), kwargs.get("json"), explain, keep)
 
     async def send(_: None) -> Any:
         return await net.request(allowed, method, url, explain=explain, **kwargs)

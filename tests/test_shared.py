@@ -13,8 +13,8 @@ from pathlib import Path
 import httpx2
 import pytest
 
-from seo_mcp import core, quota, shared
-from seo_mcp.providers import clarity, gsc
+from seo_mcp import config, core, quota, shared
+from seo_mcp.providers import clarity, gsc, pagespeed
 from test_query_api import HOST, SITE
 from test_quota import DASHBOARD, INSPECT, metered_requests, replies, run, sent, set_ledger
 
@@ -204,6 +204,61 @@ async def test_a_repeat_of_index_status_spends_nothing(live):
     assert second["calls_used_today"] == first["calls_used_today"]
     assert second["rows"] == first["rows"]
     assert second["from_cache"] is True
+
+
+async def test_2_properties_of_1_host_do_not_share_index_status(live, write_config, account):
+    await sources("index_status", page=f"https://{HOST}/a")
+    write_config({**SITE, "gsc_property": "https://www.example.com/"}, account)
+    data = (await sources("index_status", page=f"https://{HOST}/a"))["sources"]["index_status"]
+    assert data["from_cache"] is False
+
+
+async def test_a_batch_with_1_sent_failure_keeps_the_window(live, fake_net):
+    def reply(request):
+        if request.url.path.endswith("index:inspect"):
+            if json.loads(request.content)["inspectionUrl"] == f"https://{HOST}/":
+                raise httpx2.ConnectError("no route")
+            return httpx2.Response(500)
+        return None
+
+    fake_net(replies(reply))
+    first = (await sources("index_status"))["sources"]["index_status"]
+    second = (await sources("index_status"))["sources"]["index_status"]
+    assert first["status"] == "error"
+    assert "did not send it again" in second["reason"]
+    assert second["calls_used_today"] == first["calls_used_today"]
+
+
+async def test_a_full_disk_does_not_lose_a_paid_answer(tmp_path):
+    target = tmp_path / "entry.json"
+    target.mkdir()
+
+    async def send(_):
+        return {"paid": True}
+
+    assert await shared.once(target, send) == {"paid": True}
+
+
+async def test_a_prune_reaches_entries_behind_many_lock_files(live, monkeypatch):
+    monkeypatch.setattr(shared, "PRUNE_BATCH", 1)
+    shared.folder().mkdir(parents=True)
+    for number in range(200):
+        (shared.folder() / f"{number}.lock").touch()
+    stale = shared.folder() / "stale.json"
+    stale.write_text("{}")
+    long_ago = datetime.now(UTC).timestamp() - shared.PRUNE_SECONDS - 1
+    os.utime(stale, (long_ago, long_ago))
+    await sources("page_speed")
+    assert not stale.exists()
+
+
+async def test_a_longer_lifetime_does_not_extend_a_short_saved_answer(live):
+    site = config.resolve(HOST)
+    args = (site, pagespeed.ENDPOINTS, "GET", pagespeed.PSI_API)
+    await shared.request(*args, keep=30)
+    age_all(31)
+    await shared.request(*args, keep=300)
+    assert len(sent(live)) == 2
 
 
 async def test_a_repeat_of_a_ga4_report_does_not_count_its_tokens_twice(live, fake_net):
