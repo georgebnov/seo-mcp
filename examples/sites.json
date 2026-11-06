@@ -1,0 +1,22 @@
+{
+  "secrets": {
+    "google_service_account": { "file": "~/.config/seo-mcp/google-service-account.json" },
+    "google_api_key": { "env": "GOOGLE_API_KEY" },
+    "bing_api_key": { "keychain": "bing-webmaster-api-key" }
+  },
+  "sites": {
+    "~/code/example": {
+      "host": "www.example.com",
+      "gsc_property": "sc-domain:example.com",
+      "ga4_property_id": "123456789",
+      "bing_site_url": "https://www.example.com/",
+      "secrets": {
+        "clarity_token": { "keychain": "clarity-example-token" }
+      }
+    },
+    "~/code/example-blog": {
+      "host": "blog.example.com",
+      "gsc_property": "sc-domain:example.com"
+    }
+  }
+}
