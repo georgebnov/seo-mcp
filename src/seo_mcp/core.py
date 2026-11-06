@@ -48,7 +48,9 @@ async def _guard(job: Awaitable[dict[str, Any]]) -> dict[str, Any]:
         return _failed(f"The source timed out after {SOURCE_TIMEOUT_SECONDS:g} seconds.")
     except net.ApiError as exc:
         hint = exc.detail or STATUS_HINTS.get(exc.status or 0, "")
-        return _failed(safe_reason(f"{exc} from the API. {hint}".strip()))
+        return _failed(
+            safe_reason(" ".join(filter(None, [f"{exc} from the API.", hint, exc.note])))
+        )
     except Exception as exc:  # noqa: BLE001
         return _failed(f"The source failed with {type(exc).__name__}.")
 

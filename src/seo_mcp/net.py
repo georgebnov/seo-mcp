@@ -8,6 +8,8 @@ import httpx2
 
 REQUEST_TIMEOUT_SECONDS = 90
 
+NOT_SENT = (httpx2.ConnectError, httpx2.ConnectTimeout, httpx2.PoolTimeout)
+
 # Tests replace this. Nothing else mocks the network.
 transport: httpx2.AsyncBaseTransport | None = None
 
@@ -33,12 +35,20 @@ class NotAllowed(Exception):
 
 
 class ApiError(Exception):
-    """A failed call. It holds a status, and the API's own message only when a caller asks."""
+    """A failed call. It holds a status, and the API's own message only when a caller asks.
 
-    def __init__(self, status: int | None, detail: str | None = None) -> None:
+    sent is False only when no byte can have reached the API. After a read timeout the API can
+    have counted the request, so that call stays possibly sent.
+    """
+
+    def __init__(
+        self, status: int | None, detail: str | None = None, *, sent: bool = True, note: str = ""
+    ) -> None:
         super().__init__(f"HTTP {status}" if status else "The connection failed.")
         self.status = status
         self.detail = detail
+        self.sent = sent
+        self.note = note
 
 
 def _check(allowed: tuple[Endpoint, ...], method: str, url: str) -> Endpoint:
@@ -92,8 +102,8 @@ async def request(
             timeout=REQUEST_TIMEOUT_SECONDS,
         ) as client:
             response = await client.request(method, url, **kwargs)
-    except httpx2.HTTPError:
-        raise ApiError(None) from None
+    except httpx2.HTTPError as exc:
+        raise ApiError(None, sent=not isinstance(exc, NOT_SENT)) from None
     if not response.is_success:
         detail = _google_message(response) if explain and response.status_code == 400 else None
         raise ApiError(response.status_code, detail)

@@ -96,7 +96,9 @@ key: do not send them. A field that the method does not have is an error, never 
 A row limit is at most 1000: read more rows with startRow or offset. more_rows is yes, no, or
 possible. If the API refuses a Google query, reason holds the message of the API.
 Each live clarity call spends 1 of 10 calls for the project each day. The same request on the
-same UTC day comes from the cache. Each URL inspection spends 1 of 2000 for the site each day.
+same UTC day comes from the cache. After a failed clarity call, the same request does not go
+out for 60 seconds: reason says so, and it spends nothing.
+Each URL inspection spends 1 of 2000 for the site each day.
 With a site, discovery shows quota: the docs, the limits, and the used count, with no network
 call. Read calls_left there or in list_sites before an expensive call. An answer that spends
 shows calls_used_today, daily_limit, and calls_left, and GA4 shows tokens_left from the API.

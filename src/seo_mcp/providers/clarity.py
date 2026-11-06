@@ -4,6 +4,7 @@ import asyncio
 import fcntl
 import hashlib
 import json
+import math
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -42,6 +43,9 @@ MISS_REASON = (
     "so this is not proof of zero traffic."
 )
 LOCK_POLL_SECONDS = 0.05
+# A failed call can count at the API, so the same request waits this long. This stops a burst
+# of agents. It does not protect the day: a long outage still spends 1 call in each window.
+FAILURE_WINDOW_SECONDS = 60
 LEDGER = quota.Ledger("clarity-calls", "Clarity project", DAILY_CALLS)
 
 
@@ -68,6 +72,32 @@ def _read_cache(path: Path) -> dict[str, Any] | None:
     except (OSError, ValueError, KeyError, TypeError):
         return None
     return stored if same_day else None
+
+
+def failure_path(path: Path) -> Path:
+    return path.with_suffix(".failed.json")
+
+
+def _mark_failure(path: Path, status: int | None) -> None:
+    stored = {"failed_at": datetime.now(UTC).isoformat(), "status": status}
+    quota.write_json(failure_path(path), stored)
+
+
+def _recent_failure(path: Path) -> net.ApiError | None:
+    try:
+        stored = json.loads(failure_path(path).read_text(encoding="utf-8"))
+        status = stored["status"]
+        age = (datetime.now(UTC) - datetime.fromisoformat(stored["failed_at"])).total_seconds()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not 0 <= age < FAILURE_WINDOW_SECONDS or not (status is None or type(status) is int):
+        return None
+    left = math.ceil(FAILURE_WINDOW_SECONDS - age)
+    return net.ApiError(
+        status,
+        note=f"The same request failed {int(age)} seconds ago, so the server did not send it "
+        f"again and spent no call. It can send it after {left} seconds.",
+    )
 
 
 def project(site: Site) -> str:
@@ -114,6 +144,9 @@ async def _cached(
         stored = _read_cache(path)
         if stored is not None:
             return stored, True
+        failure = _recent_failure(path)
+        if failure:
+            raise failure
         headers = _headers(site)
         receipt = quota.spend(LEDGER, key)
         try:
@@ -121,6 +154,12 @@ async def _cached(
         except net.ApiError as exc:
             if daily_429 and exc.status == 429:
                 quota.block(LEDGER, key, receipt)
+            if exc.sent:
+                _mark_failure(path, exc.status)
+            raise
+        except asyncio.CancelledError:
+            # The source timeout ended a call in flight, and the API can have counted it.
+            _mark_failure(path, None)
             raise
         stored = {"cached_at": datetime.now(UTC).isoformat(), "answer": reply}
         quota.write_json(path, stored)
