@@ -559,9 +559,11 @@ async def test_clarity_stops_at_the_daily_budget(write_config, fake_net, monkeyp
     monkeypatch.setenv("CLARITY_ENV", "clarity-token-value-1234")
     write_config(SITE)
     calls = fake_net(lambda _: httpx2.Response(500))
+    mark = clarity.failure_path(clarity.cache_path("www.example.com"))
     for _ in range(clarity.DAILY_CALLS):
         data = await ask(["clarity"])
         assert "HTTP 500" in data["sources"]["clarity"]["reason"]
+        mark.unlink()
     data = await ask(["clarity"])
     result = data["sources"]["clarity"]
     assert result["status"] == "error"

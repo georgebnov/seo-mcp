@@ -19,3 +19,4 @@
 - Add a rule to the Clarity click tasks: when the dashboard count is 0, do not call `recordings`.
 - List in the README what each dashboard shows and the API does not give.
 - Fix the call ledgers: a day that is not a real date, or is after today, now fails closed as a broken ledger. It restarted the count before.
+- Stop a second Clarity call after a failure: a waiter or a repeat of a request that can have reached the API gets the same failure for 60 seconds and spends nothing.

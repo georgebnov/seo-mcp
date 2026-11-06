@@ -2,6 +2,7 @@ const names = {
   start: "An agent makes a metered Clarity call",
   lock: "The call holds the fetch lock and reads the saved answer",
   hit: "The saved answer goes back, no call spent",
+  repeated: "The same failure goes back, no call spent",
   token: "No saved answer for today, the server reads the token",
   notConnected: "Not connected, no call spent",
   ledger: "The server reads the ledger under its lock",
@@ -26,6 +27,8 @@ const labels = {
   CacheHit: "a saved answer of today exists",
   CacheOld: "the saved answer is of an older UTC day",
   CacheNone: "no saved answer exists",
+  FailureRepeat: "the same request failed inside the window",
+  FailureOld: "the same request failed before the window",
   TokenMissing: "the token is missing or empty",
   TokenRead: "the token is there",
   RefuseBroken: "the ledger text or count is broken",
@@ -44,7 +47,7 @@ const labels = {
 };
 export const step = (action) => (action === "Done" ? null : labels[action]);
 const phases = {
-  start: "Start", lock: "Saved answer", hit: "Saved answer",
+  start: "Start", lock: "Saved answer", hit: "Saved answer", repeated: "Saved answer",
   token: "Ledger", ledger: "Ledger", notConnected: "Stop", refused: "Stop",
   reserved: "Spend", flight: "Spend",
   stored: "Answer", failed: "Stop", dayBlocked: "Stop",

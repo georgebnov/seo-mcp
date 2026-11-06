@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from seo_mcp import config, net, secrets
 from seo_mcp.providers import _google
+from test_query_api import SITE, answer
 
 
 @pytest.fixture(autouse=True)
@@ -72,3 +73,17 @@ def fake_net():
         return calls
 
     return install
+
+
+@pytest.fixture
+def live(write_config, fake_net, account, monkeypatch):
+    monkeypatch.setenv("CLARITY_ENV", "clarity-token-value-1234")
+    monkeypatch.setenv("GOOGLE_KEY_ENV", "google-key-value-1234")
+    monkeypatch.setenv("BING_KEY_ENV", "bing-key-value-5678")
+    shared = {
+        **account,
+        "google_api_key": {"env": "GOOGLE_KEY_ENV"},
+        "bing_api_key": {"env": "BING_KEY_ENV"},
+    }
+    write_config(SITE, shared)
+    return fake_net(answer)
