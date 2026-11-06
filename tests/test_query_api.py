@@ -628,10 +628,101 @@ async def test_all_clarity_paths_share_1_budget(live, write_config):
         ("live_insights", {"numOfDays": 1}),
         ("recordings", {"filters": {"date": DAY}}),
         ("dashboard_query", {"query": "q"}),
+        ("documentation", {"query": "q"}),
     ):
         data = await ask("clarity", method, request)
         assert data["status"] == "error"
         assert "10 calls" in data["reason"]
+    assert not live
+
+
+# Parity with the schema of the official Clarity MCP server.
+@pytest.mark.parametrize(
+    ("filters", "named"),
+    [
+        ({"userType": "Robot"}, "userType"),
+        ({"sessionIntent": ["High Intention"]}, "sessionIntent"),
+        ({"deviceType": ["Fridge"]}, "deviceType"),
+        ({"deviceType": "Mobile"}, "deviceType"),
+        ({"browser": ["Netscape"]}, "browser"),
+        ({"os": ["BeOS"]}, "os"),
+        ({"channel": ["Radio"]}, "channel"),
+        ({"visitedUrls": ["/a"]}, "visitedUrls"),
+        ({"entryUrls": [{"url": "/a", "operator": "like"}]}, "entryUrls"),
+        ({"exitUrls": [{"operator": "contains"}]}, "exitUrls"),
+        ({"country": "Canada"}, "country"),
+        ({"deadClickPresent": "yes"}, "deadClickPresent"),
+        ({"clickedText": 5}, "clickedText"),
+        ({"pageDuration": 5}, "pageDuration"),
+        ({"pageDuration": {"min": 1}}, "pageDuration"),
+        ({"scrollDepth": {"min": 0, "max": 101}}, "scrollDepth"),
+        ({"performanceScore": {"min": -1, "max": None}}, "performanceScore"),
+    ],
+)
+async def test_a_bad_filter_value_spends_no_call(live, filters, named):
+    data = await ask("clarity", "recordings", {"filters": {"date": DAY, **filters}})
+    assert data["status"] == "error"
+    assert named in data["reason"]
+    assert not live
+
+
+async def test_each_kind_of_filter_goes_out_unchanged(live):
+    filters = {
+        "date": DAY,
+        "userType": "NewUser",
+        "sessionIntent": "High Intention",
+        "visitedUrls": [{"url": "/a", "operator": "contains"}],
+        "country": ["Canada"],
+        "browser": ["Chrome"],
+        "channel": ["AITools"],
+        "smartEvents": ["SignUp", "my own event"],
+        "javascriptErrors": [""],
+        "clickedText": "Buy",
+        "quickbackClickPresent": True,
+        "pageDuration": {"min": 1, "max": None},
+        "scrollDepth": {"min": 0, "max": 100},
+    }
+    data = await ask("clarity", "recordings", {"filters": filters})
+    assert data["status"] == "ok"
+    assert json.loads(sent(live)[0].content)["filters"] == filters
+
+
+async def test_clarity_options_list_the_valid_filter_values(live):
+    options = (await ask("clarity", ""))["options"]
+    values = options["recording_filter_values"]
+    assert "Tablet" in values["deviceType"]
+    assert "PaidAITools" in values["channel"]
+    assert "matchesRegex" in options["url_operators"]
+    assert "SignUp" in options["smart_event_examples"]
+    assert set(options["recording_filter_units"]) >= {"pageDuration", "firstInputDelay"}
+    assert any("1 metric" in rule for rule in options["dashboard_rules"])
+
+
+async def test_recordings_say_that_they_are_a_sample(live):
+    data = await ask("clarity", "recordings", {"filters": {"date": DAY}, "count": 250})
+    assert data["more_rows"] == "possible"
+    assert "sample" in data["sample"]
+
+
+async def test_dashboard_shows_the_question_that_clarity_answered(live, fake_net):
+    reply = {"query": "Rewritten question", "data": [{"Device": "PC"}], "dataErrorType": 0}
+    fake_net(lambda _: httpx2.Response(200, json=reply))
+    data = await ask("clarity", "dashboard_query", {"query": "q"})
+    assert data["answered_question"] == "Rewritten question"
+
+
+async def test_documentation_sends_the_question_and_keeps_the_text(live, fake_net):
+    calls = fake_net(lambda _: httpx2.Response(200, json={"answer": "Text"}))
+    data = await ask("clarity", "documentation", {"query": "How long are recordings kept?"})
+    assert calls[0].url.path == "/mcp/documentation/query"
+    assert json.loads(calls[0].content) == {"query": "How long are recordings kept?"}
+    assert data["rows"] == [{"answer": "Text"}]
+    assert data["calls_used_today"] == 1
+
+
+async def test_documentation_refuses_an_empty_question_before_it_spends(live):
+    data = await ask("clarity", "documentation", {"query": " "})
+    assert data["status"] == "error"
     assert not live
 
 

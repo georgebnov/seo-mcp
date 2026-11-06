@@ -26,6 +26,7 @@ READ_POSTS = {
     ("chromeuxreport.googleapis.com", r"/v1/records:queryHistoryRecord"),
     ("clarity.microsoft.com", r"/mcp/recordings/sample"),
     ("clarity.microsoft.com", r"/mcp/dashboard/query"),
+    ("clarity.microsoft.com", r"/mcp/documentation/query"),
 }
 
 

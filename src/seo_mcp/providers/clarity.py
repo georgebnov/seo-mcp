@@ -21,13 +21,15 @@ from seo_mcp.params import BadInput, Params
 from seo_mcp.results import Refused, Unsupported, ok
 
 API = "https://www.clarity.ms/export-data/api/v1/project-live-insights"
-# The official Clarity MCP server calls these 2, with the same token. Both read.
+# The official Clarity MCP server calls these 3, with the same token. All 3 read.
 RECORDINGS_API = "https://clarity.microsoft.com/mcp/recordings/sample"
 DASHBOARD_API = "https://clarity.microsoft.com/mcp/dashboard/query"
+DOCUMENTATION_API = "https://clarity.microsoft.com/mcp/documentation/query"
 ENDPOINTS = (
     net.Endpoint("GET", "www.clarity.ms", r"/export-data/api/v1/project-live-insights"),
     net.Endpoint("POST", "clarity.microsoft.com", r"/mcp/recordings/sample"),
     net.Endpoint("POST", "clarity.microsoft.com", r"/mcp/dashboard/query"),
+    net.Endpoint("POST", "clarity.microsoft.com", r"/mcp/documentation/query"),
 )
 CACHE_ENV = NAME.upper().replace("-", "_") + "_CACHE_DIR"
 # The API allows 10 calls for each project each day, for the last 1 to 3 days.
@@ -255,29 +257,93 @@ SORTS = (
     "PageCount_ASC",
     "PageCount_DESC",
 )
-RECORDING_FILTERS = frozenset(
+# The filter names, values, and units come from the official Clarity MCP server. See
+# THIRD_PARTY_NOTICES.md. The API has no reference page, so its schema is the only record.
+ONE_VALUE_FILTERS = {
+    "userType": ("NewUser", "ReturningUser"),
+    "sessionIntent": ("Low Intention", "Medium Intention", "High Intention"),
+}
+LIST_VALUE_FILTERS = {
+    "deviceType": ("Mobile", "Tablet", "PC", "Email", "Other"),
+    "browser": (
+        "Bot",
+        "MiuiBrowser",
+        "Chrome",
+        "CoralWebView",
+        "Edge",
+        "Other",
+        "Firefox",
+        "IE",
+        "Unknown",
+        "Headless",
+        "MobileApp",
+        "Opera",
+        "OperaMini",
+        "Safari",
+        "Samsung",
+        "SamsungInternet",
+        "Sogou",
+        "UCBrowser",
+        "YandexBrowser",
+        "QQBrowser",
+    ),
+    "os": (
+        "BlackBerry",
+        "Android",
+        "ChromeOS",
+        "iOS",
+        "Linux",
+        "MacOS",
+        "Other",
+        "Windows",
+        "WindowsMobile",
+    ),
+    "channel": (
+        "OrganicSearch",
+        "Direct",
+        "Email",
+        "Display",
+        "Social",
+        "PaidSearch",
+        "Other",
+        "Affiliate",
+        "Referral",
+        "Video",
+        "Audio",
+        "SMS",
+        "AITools",
+        "PaidAITools",
+    ),
+}
+URL_OPERATORS = (
+    "contains",
+    "startsWith",
+    "endsWith",
+    "excludes",
+    "isExactly",
+    "isExactlyNot",
+    "matchesRegex",
+    "excludesRegex",
+)
+URL_FILTERS = frozenset({"visitedUrls", "entryUrls", "exitUrls"})
+TEXT_FILTERS = frozenset({"referringUrl", "clickedText", "productName"})
+TEXT_LIST_FILTERS = frozenset(
     {
-        "date",
-        "referringUrl",
-        "userType",
-        "sessionIntent",
-        "visitedUrls",
-        "entryUrls",
-        "exitUrls",
         "country",
         "city",
         "state",
-        "deviceType",
-        "browser",
-        "os",
         "source",
         "medium",
         "campaign",
-        "channel",
         "smartEvents",
         "javascriptErrors",
         "clickErrors",
-        "clickedText",
+        "productBrand",
+        "checkoutAbandonmentStep",
+    }
+)
+FLAG_FILTERS = frozenset(
+    {
         "enteredTextPresent",
         "selectedTextPresent",
         "resizeEventPresent",
@@ -286,27 +352,57 @@ RECORDING_FILTERS = frozenset(
         "rageClickPresent",
         "excessiveScrollPresent",
         "quickbackClickPresent",
-        "visiblePageDuration",
-        "hiddenPageDuration",
-        "pageDuration",
-        "sessionDuration",
-        "scrollDepth",
-        "pagesCount",
-        "pageClickEventCount",
-        "sessionClickEventCount",
-        "performanceScore",
-        "largestContentfulPaint",
-        "cumulativeLayoutShift",
-        "firstInputDelay",
-        "productRating",
-        "productRatingsCount",
-        "productPrice",
-        "productName",
         "productPurchases",
         "productAvailability",
-        "productBrand",
-        "checkoutAbandonmentStep",
     }
+)
+# A range filter has min and max. Each is a number or null. A value here is the valid span.
+RANGE_FILTERS: dict[str, tuple[float, float] | None] = {
+    "visiblePageDuration": None,
+    "hiddenPageDuration": None,
+    "pageDuration": None,
+    "sessionDuration": None,
+    "scrollDepth": (0, 100),
+    "pagesCount": None,
+    "pageClickEventCount": None,
+    "sessionClickEventCount": None,
+    "performanceScore": (0, 100),
+    "largestContentfulPaint": None,
+    "cumulativeLayoutShift": None,
+    "firstInputDelay": None,
+    "productRating": None,
+    "productRatingsCount": None,
+    "productPrice": None,
+}
+RECORDING_FILTERS = frozenset(
+    {"date", *ONE_VALUE_FILTERS, *LIST_VALUE_FILTERS, *RANGE_FILTERS}
+    | URL_FILTERS
+    | TEXT_FILTERS
+    | TEXT_LIST_FILTERS
+    | FLAG_FILTERS
+)
+RECORDING_FILTER_UNITS = {
+    "visiblePageDuration": "minutes",
+    "hiddenPageDuration": "minutes",
+    "pageDuration": "minutes",
+    "sessionDuration": "minutes",
+    "scrollDepth": "percent, 0 to 100",
+    "performanceScore": "score, 0 to 100",
+    "largestContentfulPaint": "seconds",
+    "firstInputDelay": "milliseconds",
+}
+# Examples only: a site can define its own smart events, so the server does not limit them.
+SMART_EVENT_EXAMPLES = ("Purchase", "ContactUs", "SignUp", "BeginCheckout", "Download", "Login")
+DASHBOARD_RULES = (
+    "Ask for 1 metric or 1 trend in each question.",
+    "Name the time frame, the full URL, and the segment in the text.",
+    "Example: Dead click count per page between 2026/09/25 and 2026/10/23.",
+    "answered_question shows the question that Clarity rewrote and answered: read its dates.",
+    "Column names come from the text of the question, so they can change.",
+)
+SAMPLE_NOTE = (
+    "The API gives a sample of sessions, not all of them, so do not use these rows as a total. "
+    "Use dashboard_query for a count."
 )
 MAX_RECORDINGS = 250
 DEFAULT_RECORDINGS = 100
@@ -359,6 +455,63 @@ def _check_date(filters: dict[str, Any]) -> tuple[str, str]:
     return start, end
 
 
+def _is_text_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _check_urls(name: str, value: Any) -> None:
+    shape = f"filters.{name} must be a list of objects with url and operator."
+    if not isinstance(value, list):
+        raise BadInput(shape)
+    for item in value:
+        if not isinstance(item, dict) or not isinstance(item.get("url"), str):
+            raise BadInput(shape)
+        one_of(f"filters.{name} operator", item.get("operator"), URL_OPERATORS)
+
+
+def _is_bound(value: Any, span: tuple[float, float] | None) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    return span is None or span[0] <= value <= span[1]
+
+
+def _check_range(name: str, value: Any) -> None:
+    span = RANGE_FILTERS[name]
+    valid = (
+        isinstance(value, dict)
+        and set(value) == {"min", "max"}
+        and all(_is_bound(bound, span) for bound in value.values())
+    )
+    if not valid:
+        limit = f" from {span[0]} to {span[1]}" if span else ""
+        raise BadInput(f"filters.{name} needs min and max: each a number{limit} or null.")
+
+
+def _check_filter(name: str, value: Any) -> None:
+    if name in ONE_VALUE_FILTERS:
+        one_of(f"filters.{name}", value, ONE_VALUE_FILTERS[name])
+    elif name in LIST_VALUE_FILTERS:
+        if not isinstance(value, list):
+            raise BadInput(f"filters.{name} must be a list.")
+        for item in value:
+            one_of(f"filters.{name}", item, LIST_VALUE_FILTERS[name])
+    elif name in URL_FILTERS:
+        _check_urls(name, value)
+    elif name in TEXT_LIST_FILTERS:
+        if not _is_text_list(value):
+            raise BadInput(f"filters.{name} must be a list of text.")
+    elif name in TEXT_FILTERS:
+        if not isinstance(value, str):
+            raise BadInput(f"filters.{name} must be text.")
+    elif name in FLAG_FILTERS:
+        if not isinstance(value, bool):
+            raise BadInput(f"filters.{name} must be true or false.")
+    elif name in RANGE_FILTERS:
+        _check_range(name, value)
+
+
 async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     filters = request["filters"]
     if not isinstance(filters, dict):
@@ -367,6 +520,8 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     if unknown:
         raise BadInput(f"filters has no field {', '.join(unknown)}.")
     start, end = _check_date(filters)
+    for name, value in filters.items():
+        _check_filter(name, value)
     sort = request.get("sortBy", SORTS[0])
     one_of("sortBy", sort, SORTS)
     count = whole("count", request.get("count", DEFAULT_RECORDINGS), 1, MAX_RECORDINGS)
@@ -384,8 +539,8 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
 
     stored, hit = await _cached(site, path, call)
     rows = as_rows(stored["answer"])
-    more = "possible" if len(rows) >= count else "no"
-    return answer(rows, more_rows=more, applied=body, **_stored_fields(site, stored, hit))
+    fields = _stored_fields(site, stored, hit)
+    return answer(rows, more_rows="possible", sample=SAMPLE_NOTE, applied=body, **fields)
 
 
 async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any]:
@@ -404,9 +559,26 @@ async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any
     rows = as_rows(reply if data is None else data)
     code = reply.get("dataErrorType") if isinstance(reply, dict) else None
     reason = f"Clarity gave data error type {code} for this question." if code else None
+    answered = reply.get("query") if isinstance(reply, dict) else None
+    fields = _stored_fields(site, stored, hit)
     return answer(
-        rows, more_rows="no", reason=reason, applied=body, **_stored_fields(site, stored, hit)
+        rows, more_rows="no", reason=reason, answered_question=answered, applied=body, **fields
     )
+
+
+async def _documentation(site: Site, request: dict[str, Any]) -> dict[str, Any]:
+    text = request["query"]
+    if not isinstance(text, str) or not text.strip():
+        raise BadInput("query must be text.")
+    body = {"query": text}
+    path = _body_path(site.host, "documentation", body)
+
+    async def call(headers: dict[str, str]) -> Any:
+        return await net.request(ENDPOINTS, "POST", DOCUMENTATION_API, json=body, headers=headers)
+
+    stored, hit = await _cached(site, path, call)
+    rows = as_rows(stored["answer"])
+    return answer(rows, more_rows="no", applied=body, **_stored_fields(site, stored, hit))
 
 
 APIS = {
@@ -432,12 +604,26 @@ APIS = {
                 frozenset({"query", "timezone"}),
                 frozenset({"query"}),
             ),
+            "documentation": Method(
+                _documentation,
+                "1 plain-language question about the Clarity product and its documentation.",
+                frozenset({"query"}),
+                frozenset({"query"}),
+            ),
         },
         options={
             "dimensions": list(DIMENSIONS),
             "num_of_days": [1, 2, 3],
             "sort_by": list(SORTS),
             "recording_filters": sorted(RECORDING_FILTERS),
+            "recording_filter_values": ONE_VALUE_FILTERS | LIST_VALUE_FILTERS,
+            "recording_filter_units": RECORDING_FILTER_UNITS,
+            "url_filters": "Each of visitedUrls, entryUrls, and exitUrls is a list of objects "
+            "with url and operator.",
+            "url_operators": list(URL_OPERATORS),
+            "range_filters": "Each has min and max: a number or null.",
+            "smart_event_examples": list(SMART_EVENT_EXAMPLES),
+            "dashboard_rules": list(DASHBOARD_RULES),
             "max_recordings": MAX_RECORDINGS,
             "calls_per_project_per_day": DAILY_CALLS,
             "budget": "Each live call of each method spends 1 of the daily calls. "
@@ -450,6 +636,8 @@ APIS = {
             "and Clarity has no recording download.",
             "live_insights data older than 3 days.",
             "More than 1,000 rows in live_insights: the API has no paging.",
+            "A retention limit: recordings and dashboard_query refuse no time frame, and rows "
+            "of old days are simply absent. Empty rows do not prove zero activity.",
         ),
     )
 }
