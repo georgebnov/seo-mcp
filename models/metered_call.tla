@@ -101,8 +101,8 @@ BusyLedgerSendsNothing == pc = "busy" => (count = count0 /\ sent = sent0)
 BadAnswerIsNotSaved == pc = "badAnswer" => cache # "today"
 \* A saved answer that goes back has a good shape.
 HitHasAGoodShape == pc = "hit" => cache = "today"
-\* The ledger count equals the metered requests sent.
-CountEqualsRequestsSent == pc \in Ends => count = sent
+\* The count is never below the requests sent. A connection that fails before the send counts.
+CountNeverBelowRequestsSent == count >= sent
 \* The server never sends a metered call past the limit.
 NeverPastTheLimit == sent <= Limit
 \* A broken ledger sends no metered call.

@@ -183,6 +183,16 @@ async def test_a_block_of_an_older_day_ends(live):
     assert (await run("clarity", INSIGHTS))["status"] == "ok"
 
 
+async def test_a_connection_that_fails_before_the_send_still_counts(live):
+    def refuse(request):
+        raise httpx2.ConnectError("no route")
+
+    net.transport = httpx2.MockTransport(refuse)
+    data = await run("clarity", DASHBOARD)
+    assert data["status"] == "error"
+    assert data["calls_used_today"] == 1
+
+
 # URL Inspection: 2000 for each site each day.
 async def test_url_inspection_spends_from_the_ledger_of_the_property(live):
     data = await run("search_console", INSPECT)
