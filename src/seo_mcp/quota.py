@@ -162,16 +162,12 @@ def view(ledger: Ledger, key: str) -> dict[str, Any]:
 
 def _refusal(ledger: Ledger, used: int, blocked: bool, count: int) -> str:
     reset = f"Use a cached answer, or call again after {_next_reset()}. {RESET_ASSUMED}"
+    spent = f"used {used} of the {ledger.limit} calls of this {ledger.title} for this UTC day"
     if blocked:
-        return f"The API answered HTTP 429 for this {ledger.title} on this UTC day. {reset}"
+        return f"The API answered HTTP 429 on this UTC day. This server {spent}. {reset}"
     if count == 1:
-        spent = f"has spent the {ledger.limit} calls of this {ledger.title} for this UTC day"
         return f"This server {spent}. {reset}"
-    left = max(ledger.limit - used, 0)
-    return (
-        f"This request needs {count} calls, and this {ledger.title} has {left} of "
-        f"{ledger.limit} left for this UTC day. {reset}"
-    )
+    return f"This request needs {count} calls, and this server {spent}. {reset}"
 
 
 async def spend(ledger: Ledger, key: str, count: int = 1) -> net.Receipt:

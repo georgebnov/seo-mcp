@@ -95,6 +95,54 @@ async def test_a_source_that_spends_nothing_shows_no_count(live):
 
 
 # The server stops before the limit.
+METERED_PATHS = [
+    ("clarity", INSIGHTS, clarity.LEDGER, HOST),
+    ("clarity", RECORDINGS, clarity.LEDGER, HOST),
+    ("clarity", DASHBOARD, clarity.LEDGER, HOST),
+    ("search_console", INSPECT, gsc.LEDGER, SITE["gsc_property"]),
+]
+
+
+@pytest.mark.parametrize(("api", "call", "ledger", "key"), METERED_PATHS)
+async def test_each_metered_method_refuses_at_the_limit(live, api, call, ledger, key):
+    set_ledger(ledger, key, used=ledger.limit)
+    data = await run(api, call)
+    assert data["status"] == "error"
+    assert f"used {ledger.limit} of the {ledger.limit} calls" in data["reason"]
+    assert data["resets_at"] in data["reason"]
+    assert data["calls_left"] == 0
+    assert not metered_requests(live)
+
+
+@pytest.mark.parametrize(
+    ("source", "ledger", "key"),
+    [("clarity", clarity.LEDGER, HOST), ("index_status", gsc.LEDGER, SITE["gsc_property"])],
+)
+async def test_each_metered_source_refuses_at_the_limit(live, source, ledger, key):
+    set_ledger(ledger, key, used=ledger.limit)
+    data = (await core.get_seo_data(HOST, [source]))["sources"][source]
+    assert f"{ledger.limit} of the {ledger.limit} calls" in data["reason"]
+    assert data["resets_at"] in data["reason"]
+    assert not metered_requests(live)
+
+
+async def test_a_blocked_day_gives_the_used_count_and_the_limit(live):
+    set_ledger(clarity.LEDGER, HOST, used=4, blocked=True)
+    data = await run("clarity", DASHBOARD)
+    assert "HTTP 429" in data["reason"]
+    assert "used 4 of the 10 calls" in data["reason"]
+    assert data["resets_at"] in data["reason"]
+    assert not metered_requests(live)
+
+
+async def test_a_batch_over_the_limit_gives_the_used_count_and_the_limit(live):
+    set_ledger(gsc.LEDGER, SITE["gsc_property"], used=gsc.LEDGER.limit - 1)
+    data = (await core.get_seo_data(HOST, ["index_status"]))["sources"]["index_status"]
+    assert f"used {gsc.LEDGER.limit - 1} of the {gsc.LEDGER.limit} calls" in data["reason"]
+    assert data["resets_at"] in data["reason"]
+    assert not metered_requests(live)
+
+
 async def test_a_refused_call_names_the_reset_and_sends_nothing(live):
     set_ledger(clarity.LEDGER, HOST, used=10)
     data = await run("clarity", DASHBOARD)

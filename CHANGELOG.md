@@ -26,3 +26,4 @@
 - Extend the failure window of 60 seconds and the shape check to all sources and methods.
 - Trim the outer spaces of a Clarity dashboard question, so that they do not spend a new call.
 - Fix the reason of a connection failure: it read `The connection failed. from the API.`
+- Give the used count, the limit, and the reset time in each refusal of a call ledger.
