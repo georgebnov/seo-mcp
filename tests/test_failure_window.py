@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import httpx2
 import pytest
 
-from seo_mcp import core, net, quota
+from seo_mcp import core, net, quota, shared
 from seo_mcp.providers import clarity
 from test_query_api import HOST
 from test_quota import DASHBOARD, INSIGHTS, RECORDINGS, metered_requests, replies, run, set_ledger
@@ -23,7 +23,7 @@ def saved_file():
 
 
 def mark_file():
-    return clarity.failure_path(saved_file())
+    return shared.failure_path(saved_file())
 
 
 def clarity_fails(fake_net, status=500):
@@ -131,7 +131,7 @@ def age_failure(seconds):
 async def test_the_request_goes_out_again_after_the_window(live, fake_net):
     calls = clarity_fails(fake_net)
     await run("clarity", DASHBOARD)
-    age_failure(clarity.FAILURE_WINDOW_SECONDS)
+    age_failure(shared.FAILURE_WINDOW_SECONDS)
     await run("clarity", DASHBOARD)
     assert len(metered_requests(calls)) == 2
     assert count() == 2
@@ -140,7 +140,7 @@ async def test_the_request_goes_out_again_after_the_window(live, fake_net):
 async def test_a_good_answer_ends_the_failure(live, fake_net):
     clarity_fails(fake_net)
     await run("clarity", DASHBOARD)
-    age_failure(clarity.FAILURE_WINDOW_SECONDS)
+    age_failure(shared.FAILURE_WINDOW_SECONDS)
     fake_net(replies(lambda _: None))
     assert (await run("clarity", DASHBOARD))["status"] == "ok"
     data = await run("clarity", DASHBOARD)

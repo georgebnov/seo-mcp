@@ -5,7 +5,7 @@ from collections.abc import Awaitable
 from typing import Any
 
 from seo_mcp import api as full_api
-from seo_mcp import config, net, providers, quota, tasks
+from seo_mcp import config, net, providers, quota, shared, tasks
 from seo_mcp.config import ConfigError, Site
 from seo_mcp.params import COMPARE_NEEDS, NONE, BadInput, Params, parse
 from seo_mcp.results import NotConnected, Refused, Unsupported, failed, ok, unsupported
@@ -26,18 +26,19 @@ def _accepts(name: str) -> list[str]:
 
 
 def _failed(reason: str) -> dict[str, Any]:
-    return {**failed("error", reason), **quota.shown()}
+    return {**failed("error", reason), **quota.shown(), **shared.shown()}
 
 
 async def _guard(job: Awaitable[dict[str, Any]]) -> dict[str, Any]:
     # The job runs in this task, so a quota that it names is visible here on each exit: a
     # call that failed or timed out can still have spent, and a provider cannot forget this.
     quota.forget()
+    shared.begin()
     # A reason is fixed text. Exception text can hold a URL, and a URL can hold a key.
     try:
         async with asyncio.timeout(SOURCE_TIMEOUT_SECONDS):
             result = await job
-            return {**result, **quota.shown()}
+            return {**result, **quota.shown(), **shared.shown()}
     except Unsupported:
         raise
     except NotConnected as exc:

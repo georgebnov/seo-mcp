@@ -56,6 +56,11 @@ def write_json(target: Path, stored: dict[str, Any]) -> None:
     Path(name).replace(target)
 
 
+def try_lock(lock: IO[str]) -> None:
+    """Take a lock, or raise BlockingIOError, an OSError."""
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
 async def take_lock(lock: IO[str], wait: float | None = None) -> bool:
     """Poll for a lock, so that a stuck process cannot freeze the event loop of this server.
 
@@ -65,7 +70,7 @@ async def take_lock(lock: IO[str], wait: float | None = None) -> bool:
     deadline = None if wait is None else time.monotonic() + wait
     while True:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try_lock(lock)
             return True
         except BlockingIOError:
             if deadline is not None and time.monotonic() >= deadline:

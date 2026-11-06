@@ -1,5 +1,5 @@
 ---- MODULE parallel_callers ----
-\* 2 callers of 1 Clarity request on a cold cache, through clarity._only_fetcher.
+\* 2 callers of 1 request on a cold cache, through shared.once. Each source and method uses it.
 \* The steps between the lock and the send have no await, so 1 step holds them.
 EXTENDS Naturals
 CONSTANT Limit
@@ -20,7 +20,7 @@ TakeLockHit(c) ==
   /\ pc[c] = "waiting" /\ lock = 0 /\ cache = "saved"
   /\ pc' = [pc EXCEPT ![c] = "hit"]
   /\ UNCHANGED <<lock, cache, blocked, count, sent, firstOk, sentAfterBlock>> /\ Keep
-\* clarity._recent_failure: the file of the failure is under the window, so nothing is spent.
+\* shared._recent_failure: the file of the failure is under the window, so nothing is spent.
 TakeLockRepeat(c) ==
   /\ pc[c] = "waiting" /\ lock = 0 /\ cache = "cold" /\ failed
   /\ pc' = [pc EXCEPT ![c] = "repeated"]

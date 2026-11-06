@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
-from seo_mcp import net, quota
+from seo_mcp import net, quota, shared
 from seo_mcp.api import Api, Method, Quota, answer, one_of, row_limit, whole
 from seo_mcp.config import Site
 from seo_mcp.params import DATES, MAX_TEXT, NONE, BadInput, Params, page_url, period
@@ -102,7 +102,9 @@ async def _analytics(
     prop = quote(site.field("gsc_property"), safe="")
     dimensions = body.get("dimensions", [])
     url = f"{SITES_API}/{prop}/searchAnalytics/query"
-    reply = await net.request(ENDPOINTS, "POST", url, json=body, headers=headers, explain=explain)
+    reply = await shared.request(
+        site, ENDPOINTS, "POST", url, json=body, headers=headers, explain=explain
+    )
     return [
         {
             **dict(zip(dimensions, row.get("keys", []), strict=True)),
@@ -168,7 +170,7 @@ async def quick_wins(site: Site, params: Params) -> dict[str, Any]:
 async def sitemaps(site: Site, params: Params) -> dict[str, Any]:
     prop = quote(site.field("gsc_property"), safe="")
     url = f"{SITES_API}/{prop}/sitemaps"
-    reply = await net.request(ENDPOINTS, "GET", url, headers=await _headers(site))
+    reply = await shared.request(site, ENDPOINTS, "GET", url, headers=await _headers(site))
     rows = [
         {
             "path": item["path"],
@@ -183,10 +185,10 @@ async def sitemaps(site: Site, params: Params) -> dict[str, Any]:
     return ok(rows, thin=not rows, reason=None if rows else "Search Console lists no sitemap.")
 
 
-async def _inspections(site: Site, count: int) -> net.Receipt:
+def _show_inspections(site: Site) -> str:
     key = site.field("gsc_property")
     quota.show(lambda: quota.view(LEDGER, key))
-    return await quota.spend(LEDGER, key, count)
+    return key
 
 
 async def _inspect(
@@ -198,7 +200,7 @@ async def _inspect(
             ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers, spent=spent
         )
     except net.ApiError as exc:
-        return {"url": url, "error": str(exc), "status": exc.status}
+        return {"url": url, "error": str(exc), "failure": exc}
     status = reply.get("inspectionResult", {}).get("indexStatusResult", {})
     return {
         "url": url,
@@ -219,13 +221,22 @@ async def _top_urls(site: Site, headers: dict[str, str]) -> list[str]:
 async def index_status(site: Site, params: Params) -> dict[str, Any]:
     headers = await _headers(site)
     urls = [params.page] if params.page else await _top_urls(site, headers)
-    spent = await _inspections(site, len(urls))
-    rows = list(await asyncio.gather(*(_inspect(site, url, headers, spent) for url in urls)))
+    key = _show_inspections(site)
+
+    async def prepare() -> net.Receipt:
+        return await quota.spend(LEDGER, key, len(urls))
+
+    async def send(spent: net.Receipt) -> dict[str, Any]:
+        found = list(await asyncio.gather(*(_inspect(site, url, headers, spent) for url in urls)))
+        failures = [row.pop("failure") for row in found if "failure" in row]
+        if len(failures) == len(found):
+            raise failures[0]
+        return {"rows": found}
+
+    # 1 failed URL of many stays in the saved answer: a repeat must not spend all URLs again.
+    path = shared.entry(site, "index_status", sorted(urls))
+    rows = (await shared.once(path, send, prepare=prepare))["rows"]
     bad = [row for row in rows if "error" in row]
-    if len(bad) == len(rows):
-        raise net.ApiError(bad[0]["status"])
-    for row in bad:
-        del row["status"]
     reason = f"{len(bad)} of {len(rows)} URLs failed inspection." if bad else None
     enough = 1 if params.page else THIN_INSPECTED_URLS
     return ok(rows, thin=len(rows) - len(bad) < enough, reason=reason)
@@ -316,10 +327,18 @@ async def _url_inspection(site: Site, request: dict[str, Any]) -> dict[str, Any]
     url = page_url(site.host, request["inspectionUrl"], "inspectionUrl")
     body = {**request, "inspectionUrl": url, "siteUrl": site.field("gsc_property")}
     headers = await _headers(site)
-    spent = await _inspections(site, 1)
-    reply = await net.request(
-        ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers, explain=True, spent=spent
-    )
+    key = _show_inspections(site)
+
+    async def prepare() -> net.Receipt:
+        return await quota.spend(LEDGER, key)
+
+    async def send(spent: net.Receipt) -> Any:
+        return await net.request(
+            ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers, explain=True, spent=spent
+        )
+
+    path = shared.entry(site, "url_inspection", body)
+    reply = await shared.once(path, send, prepare=prepare)
     return answer([reply.get("inspectionResult", {})], more_rows="no", applied=body)
 
 
@@ -330,7 +349,9 @@ async def _sitemap_list(site: Site, request: dict[str, Any]) -> dict[str, Any]:
         query["sitemapIndex"] = page_url(site.host, request["sitemapIndex"], "sitemapIndex")
     url = f"{SITES_API}/{prop}/sitemaps"
     headers = await _headers(site)
-    reply = await net.request(ENDPOINTS, "GET", url, params=query, headers=headers, explain=True)
+    reply = await shared.request(
+        site, ENDPOINTS, "GET", url, params=query, headers=headers, explain=True
+    )
     return answer(reply.get("sitemap", []), more_rows="no", applied=query)
 
 
@@ -338,7 +359,8 @@ async def _sitemap_get(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     prop = quote(site.field("gsc_property"), safe="")
     feed = page_url(site.host, request["feedpath"], "feedpath")
     url = f"{SITES_API}/{prop}/sitemaps/{quote(feed, safe='')}"
-    reply = await net.request(ENDPOINTS, "GET", url, headers=await _headers(site), explain=True)
+    headers = await _headers(site)
+    reply = await shared.request(site, ENDPOINTS, "GET", url, headers=headers, explain=True)
     return answer([reply], more_rows="no", applied={"feedpath": feed})
 
 

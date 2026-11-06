@@ -328,7 +328,7 @@ async def test_the_server_does_not_infer_the_ga4_tier(live, fake_net):
 async def test_ga4_tokens_add_up_over_the_day(live, fake_net):
     fake_net(replies(ga4_reply))
     await core.query_api(HOST, "ga4", "run_report", {})
-    data = await core.query_api(HOST, "ga4", "run_report", {})
+    data = await core.query_api(HOST, "ga4", "run_report", {"limit": 5})
     assert data["tokens_used_today"] == 24
 
 

@@ -1,4 +1,4 @@
-export const title = "2 parallel callers of 1 Clarity request on a cold cache";
+export const title = "2 parallel callers of 1 request on a cold cache";
 const pair = (v) => [v.pc[1], v.pc[2]];
 const count = (v, names) => pair(v).filter((p) => names.includes(p)).length;
 const ended = ["hit", "answered", "refused", "failed", "notSent", "repeated", "dayBlocked", "timedOut"];

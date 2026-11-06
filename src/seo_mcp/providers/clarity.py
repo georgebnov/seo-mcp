@@ -1,18 +1,15 @@
 """Microsoft Clarity live insights, cached for the UTC day."""
 
-import asyncio
 import hashlib
 import json
-import math
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-from seo_mcp import NAME, net, quota
+from seo_mcp import NAME, net, quota, shared
 from seo_mcp.api import Api, Method, Quota, answer, as_rows, one_of, whole
 from seo_mcp.config import Site
 from seo_mcp.params import BadInput, Params
@@ -41,9 +38,6 @@ MISS_REASON = (
     f"Clarity has no row for this page. An answer has at most {API_ROWS} rows for each metric, "
     "so this is not proof of zero traffic."
 )
-# A failed call can count at the API, so the same request waits this long. This stops a burst
-# of agents. It does not protect the day: a long outage still spends 1 call in each window.
-FAILURE_WINDOW_SECONDS = 60
 LEDGER = quota.Ledger("clarity-calls", "Clarity project", DAILY_CALLS)
 
 
@@ -63,16 +57,6 @@ def ledger_path(project_id: str) -> Path:
     return quota.path(LEDGER, project_id)
 
 
-def _read_cache(path: Path, good: Callable[[Any], bool]) -> dict[str, Any] | None:
-    try:
-        stored: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-        same_day = datetime.fromisoformat(stored["cached_at"]).date() == datetime.now(UTC).date()
-        usable = same_day and good(stored["answer"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    return stored if usable else None
-
-
 def _all_objects(items: Any) -> bool:
     return isinstance(items, list) and all(isinstance(item, dict) for item in items)
 
@@ -90,33 +74,6 @@ def _good_dashboard(reply: Any) -> bool:
     return _all_objects(data) or (data is None and bool(reply.get("dataErrorType")))
 
 
-def failure_path(path: Path) -> Path:
-    return path.with_suffix(".failed.json")
-
-
-def _mark_failure(path: Path, status: int | None, detail: str | None = None) -> None:
-    stored = {"failed_at": datetime.now(UTC).isoformat(), "status": status, "detail": detail}
-    quota.write_json(failure_path(path), stored)
-
-
-def _recent_failure(path: Path) -> net.ApiError | None:
-    try:
-        stored = json.loads(failure_path(path).read_text(encoding="utf-8"))
-        status = stored["status"]
-        age = (datetime.now(UTC) - datetime.fromisoformat(stored["failed_at"])).total_seconds()
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    if not 0 <= age < FAILURE_WINDOW_SECONDS or not (status is None or type(status) is int):
-        return None
-    left = math.ceil(FAILURE_WINDOW_SECONDS - age)
-    return net.ApiError(
-        status,
-        net.BAD_SHAPE if stored.get("detail") == net.BAD_SHAPE else None,
-        note=f"The same request failed {int(age)} seconds ago, so the server did not send it "
-        f"again and spent no call. It can send it after {left} seconds.",
-    )
-
-
 def project(site: Site) -> str:
     return site.fields.get("clarity_project", site.host)
 
@@ -129,19 +86,6 @@ def _headers(site: Site) -> dict[str, str]:
     }
 
 
-@asynccontextmanager
-async def _only_fetcher(path: Path) -> AsyncIterator[None]:
-    """Let 1 caller fetch an answer, in this process or another, while the others wait.
-
-    Parallel agents run separate server processes on 1 cache folder, and each miss spends a
-    call.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with path.with_suffix(".lock").open("a") as lock:
-        await quota.take_lock(lock)
-        yield
-
-
 async def _cached(
     site: Site,
     path: Path,
@@ -149,42 +93,29 @@ async def _cached(
     good: Callable[[Any], bool],
     *,
     daily_429: bool = False,
-) -> tuple[dict[str, Any], bool]:
+) -> Any:
     key = project(site)
     quota.show(lambda: quota.view(LEDGER, key))
-    async with _only_fetcher(path):
-        stored = _read_cache(path, good)
-        if stored is not None:
-            return stored, True
-        failure = _recent_failure(path)
-        if failure:
-            raise failure
+
+    async def prepare() -> tuple[dict[str, str], net.Receipt]:
         headers = _headers(site)
-        receipt = await quota.spend(LEDGER, key)
+        return headers, await quota.spend(LEDGER, key)
+
+    async def send(ready: tuple[dict[str, str], net.Receipt]) -> Any:
+        headers, receipt = ready
         try:
-            reply = await call(headers, receipt)
-            if not good(reply):
-                raise net.ApiError(200, net.BAD_SHAPE)
+            return await call(headers, receipt)
         except net.ApiError as exc:
-            if exc.sent:
-                _mark_failure(path, exc.status, exc.detail)
             if daily_429 and exc.status == 429:
                 # A stuck ledger must not hide the 429. The next call gets its own 429.
                 with suppress(Refused):
                     await quota.block(LEDGER, key, receipt)
             raise
-        except asyncio.CancelledError:
-            # The source timeout ended a call in flight, and the API can have counted it.
-            _mark_failure(path, None)
-            raise
-        stored = {"cached_at": datetime.now(UTC).isoformat(), "answer": reply}
-        quota.write_json(path, stored)
-        return stored, False
+
+    return await shared.once(path, send, prepare=prepare, good=good, until=shared.end_of_utc_day)
 
 
-async def _insights(
-    site: Site, days: int, dimensions: tuple[str, ...]
-) -> tuple[dict[str, Any], bool]:
+async def _insights(site: Site, days: int, dimensions: tuple[str, ...]) -> Any:
     params: dict[str, Any] = {"numOfDays": days}
     params |= {f"dimension{at}": name for at, name in enumerate(dimensions, 1)}
 
@@ -240,8 +171,7 @@ async def clarity(site: Site, params: Params) -> dict[str, Any]:
     days = params.last_days or WINDOW_DAYS
     if days > WINDOW_DAYS:
         raise Unsupported(["last_days"], "Clarity gives only the last 1, 2, or 3 days.")
-    stored, from_cache = await _insights(site, days, ("URL",))
-    metrics = stored["answer"]
+    metrics = await _insights(site, days, ("URL",))
     shown = _only_page(metrics, params.page) if params.page else metrics
     traffic = [row for m in shown if m.get("metricName") == "Traffic" for row in _rows(m)]
     rows = [row for metric in shown for row in _rows(metric)[:ROWS_PER_METRIC]]
@@ -254,8 +184,6 @@ async def clarity(site: Site, params: Params) -> dict[str, Any]:
         limit=len(rows),
         window={"last_days": days},
         totals={"sessions": sessions if found else None},
-        from_cache=from_cache,
-        cached_at=stored["cached_at"],
         **extra,
     )
 
@@ -436,10 +364,6 @@ DEFAULT_RECORDINGS = 100
 INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 
 
-def _stored_fields(stored: dict[str, Any], hit: bool) -> dict[str, Any]:
-    return {"from_cache": hit, "cached_at": stored["cached_at"]}
-
-
 def _dimensions(request: dict[str, Any]) -> tuple[str, ...]:
     names: list[str] = []
     for at in (1, 2, 3):
@@ -454,9 +378,9 @@ def _dimensions(request: dict[str, Any]) -> tuple[str, ...]:
 
 async def _live_insights(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     days = whole("numOfDays", request["numOfDays"], 1, WINDOW_DAYS)
-    stored, hit = await _insights(site, days, _dimensions(request))
-    rows = [row for metric in stored["answer"] for row in _rows(metric)]
-    return answer(rows, more_rows="no", applied=request, **_stored_fields(stored, hit))
+    metrics = await _insights(site, days, _dimensions(request))
+    rows = [row for metric in metrics for row in _rows(metric)]
+    return answer(rows, more_rows="no", applied=request)
 
 
 def _check_date(filters: dict[str, Any]) -> tuple[str, str]:
@@ -557,17 +481,16 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
             ENDPOINTS, "POST", RECORDINGS_API, json=body, headers=headers, spent=spent
         )
 
-    stored, hit = await _cached(site, path, call, _all_objects)
-    rows = as_rows(stored["answer"])
-    fields = _stored_fields(stored, hit)
-    return answer(rows, more_rows="possible", sample=SAMPLE_NOTE, applied=body, **fields)
+    rows = as_rows(await _cached(site, path, call, _all_objects))
+    return answer(rows, more_rows="possible", sample=SAMPLE_NOTE, applied=body)
 
 
 async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     text = request["query"]
     if not isinstance(text, str) or not text.strip():
         raise BadInput("query must be text.")
-    body = {"query": text, "timezone": request.get("timezone", "UTC")}
+    # Only the outer spaces go: 2 texts with other differences can be 2 questions.
+    body = {"query": text.strip(), "timezone": request.get("timezone", "UTC")}
     path = _body_path(project(site), "dashboard", body)
 
     async def call(headers: dict[str, str], spent: net.Receipt) -> Any:
@@ -575,17 +498,13 @@ async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any
             ENDPOINTS, "POST", DASHBOARD_API, json=body, headers=headers, spent=spent
         )
 
-    stored, hit = await _cached(site, path, call, _good_dashboard)
-    reply = stored["answer"]
+    reply = await _cached(site, path, call, _good_dashboard)
     data = reply.get("data") if isinstance(reply, dict) else None
     rows = as_rows(reply if data is None else data)
     code = reply.get("dataErrorType") if isinstance(reply, dict) else None
     reason = f"Clarity gave data error type {code} for this question." if code else None
     answered = reply.get("query") if isinstance(reply, dict) else None
-    fields = _stored_fields(stored, hit)
-    return answer(
-        rows, more_rows="no", reason=reason, answered_question=answered, applied=body, **fields
-    )
+    return answer(rows, more_rows="no", reason=reason, answered_question=answered, applied=body)
 
 
 def now(site: Site) -> dict[str, Any]:

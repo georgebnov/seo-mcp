@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-from seo_mcp import net, quota
+from seo_mcp import net, quota, shared
 from seo_mcp.api import Api, Method, Quota, Run, answer, row_limit, whole
 from seo_mcp.config import Site
 from seo_mcp.params import DATES, Params
@@ -125,22 +125,29 @@ def _view(prop: str, pool: str) -> dict[str, Any]:
 
 
 async def _post(
-    prop: str, call: str, body: dict[str, Any], token: str, *, explain: bool = False
+    site: Site, prop: str, call: str, body: dict[str, Any], token: str, *, explain: bool = False
 ) -> Any:
     pool = POOLS[call]
     quota.show(lambda: _view(prop, pool))
-    reply = await net.request(
-        ENDPOINTS,
-        "POST",
-        f"https://{HOST}/v1beta/properties/{prop}:{call}",
-        json=body,
-        headers={"Authorization": f"Bearer {token}"},
-        explain=explain,
-    )
-    # The answer is paid for: a full disk or a stuck reading file must not lose it.
-    with suppress(OSError, TypeError, Refused):
-        await _record(prop, pool, reply)
-    return reply
+    url = f"https://{HOST}/v1beta/properties/{prop}:{call}"
+
+    async def send(_: None) -> Any:
+        reply = await net.request(
+            ENDPOINTS,
+            "POST",
+            url,
+            json=body,
+            headers={"Authorization": f"Bearer {token}"},
+            explain=explain,
+        )
+        # The answer is paid for: a full disk or a stuck reading file must not lose it.
+        with suppress(OSError, TypeError, AttributeError, Refused):
+            await _record(prop, pool, reply)
+        return reply
+
+    keep = shared.REALTIME_SECONDS if pool == "realtime" else shared.ANSWER_SECONDS
+    path = shared.entry(site, "POST", url, body, explain)
+    return await shared.once(path, send, until=shared.after(keep))
 
 
 def _window(params: Params) -> dict[str, str]:
@@ -184,7 +191,7 @@ async def _report(
         "limit": fetch,
         "returnPropertyQuota": True,
     }
-    reply = await _post(prop, "runReport", body, token)
+    reply = await _post(site, prop, "runReport", body, token)
     names = [header["name"] for header in reply.get("metricHeaders", [])]
     rows = [
         {
@@ -275,7 +282,7 @@ def _reader(call: str, paging: bool, limits: bool = True) -> Run:
             offset = whole("offset", request["offset"], 0, 2**53)
         body.setdefault("returnPropertyQuota", True)
         token = await _google.token(site, _google.GA4_SCOPE)
-        reply = await _post(prop, call, body, token, explain=True)
+        reply = await _post(site, prop, call, body, token, explain=True)
         rows = _flat(reply, reply.get("rows", []))
         count = reply.get("rowCount")
         more = "possible" if count is None else "yes" if offset + len(rows) < count else "no"
@@ -293,7 +300,7 @@ async def _metadata(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     token = await _google.token(site, _google.GA4_SCOPE)
     url = f"https://{HOST}/v1beta/properties/{prop}/metadata"
     headers = {"Authorization": f"Bearer {token}"}
-    reply = await net.request(ENDPOINTS, "GET", url, headers=headers, explain=True)
+    reply = await shared.request(site, ENDPOINTS, "GET", url, headers=headers, explain=True)
 
     def brief(kind: str, item: dict[str, Any]) -> dict[str, Any]:
         row = {"kind": kind, "apiName": item.get("apiName")}

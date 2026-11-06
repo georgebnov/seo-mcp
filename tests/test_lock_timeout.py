@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx2
 import pytest
 
-from seo_mcp import core, quota
+from seo_mcp import core, quota, shared
 from seo_mcp.providers import clarity, ga4, gsc
 from test_query_api import HOST, SITE
 from test_quota import DASHBOARD, GA4_QUOTA, INSPECT, metered_requests, replies, run, sent
@@ -108,7 +108,7 @@ async def test_a_stuck_ledger_after_a_429_keeps_the_429_reason(live, fake_net, s
     timers[0].join()
     assert "HTTP 429" in data["reason"]
     assert data["calls_used_today"] == 1
-    assert clarity.failure_path(clarity.cache_path(HOST, 1, ())).exists()
+    assert shared.failure_path(clarity.cache_path(HOST, 1, ())).exists()
 
 
 async def test_a_stuck_reading_file_does_not_lose_a_paid_ga4_answer(live, fake_net, short_wait):
