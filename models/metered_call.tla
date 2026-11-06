@@ -6,12 +6,12 @@ CONSTANT Limit
 VARIABLES pc, api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt
 vars == <<pc, api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
 
-Ends == {"hit", "repeated", "notConnected", "refused", "stored", "failed", "dayBlocked"}
+Ends == {"hit", "repeated", "badAnswer", "notConnected", "refused", "stored", "failed", "dayBlocked"}
 
 Init ==
   /\ pc = "start"
   /\ api \in {"export", "mcp"}
-  /\ cache \in {"today", "olderDay", "none", "failedInWindow", "failedBefore"}
+  /\ cache \in {"today", "olderDay", "none", "failedInWindow", "failedBefore", "badToday"}
   /\ ledger \in {"good", "olderDay", "brokenText", "wrongDate"}
   /\ sent \in 0..Limit
   /\ blocked \in BOOLEAN
@@ -30,6 +30,8 @@ CacheHit == pc = "lock" /\ cache = "today" /\ pc' = "hit" /\ Same
 CacheOld == pc = "lock" /\ cache = "olderDay" /\ pc' = "token" /\ Same
 CacheNone == pc = "lock" /\ cache = "none" /\ pc' = "token" /\ Same
 \* clarity._recent_failure: the failure of the same request is under the window.
+\* clarity._read_cache: an answer of today that an older server saved fails the shape check.
+CacheBad == pc = "lock" /\ cache = "badToday" /\ pc' = "token" /\ Same
 FailureRepeat == pc = "lock" /\ cache = "failedInWindow" /\ pc' = "repeated" /\ Same
 FailureOld == pc = "lock" /\ cache = "failedBefore" /\ pc' = "token" /\ Same
 TokenMissing == pc = "token" /\ pc' = "notConnected" /\ Same
@@ -64,6 +66,10 @@ ConnectFails == pc = "reserved" /\ pc' = "failed" /\ Same
 Answer ==
   /\ pc = "flight" /\ pc' = "stored" /\ cache' = "today"
   /\ UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
+\* clarity._cached: HTTP 200 with a wrong shape, so the failure window starts and nothing is saved.
+BadShape ==
+  /\ pc = "flight" /\ pc' = "badAnswer" /\ cache' = "failedInWindow"
+  /\ UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
 Export429 ==
   /\ pc = "flight" /\ api = "export" /\ pc' = "dayBlocked" /\ blocked' = TRUE
   /\ UNCHANGED <<api, cache, ledger, count, sent, count0, sent0, blocked0, receipt>>
@@ -74,9 +80,9 @@ TimesOut == pc = "flight" /\ pc' = "failed" /\ Same
 Done == pc \in Ends /\ UNCHANGED vars
 
 Next ==
-  TakeLock \/ CacheHit \/ CacheOld \/ CacheNone \/ FailureRepeat \/ FailureOld \/ TokenMissing \/ TokenRead
+  TakeLock \/ CacheHit \/ CacheOld \/ CacheNone \/ CacheBad \/ FailureRepeat \/ FailureOld \/ TokenMissing \/ TokenRead
   \/ RefuseBroken \/ RefuseBlocked \/ RefuseLimit \/ Reserve \/ ReserveNewDay
-  \/ RefuseWrongDate \/ Send \/ ConnectFails \/ Answer \/ Export429 \/ Mcp429
+  \/ RefuseWrongDate \/ Send \/ ConnectFails \/ Answer \/ BadShape \/ Export429 \/ Mcp429
   \/ OtherError \/ TimesOut \/ Done
 
 Spec == Init /\ [][Next]_vars
@@ -84,7 +90,11 @@ Spec == Init /\ [][Next]_vars
 \* A cache hit spends no quota.
 CacheHitSpendsNothing == pc = "hit" => (count = count0 /\ sent = sent0)
 \* A repeat of a failed request inside the window spends nothing.
-RepeatInWindowSpendsNothing == cache = "failedInWindow" => (count = count0 /\ sent = sent0)
+RepeatInWindowSpendsNothing == pc = "repeated" => (count = count0 /\ sent = sent0)
+\* A bad HTTP 200 answer is never saved.
+BadAnswerIsNotSaved == pc = "badAnswer" => cache # "today"
+\* A saved answer that goes back has a good shape.
+HitHasAGoodShape == pc = "hit" => cache = "today"
 \* The ledger count equals the metered requests sent.
 CountEqualsRequestsSent == pc \in Ends => count = sent
 \* The server never sends a metered call past the limit.

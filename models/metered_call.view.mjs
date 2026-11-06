@@ -2,6 +2,7 @@ const names = {
   start: "An agent makes a metered Clarity call",
   lock: "The call holds the fetch lock and reads the saved answer",
   hit: "The saved answer goes back, no call spent",
+  badAnswer: "The answer has a wrong shape: not saved, and the reason says so",
   repeated: "The same failure goes back, no call spent",
   token: "No saved answer for today, the server reads the token",
   notConnected: "Not connected, no call spent",
@@ -27,6 +28,7 @@ const labels = {
   CacheHit: "a saved answer of today exists",
   CacheOld: "the saved answer is of an older UTC day",
   CacheNone: "no saved answer exists",
+  CacheBad: "the saved answer of today has a wrong shape",
   FailureRepeat: "the same request failed inside the window",
   FailureOld: "the same request failed before the window",
   TokenMissing: "the token is missing or empty",
@@ -40,6 +42,7 @@ const labels = {
   Send: "the server sends the request",
   ConnectFails: "the connection fails before the request goes out",
   Answer: "Clarity answers with data",
+  BadShape: "Clarity answers HTTP 200 with a wrong shape",
   Export429: "Clarity says the daily limit is reached (HTTP 429 of the Data Export API)",
   Mcp429: "an /mcp endpoint answers HTTP 429",
   OtherError: "Clarity answers another error",
@@ -50,7 +53,7 @@ const phases = {
   start: "Start", lock: "Saved answer", hit: "Saved answer", repeated: "Saved answer",
   token: "Ledger", ledger: "Ledger", notConnected: "Stop", refused: "Stop",
   reserved: "Spend", flight: "Spend",
-  stored: "Answer", failed: "Stop", dayBlocked: "Stop",
+  stored: "Answer", failed: "Stop", badAnswer: "Stop", dayBlocked: "Stop",
 };
 export const group = (v) => phases[v.pc];
 export const colors = { Start: "blue", "Saved answer": "teal", Ledger: "yellow", Spend: "orange", Stop: "pink", Answer: "purple" };

@@ -65,21 +65,39 @@ def ledger_path(project_id: str) -> Path:
     return quota.path(LEDGER, project_id)
 
 
-def _read_cache(path: Path) -> dict[str, Any] | None:
+def _read_cache(path: Path, good: Callable[[Any], bool]) -> dict[str, Any] | None:
     try:
         stored: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         same_day = datetime.fromisoformat(stored["cached_at"]).date() == datetime.now(UTC).date()
+        usable = same_day and good(stored["answer"])
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    return stored if same_day else None
+    return stored if usable else None
+
+
+def _all_objects(items: Any) -> bool:
+    return isinstance(items, list) and all(isinstance(item, dict) for item in items)
+
+
+def _good_insights(reply: Any) -> bool:
+    return _all_objects(reply) and all(
+        _all_objects(metric.get("information") or []) for metric in reply
+    )
+
+
+def _good_dashboard(reply: Any) -> bool:
+    if not isinstance(reply, dict):
+        return False
+    data = reply.get("data")
+    return _all_objects(data) or (data is None and bool(reply.get("dataErrorType")))
 
 
 def failure_path(path: Path) -> Path:
     return path.with_suffix(".failed.json")
 
 
-def _mark_failure(path: Path, status: int | None) -> None:
-    stored = {"failed_at": datetime.now(UTC).isoformat(), "status": status}
+def _mark_failure(path: Path, status: int | None, detail: str | None = None) -> None:
+    stored = {"failed_at": datetime.now(UTC).isoformat(), "status": status, "detail": detail}
     quota.write_json(failure_path(path), stored)
 
 
@@ -95,6 +113,7 @@ def _recent_failure(path: Path) -> net.ApiError | None:
     left = math.ceil(FAILURE_WINDOW_SECONDS - age)
     return net.ApiError(
         status,
+        net.BAD_SHAPE if stored.get("detail") == net.BAD_SHAPE else None,
         note=f"The same request failed {int(age)} seconds ago, so the server did not send it "
         f"again and spent no call. It can send it after {left} seconds.",
     )
@@ -135,13 +154,14 @@ async def _cached(
     site: Site,
     path: Path,
     call: Callable[[dict[str, str], net.Receipt], Awaitable[Any]],
+    good: Callable[[Any], bool],
     *,
     daily_429: bool = False,
 ) -> tuple[dict[str, Any], bool]:
     key = project(site)
     quota.show(lambda: quota.view(LEDGER, key))
     async with _only_fetcher(path):
-        stored = _read_cache(path)
+        stored = _read_cache(path, good)
         if stored is not None:
             return stored, True
         failure = _recent_failure(path)
@@ -151,11 +171,13 @@ async def _cached(
         receipt = quota.spend(LEDGER, key)
         try:
             reply = await call(headers, receipt)
+            if not good(reply):
+                raise net.ApiError(200, net.BAD_SHAPE)
         except net.ApiError as exc:
             if daily_429 and exc.status == 429:
                 quota.block(LEDGER, key, receipt)
             if exc.sent:
-                _mark_failure(path, exc.status)
+                _mark_failure(path, exc.status, exc.detail)
             raise
         except asyncio.CancelledError:
             # The source timeout ended a call in flight, and the API can have counted it.
@@ -176,7 +198,8 @@ async def _insights(
         return await net.request(ENDPOINTS, "GET", API, params=params, headers=headers, spent=spent)
 
     # Only this API documents 429 as the daily limit. The /mcp endpoints have no reference.
-    return await _cached(site, cache_path(project(site), days, dimensions), call, daily_429=True)
+    path = cache_path(project(site), days, dimensions)
+    return await _cached(site, path, call, _good_insights, daily_429=True)
 
 
 def _number(text: Any) -> float:
@@ -540,7 +563,7 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
             ENDPOINTS, "POST", RECORDINGS_API, json=body, headers=headers, spent=spent
         )
 
-    stored, hit = await _cached(site, path, call)
+    stored, hit = await _cached(site, path, call, _all_objects)
     rows = as_rows(stored["answer"])
     fields = _stored_fields(stored, hit)
     return answer(rows, more_rows="possible", sample=SAMPLE_NOTE, applied=body, **fields)
@@ -558,7 +581,7 @@ async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any
             ENDPOINTS, "POST", DASHBOARD_API, json=body, headers=headers, spent=spent
         )
 
-    stored, hit = await _cached(site, path, call)
+    stored, hit = await _cached(site, path, call, _good_dashboard)
     reply = stored["answer"]
     data = reply.get("data") if isinstance(reply, dict) else None
     rows = as_rows(reply if data is None else data)

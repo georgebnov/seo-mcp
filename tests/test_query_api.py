@@ -78,6 +78,9 @@ def answer(request):
         return httpx2.Response(
             200, json=[{"metricName": "Traffic", "information": [{"OS": "iOS"}, {"OS": "Linux"}]}]
         )
+    if path.endswith("/mcp/dashboard/query"):
+        row = {"Device": "PC", "SessionCount": 1}
+        return httpx2.Response(200, json={"query": "q", "data": [row], "dataErrorType": 0})
     if host == "clarity.microsoft.com":
         return httpx2.Response(200, json=[{"sessionId": "s1"}])
     return httpx2.Response(500)
