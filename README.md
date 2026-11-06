@@ -186,6 +186,8 @@ An endpoint with a daily call limit names its ledger in `metered`. `net.request`
 
 `just check` runs ruff, mypy, pytest, and `scripts/private_scan.py`. The scan checks all files except `uv.lock` and the full git history for home paths, key shapes, real ids, and unknown hosts. It also reads your sites file and `~/.config/seo-mcp/private-terms.txt` (1 word on each line), so your private words stay out of the repo.
 
+`just models [out-folder]` runs each TLA+ model in `models/` through the `statechart` command, which installs TLC and Java, so CI does not run it. A rule that breaks must be in `models/known-breaks.txt`, and a listed rule that holds must leave that list. Each `.view.mjs` file holds the words of a chart.
+
 ## License
 
 MIT
