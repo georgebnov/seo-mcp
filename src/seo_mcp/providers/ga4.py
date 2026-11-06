@@ -1,11 +1,10 @@
 """Google Analytics 4: organic traffic and organic landing pages."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
-from zoneinfo import ZoneInfo
 
 from seo_mcp import net, quota
 from seo_mcp.api import Api, Method, Quota, Run, answer, row_limit, whole
@@ -35,8 +34,9 @@ ORGANIC = {
 }
 
 
-# The docs state that daily quotas refresh at midnight Pacific.
-RESET_ZONE = ZoneInfo("America/Los_Angeles")
+# The docs state that daily quotas refresh at midnight Pacific Standard Time. A fixed offset
+# also keeps the server able to start on a host with no timezone data.
+RESET_ZONE = timezone(timedelta(hours=-8))
 DAILY_TOKENS = {"standard": 200_000, "analytics_360": 2_000_000}
 LOW_DAY_TOKENS = 20_000
 LOW_HOUR_TOKENS = 4_000
@@ -138,8 +138,8 @@ async def _post(
     )
     try:
         _record(prop, pool, reply)
-    except OSError:
-        # The answer is paid for: a full disk must not lose it.
+    except (OSError, TypeError):
+        # The answer is paid for: a full disk or a bad reading file must not lose it.
         pass
     return reply
 
@@ -325,8 +325,8 @@ APIS = {
                 "day, 40,000 each hour, 14,000 for each project each hour. Analytics 360: "
                 "2,000,000, 400,000, and 140,000.",
                 "10 concurrent requests for each property, 50 on Analytics 360.",
-                "All daily quotas refresh at midnight Pacific. Hourly quotas refresh within "
-                "an hour.",
+                "All daily quotas refresh at midnight Pacific Standard Time. Hourly quotas "
+                "refresh within an hour.",
                 "The token cost of a call is known only after it runs, so the server warns "
                 "and does not refuse. Most calls cost 10 tokens or fewer.",
                 "The API does not say the tier of a property, so the server shows both limits.",

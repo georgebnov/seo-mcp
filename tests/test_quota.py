@@ -449,3 +449,21 @@ async def test_each_source_counts_each_metered_call(live, source):
 async def test_each_metered_method_counts_each_call(live, api, call):
     await run(api, call)
     assert len(metered_requests(live)) == spent_calls() == 1
+
+
+async def test_a_bad_ga4_reading_does_not_lose_a_paid_answer(live, fake_net):
+    fake_net(replies(ga4_reply))
+    path = ga4.reading_path(SITE["ga4_property_id"], "core")
+    await core.query_api(HOST, "ga4", "run_report", {})
+    stored = json.loads(path.read_text())
+    path.write_text(json.dumps({**stored, "tokens_used_today": "10"}))
+    data = await core.query_api(HOST, "ga4", "run_report", {})
+    assert data["status"] == "ok"
+
+
+def test_the_server_needs_no_timezone_data():
+    for file in (Path(__file__).parent.parent / "src").rglob("*.py"):
+        assert "zoneinfo" not in file.read_text(), (
+            f"{file.name}: a host with no timezone data cannot start the server. "
+            "Use a fixed offset from the docs."
+        )
