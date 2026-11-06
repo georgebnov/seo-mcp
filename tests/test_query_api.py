@@ -331,7 +331,7 @@ async def test_run_report_sends_2_periods_and_flattens_rows(live):
     }
     data = await ask("ga4", "run_report", request)
     body = json.loads(sent(live)[0].content)
-    assert body == {**request, "limit": api.MAX_ROWS}
+    assert body == {**request, "limit": api.MAX_ROWS, "returnPropertyQuota": True}
     assert data["rows"] == [{"pagePath": "/a", "dateRange": "date_range_0", "sessions": 7.0}]
     assert data["row_count"] == 5
     assert data["more_rows"] == "yes"

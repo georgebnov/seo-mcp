@@ -195,6 +195,7 @@ async def test_ga4_default_body_is_unchanged(live):
         "metricAggregations": ["TOTAL"],
         "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
         "limit": 25,
+        "returnPropertyQuota": True,
     }
 
 

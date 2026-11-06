@@ -6,8 +6,8 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
-from seo_mcp import net
-from seo_mcp.api import Api, Method, answer, one_of, row_limit, whole
+from seo_mcp import net, quota
+from seo_mcp.api import Api, Method, Quota, answer, one_of, row_limit, whole
 from seo_mcp.config import Site
 from seo_mcp.params import DATES, MAX_TEXT, NONE, BadInput, Params, page_url, period
 from seo_mcp.providers import _google
@@ -22,7 +22,7 @@ ENDPOINTS = (
     net.Endpoint("POST", HOST, r"/webmasters/v3/sites/[^/]+/searchAnalytics/query"),
     net.Endpoint("GET", HOST, r"/webmasters/v3/sites/[^/]+/sitemaps"),
     net.Endpoint("GET", HOST, r"/webmasters/v3/sites/[^/]+/sitemaps/[^/]+"),
-    net.Endpoint("POST", HOST, r"/v1/urlInspection/index:inspect"),
+    net.Endpoint("POST", HOST, r"/v1/urlInspection/index:inspect", "url-inspection-calls"),
 )
 WINDOW_DAYS = 28
 # Search Console data ends about 3 days before today.
@@ -34,6 +34,7 @@ THIN_INSPECTED_URLS = 3
 INSPECT_URLS = 5
 QUICK_WIN_POSITIONS = (4, 10)
 HISTORY_MONTHS = 16
+LEDGER = quota.Ledger("url-inspection-calls", "Search Console property", 2000)
 MISS_REASON = (
     "No rows match. A page or query filter is an exact, case-sensitive match, and "
     "Search Console hides rare queries."
@@ -182,10 +183,20 @@ async def sitemaps(site: Site, params: Params) -> dict[str, Any]:
     return ok(rows, thin=not rows, reason=None if rows else "Search Console lists no sitemap.")
 
 
-async def _inspect(site: Site, url: str, headers: dict[str, str]) -> dict[str, Any]:
+def _inspections(site: Site, count: int) -> net.Receipt:
+    key = site.field("gsc_property")
+    quota.show(lambda: quota.view(LEDGER, key))
+    return quota.spend(LEDGER, key, count)
+
+
+async def _inspect(
+    site: Site, url: str, headers: dict[str, str], spent: net.Receipt
+) -> dict[str, Any]:
     body = {"inspectionUrl": url, "siteUrl": site.field("gsc_property")}
     try:
-        reply = await net.request(ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers)
+        reply = await net.request(
+            ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers, spent=spent
+        )
     except net.ApiError as exc:
         return {"url": url, "error": str(exc), "status": exc.status}
     status = reply.get("inspectionResult", {}).get("indexStatusResult", {})
@@ -208,7 +219,8 @@ async def _top_urls(site: Site, headers: dict[str, str]) -> list[str]:
 async def index_status(site: Site, params: Params) -> dict[str, Any]:
     headers = await _headers(site)
     urls = [params.page] if params.page else await _top_urls(site, headers)
-    rows = list(await asyncio.gather(*(_inspect(site, url, headers) for url in urls)))
+    spent = _inspections(site, len(urls))
+    rows = list(await asyncio.gather(*(_inspect(site, url, headers, spent) for url in urls)))
     bad = [row for row in rows if "error" in row]
     if len(bad) == len(rows):
         raise net.ApiError(bad[0]["status"])
@@ -305,7 +317,13 @@ async def _url_inspection(site: Site, request: dict[str, Any]) -> dict[str, Any]
     body = {**request, "inspectionUrl": url, "siteUrl": site.field("gsc_property")}
     headers = await _headers(site)
     reply = await net.request(
-        ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers, explain=True
+        ENDPOINTS,
+        "POST",
+        INSPECT_API,
+        json=body,
+        headers=headers,
+        explain=True,
+        spent=_inspections(site, 1),
     )
     return answer([reply.get("inspectionResult", {})], more_rows="no", applied=body)
 
@@ -329,10 +347,31 @@ async def _sitemap_get(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     return answer([reply], more_rows="no", applied={"feedpath": feed})
 
 
+def now(site: Site) -> dict[str, Any]:
+    return {"url_inspection": quota.view(LEDGER, site.field("gsc_property"))}
+
+
 APIS = {
     "search_console": Api(
         title="Google Search Console",
         docs="https://developers.google.com/webmaster-tools/v1/api_reference_index",
+        quota=Quota(
+            "https://developers.google.com/webmaster-tools/limits",
+            (
+                f"URL Inspection: {LEDGER.limit} queries for each site each day, 600 each "
+                "minute. For each project: 10,000,000 each day, 15,000 each minute.",
+                "Search Analytics: 1,200 queries each minute for each site, and for each user. "
+                "For each project: 30,000,000 each day, 40,000 each minute. The load quota "
+                "has no number: wide date ranges and page or query grouping cost more.",
+                "All other resources: 20 each second and 200 each minute for each user. "
+                "For each project: 100,000,000 each day.",
+                "The docs state no reset time. The server assumes 00:00 UTC.",
+                "The server counts only URL Inspection: a count of the other limits changes "
+                "no decision, and it does not enforce the limit of each minute.",
+            ),
+            frozenset({"gsc_property", "google_service_account"}),
+            now,
+        ),
         methods={
             "search_analytics": Method(
                 _search_analytics,

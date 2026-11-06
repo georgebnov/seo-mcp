@@ -22,12 +22,20 @@ class Method(NamedTuple):
     required: frozenset[str] = NO_FIELDS
 
 
+class Quota(NamedTuple):
+    docs: str
+    limits: tuple[str, ...]
+    needs: frozenset[str] = NO_FIELDS
+    now: Callable[[Site], dict[str, Any]] | None = None
+
+
 class Api(NamedTuple):
     title: str
     docs: str
     methods: dict[str, Method]
     options: dict[str, Any]
     gaps: tuple[str, ...]
+    quota: Quota
 
 
 def check_request(name: str, method: Method, request: dict[str, Any]) -> None:

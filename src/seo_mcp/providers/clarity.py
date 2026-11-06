@@ -4,9 +4,7 @@ import asyncio
 import fcntl
 import hashlib
 import json
-import os
 import re
-import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -14,22 +12,23 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-from seo_mcp import NAME, net
-from seo_mcp.api import Api, Method, answer, as_rows, one_of, whole
+from seo_mcp import NAME, net, quota
+from seo_mcp.api import Api, Method, Quota, answer, as_rows, one_of, whole
 from seo_mcp.config import Site
 from seo_mcp.params import BadInput, Params
-from seo_mcp.results import Refused, Unsupported, ok
+from seo_mcp.results import Unsupported, ok
 
 API = "https://www.clarity.ms/export-data/api/v1/project-live-insights"
 # The official Clarity MCP server calls these, with the same token. Both read.
 RECORDINGS_API = "https://clarity.microsoft.com/mcp/recordings/sample"
 DASHBOARD_API = "https://clarity.microsoft.com/mcp/dashboard/query"
 ENDPOINTS = (
-    net.Endpoint("GET", "www.clarity.ms", r"/export-data/api/v1/project-live-insights"),
-    net.Endpoint("POST", "clarity.microsoft.com", r"/mcp/recordings/sample"),
-    net.Endpoint("POST", "clarity.microsoft.com", r"/mcp/dashboard/query"),
+    net.Endpoint(
+        "GET", "www.clarity.ms", r"/export-data/api/v1/project-live-insights", "clarity-calls"
+    ),
+    net.Endpoint("POST", "clarity.microsoft.com", r"/mcp/recordings/sample", "clarity-calls"),
+    net.Endpoint("POST", "clarity.microsoft.com", r"/mcp/dashboard/query", "clarity-calls"),
 )
-CACHE_ENV = NAME.upper().replace("-", "_") + "_CACHE_DIR"
 # The API allows 10 calls for each project each day, for the last 1 to 3 days.
 WINDOW_DAYS = 3
 THIN_SESSIONS = 100
@@ -42,28 +41,24 @@ MISS_REASON = (
     f"Clarity has no row for this page. An answer has at most {API_ROWS} rows for each metric, "
     "so this is not proof of zero traffic."
 )
-BROKEN_LEDGER = "The Clarity call ledger is broken, so the server spends no call. Delete the file."
 LOCK_POLL_SECONDS = 0.05
-
-
-def _folder() -> Path:
-    return Path(os.environ.get(CACHE_ENV) or f"~/.cache/{NAME}").expanduser()
+LEDGER = quota.Ledger("clarity-calls", "Clarity project", DAILY_CALLS)
 
 
 def cache_path(
     project_id: str, days: int = WINDOW_DAYS, dimensions: tuple[str, ...] = ("URL",)
 ) -> Path:
     key = "-".join(quote(name, safe="") for name in dimensions)
-    return _folder() / f"clarity-{quote(project_id, safe='')}-{days}d-{key}.json"
+    return quota.folder() / f"clarity-{quote(project_id, safe='')}-{days}d-{key}.json"
 
 
 def _body_path(project_id: str, kind: str, body: dict[str, Any]) -> Path:
     digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:24]
-    return _folder() / f"clarity-{quote(project_id, safe='')}-{kind}-{digest}.json"
+    return quota.folder() / f"clarity-{quote(project_id, safe='')}-{kind}-{digest}.json"
 
 
-def ledger_path(project: str) -> Path:
-    return _folder() / f"clarity-calls-{quote(project, safe='')}.json"
+def ledger_path(project_id: str) -> Path:
+    return quota.path(LEDGER, project_id)
 
 
 def _read_cache(path: Path) -> dict[str, Any] | None:
@@ -73,43 +68,6 @@ def _read_cache(path: Path) -> dict[str, Any] | None:
     except (OSError, ValueError, KeyError, TypeError):
         return None
     return stored if same_day else None
-
-
-def _write_cache(path: Path, stored: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    handle, name = tempfile.mkstemp(dir=path.parent)
-    with os.fdopen(handle, "w", encoding="utf-8") as file:
-        json.dump(stored, file)
-    Path(name).replace(path)
-
-
-def _used_today(path: Path, today: str) -> int:
-    try:
-        stored = json.loads(path.read_text(encoding="utf-8"))
-        return int(stored["used"]) if stored["day"] == today else 0
-    except FileNotFoundError:
-        return 0
-    except (OSError, ValueError, KeyError, TypeError):
-        # A broken count must not read as 0: that would spend the quota without control.
-        raise Refused(BROKEN_LEDGER) from None
-
-
-def _spend(project: str) -> int:
-    """Count 1 call before it goes out. A failed call counts: the API can still count it."""
-    path = ledger_path(project)
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    today = datetime.now(UTC).date().isoformat()
-    # Each agent session runs its own server process, so a lock inside 1 process is not enough.
-    with path.with_suffix(".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        used = _used_today(path, today)
-        if used >= DAILY_CALLS:
-            raise Refused(
-                f"This server has spent the {DAILY_CALLS} calls of this Clarity project for "
-                "this UTC day. Use a cached answer, or call again after 00:00 UTC."
-            )
-        _write_cache(path, {"day": today, "used": used + 1})
-    return used + 1
 
 
 def project(site: Site) -> str:
@@ -144,16 +102,28 @@ async def _only_fetcher(path: Path) -> AsyncIterator[None]:
 
 
 async def _cached(
-    site: Site, path: Path, call: Callable[[dict[str, str]], Awaitable[Any]]
+    site: Site,
+    path: Path,
+    call: Callable[[dict[str, str], net.Receipt], Awaitable[Any]],
+    *,
+    daily_429: bool = False,
 ) -> tuple[dict[str, Any], bool]:
+    key = project(site)
+    quota.show(lambda: quota.view(LEDGER, key))
     async with _only_fetcher(path):
         stored = _read_cache(path)
         if stored is not None:
             return stored, True
         headers = _headers(site)
-        _spend(project(site))
-        stored = {"cached_at": datetime.now(UTC).isoformat(), "answer": await call(headers)}
-        _write_cache(path, stored)
+        receipt = quota.spend(LEDGER, key)
+        try:
+            reply = await call(headers, receipt)
+        except net.ApiError as exc:
+            if daily_429 and exc.status == 429:
+                quota.block(LEDGER, key, receipt)
+            raise
+        stored = {"cached_at": datetime.now(UTC).isoformat(), "answer": reply}
+        quota.write_json(path, stored)
         return stored, False
 
 
@@ -163,10 +133,11 @@ async def _insights(
     params: dict[str, Any] = {"numOfDays": days}
     params |= {f"dimension{at}": name for at, name in enumerate(dimensions, 1)}
 
-    async def call(headers: dict[str, str]) -> Any:
-        return await net.request(ENDPOINTS, "GET", API, params=params, headers=headers)
+    async def call(headers: dict[str, str], spent: net.Receipt) -> Any:
+        return await net.request(ENDPOINTS, "GET", API, params=params, headers=headers, spent=spent)
 
-    return await _cached(site, cache_path(project(site), days, dimensions), call)
+    # Only this API documents 429 as the daily limit. The /mcp endpoints have no reference.
+    return await _cached(site, cache_path(project(site), days, dimensions), call, daily_429=True)
 
 
 def _number(text: Any) -> float:
@@ -409,17 +380,8 @@ DEFAULT_RECORDINGS = 100
 INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 
 
-def _calls_used(site: Site) -> int:
-    today = datetime.now(UTC).date().isoformat()
-    return _used_today(ledger_path(project(site)), today)
-
-
-def _stored_fields(site: Site, stored: dict[str, Any], hit: bool) -> dict[str, Any]:
-    return {
-        "from_cache": hit,
-        "cached_at": stored["cached_at"],
-        "calls_used_today": _calls_used(site),
-    }
+def _stored_fields(stored: dict[str, Any], hit: bool) -> dict[str, Any]:
+    return {"from_cache": hit, "cached_at": stored["cached_at"]}
 
 
 def _dimensions(request: dict[str, Any]) -> tuple[str, ...]:
@@ -438,7 +400,7 @@ async def _live_insights(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     days = whole("numOfDays", request["numOfDays"], 1, WINDOW_DAYS)
     stored, hit = await _insights(site, days, _dimensions(request))
     rows = [row for metric in stored["answer"] for row in _rows(metric)]
-    return answer(rows, more_rows="no", applied=request, **_stored_fields(site, stored, hit))
+    return answer(rows, more_rows="no", applied=request, **_stored_fields(stored, hit))
 
 
 def _check_date(filters: dict[str, Any]) -> tuple[str, str]:
@@ -534,12 +496,14 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     }
     path = _body_path(project(site), "recordings", body)
 
-    async def call(headers: dict[str, str]) -> Any:
-        return await net.request(ENDPOINTS, "POST", RECORDINGS_API, json=body, headers=headers)
+    async def call(headers: dict[str, str], spent: net.Receipt) -> Any:
+        return await net.request(
+            ENDPOINTS, "POST", RECORDINGS_API, json=body, headers=headers, spent=spent
+        )
 
     stored, hit = await _cached(site, path, call)
     rows = as_rows(stored["answer"])
-    fields = _stored_fields(site, stored, hit)
+    fields = _stored_fields(stored, hit)
     return answer(rows, more_rows="possible", sample=SAMPLE_NOTE, applied=body, **fields)
 
 
@@ -550,8 +514,10 @@ async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any
     body = {"query": text, "timezone": request.get("timezone", "UTC")}
     path = _body_path(project(site), "dashboard", body)
 
-    async def call(headers: dict[str, str]) -> Any:
-        return await net.request(ENDPOINTS, "POST", DASHBOARD_API, json=body, headers=headers)
+    async def call(headers: dict[str, str], spent: net.Receipt) -> Any:
+        return await net.request(
+            ENDPOINTS, "POST", DASHBOARD_API, json=body, headers=headers, spent=spent
+        )
 
     stored, hit = await _cached(site, path, call)
     reply = stored["answer"]
@@ -560,16 +526,33 @@ async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any
     code = reply.get("dataErrorType") if isinstance(reply, dict) else None
     reason = f"Clarity gave data error type {code} for this question." if code else None
     answered = reply.get("query") if isinstance(reply, dict) else None
-    fields = _stored_fields(site, stored, hit)
+    fields = _stored_fields(stored, hit)
     return answer(
         rows, more_rows="no", reason=reason, answered_question=answered, applied=body, **fields
     )
 
 
+def now(site: Site) -> dict[str, Any]:
+    return {"calls": quota.view(LEDGER, project(site))}
+
+
+DOCS = "https://learn.microsoft.com/en-us/clarity/setup-and-installation/clarity-data-export-api"
 APIS = {
     "clarity": Api(
         title="Microsoft Clarity",
-        docs="https://learn.microsoft.com/en-us/clarity/setup-and-installation/clarity-data-export-api",
+        docs=DOCS,
+        quota=Quota(
+            DOCS,
+            (
+                f"{DAILY_CALLS} API requests for each project each day. HTTP 429 means that "
+                "the daily limit is passed.",
+                "The docs state no reset time. The server assumes 00:00 UTC.",
+                "The /mcp endpoints have no reference page, so the docs do not say if they "
+                f"share the {DAILY_CALLS}. The server counts them in the same {DAILY_CALLS}.",
+            ),
+            frozenset({"clarity_token"}),
+            now,
+        ),
         methods={
             "live_insights": Method(
                 _live_insights,

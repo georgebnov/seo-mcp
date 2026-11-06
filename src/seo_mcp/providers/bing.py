@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from seo_mcp import net
-from seo_mcp.api import Api, Method, Run, answer, as_rows, whole
+from seo_mcp.api import Api, Method, Quota, Run, answer, as_rows, whole
 from seo_mcp.config import Site
 from seo_mcp.params import MAX_TEXT, BadInput, Params, page_url
 from seo_mcp.results import ok
@@ -112,6 +112,14 @@ APIS = {
     "bing": Api(
         title="Bing Webmaster Tools",
         docs="https://learn.microsoft.com/en-us/dotnet/api/microsoft.bing.webmaster.api.interfaces.iwebmasterapi",
+        quota=Quota(
+            "https://learn.microsoft.com/en-us/bingwebmaster/getting-access",
+            (
+                "The docs state no number for the read methods, so the server keeps no count. "
+                "1 key serves all the sites of a user.",
+            ),
+            frozenset({"bing_site_url", "bing_api_key"}),
+        ),
         methods={
             name: Method(
                 _reader(name),
