@@ -11,7 +11,7 @@ import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.parse import quote
@@ -74,6 +74,15 @@ def _broken(ledger: Ledger, file: Path) -> str:
     )
 
 
+def _is_past_or_today(day: Any) -> bool:
+    """A count of an older day restarts at 0, so a day must prove that it is not a wrong one."""
+    try:
+        parsed = date.fromisoformat(day)
+    except (TypeError, ValueError):
+        return False
+    return parsed.isoformat() == day and parsed <= datetime.now(UTC).date()
+
+
 def _read(ledger: Ledger, file: Path, today: str) -> tuple[int, bool]:
     try:
         stored = json.loads(file.read_text(encoding="utf-8"))
@@ -85,7 +94,8 @@ def _read(ledger: Ledger, file: Path, today: str) -> tuple[int, bool]:
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         # A broken count must not read as 0: that would spend the quota without control.
         raise Refused(_broken(ledger, file)) from None
-    if type(used) is not int or used < 0 or type(blocked) is not bool:
+    wrong = type(used) is not int or used < 0 or type(blocked) is not bool
+    if wrong or not _is_past_or_today(day):
         raise Refused(_broken(ledger, file))
     return (used, blocked) if day == today else (0, False)
 

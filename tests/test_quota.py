@@ -160,6 +160,35 @@ async def test_a_429_of_an_mcp_endpoint_does_not_block_the_day(live, fake_net):
     assert len(calls) == 2
 
 
+@pytest.mark.parametrize(
+    ("api", "call", "ledger", "key"),
+    [
+        ("clarity", DASHBOARD, clarity.LEDGER, HOST),
+        ("search_console", INSPECT, gsc.LEDGER, SITE["gsc_property"]),
+    ],
+)
+@pytest.mark.parametrize("day", ["not a date", "2026-1-31", "20260131", "2099-01-01", 5, None])
+async def test_a_ledger_with_a_wrong_day_fails_closed(live, day, api, call, ledger, key):
+    set_ledger(ledger, key, used=ledger.limit, blocked=True)
+    path = quota.path(ledger, key)
+    path.write_text(json.dumps({"day": day, "used": ledger.limit, "blocked": True}))
+    before = path.read_text()
+    data = await run(api, call)
+    assert data["status"] == "error"
+    assert "ledger" in data["reason"]
+    assert data["calls_left"] is None
+    assert not metered_requests(live)
+    assert path.read_text() == before
+
+
+async def test_a_late_429_leaves_the_ledger_of_the_next_day(live):
+    set_ledger(clarity.LEDGER, HOST, used=2)
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
+    quota.block(clarity.LEDGER, HOST, net.Receipt(clarity.LEDGER.name, 0, yesterday))
+    assert quota.view(clarity.LEDGER, HOST)["calls_used_today"] == 2
+    assert "blocked_by_api" not in quota.view(clarity.LEDGER, HOST)
+
+
 async def test_a_block_of_an_older_day_ends(live):
     path = quota.path(clarity.LEDGER, HOST)
     path.parent.mkdir(parents=True)
