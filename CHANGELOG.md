@@ -18,3 +18,4 @@
 - Stop the day when the Clarity Data Export API answers HTTP 429.
 - Add a rule to the Clarity click tasks: when the dashboard count is 0, do not call `recordings`.
 - List in the README what each dashboard shows and the API does not give.
+- Fix the call ledgers: a day that is not a real date, or is after today, now fails closed as a broken ledger. It restarted the count before.

@@ -43,22 +43,20 @@ Reserve ==
   /\ pc = "ledger" /\ ledger = "good" /\ ~blocked /\ count + 1 <= Limit
   /\ pc' = "reserved" /\ count' = count + 1 /\ receipt' = TRUE
   /\ UNCHANGED <<api, cache, ledger, blocked, sent, count0, sent0, blocked0>>
-\* quota._read: day != today gives (0, False), also when the day is no date at all.
+\* quota._read: a real older day restarts the count.
 ReserveNewDay ==
   /\ pc = "ledger" /\ ledger = "olderDay"
   /\ pc' = "reserved" /\ count' = 1 /\ receipt' = TRUE
   /\ UNCHANGED <<api, cache, ledger, blocked, sent, count0, sent0, blocked0>>
-ReserveWrongDate ==
-  /\ pc = "ledger" /\ ledger = "wrongDate"
-  /\ pc' = "reservedWrong" /\ count' = 1 /\ blocked' = FALSE /\ receipt' = TRUE
-  /\ UNCHANGED <<api, cache, ledger, sent, count0, sent0, blocked0>>
+\* quota._read: a day that is no real date, or is after today, is a broken ledger.
+RefuseWrongDate == pc = "ledger" /\ ledger = "wrongDate" /\ pc' = "refused" /\ Same
 
 \* net._pay needs the receipt, and only then the request can go out.
 Send ==
-  /\ pc \in {"reserved", "reservedWrong"} /\ receipt
+  /\ pc = "reserved" /\ receipt
   /\ pc' = "flight" /\ sent' = sent + 1
   /\ UNCHANGED <<api, cache, ledger, blocked, count, count0, sent0, blocked0, receipt>>
-ConnectFails == pc \in {"reserved", "reservedWrong"} /\ pc' = "failed" /\ Same
+ConnectFails == pc = "reserved" /\ pc' = "failed" /\ Same
 
 Answer ==
   /\ pc = "flight" /\ pc' = "stored" /\ cache' = "today"
@@ -75,7 +73,7 @@ Done == pc \in Ends /\ UNCHANGED vars
 Next ==
   TakeLock \/ CacheHit \/ CacheOld \/ CacheNone \/ TokenMissing \/ TokenRead
   \/ RefuseBroken \/ RefuseBlocked \/ RefuseLimit \/ Reserve \/ ReserveNewDay
-  \/ ReserveWrongDate \/ Send \/ ConnectFails \/ Answer \/ Export429 \/ Mcp429
+  \/ RefuseWrongDate \/ Send \/ ConnectFails \/ Answer \/ Export429 \/ Mcp429
   \/ OtherError \/ TimesOut \/ Done
 
 Spec == Init /\ [][Next]_vars

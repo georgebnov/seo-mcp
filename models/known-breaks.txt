@@ -1,7 +1,4 @@
 # Each line is a rule that the code breaks today: the model, the rule, and the fix.
 # scripts/check_models.py fails when a break is not in this list, or when a listed rule holds.
 metered_call CountEqualsRequestsSent the rule changes: a connection failure before the send still counts
-metered_call BrokenLedgerSendsNothing a wrong date in a ledger reads as an older day
-metered_call BlockedDaySendsNothing a wrong date in a ledger reads as an older day
-metered_call NeverPastTheLimit a wrong date in a ledger reads as an older day
 parallel_callers TwoCallersSpendOneCall a waiter sends again after a failed call

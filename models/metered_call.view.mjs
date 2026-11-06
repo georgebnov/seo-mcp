@@ -7,17 +7,13 @@ const names = {
   ledger: "The server reads the ledger under its lock",
   refused: "Refused before the network, no call spent",
   reserved: "1 call is reserved in the ledger",
-  reservedWrong: "1 call is reserved, and the count restarted at 0",
   flight: "The request is on the network",
   stored: "The answer is saved for the UTC day and goes back",
   failed: "The call failed, and the reserved call stays counted",
   dayBlocked: "The day is blocked until the next UTC day",
 };
 export const title = "1 metered Clarity call";
-const wrong = (v) => v.ledger === "wrongDate" && v.receipt;
 export const state = (v) => {
-  if (wrong(v) && v.pc === "flight") return "The request of the wrong-date ledger is on the network";
-  if (wrong(v) && ["failed", "stored", "dayBlocked"].includes(v.pc)) return "The wrong-date call ends as any other call";
   if (v.pc === "failed") {
     return v.sent > v.sent0
       ? "The call failed after the request went out, and it stays counted"
@@ -37,7 +33,7 @@ const labels = {
   RefuseLimit: "the count is at the limit",
   Reserve: "the count is below the limit",
   ReserveNewDay: "the ledger is of an older UTC day, so the count restarts at 0",
-  ReserveWrongDate: "the ledger date is no date of today, so the server reads it as an older day",
+  RefuseWrongDate: "the ledger date is no real date, or is after today, so the ledger is broken",
   Send: "the server sends the request",
   ConnectFails: "the connection fails before the request goes out",
   Answer: "Clarity answers with data",
@@ -50,7 +46,7 @@ export const step = (action) => (action === "Done" ? null : labels[action]);
 const phases = {
   start: "Start", lock: "Saved answer", hit: "Saved answer",
   token: "Ledger", ledger: "Ledger", notConnected: "Stop", refused: "Stop",
-  reserved: "Spend", reservedWrong: "Spend", flight: "Spend",
+  reserved: "Spend", flight: "Spend",
   stored: "Answer", failed: "Stop", dayBlocked: "Stop",
 };
 export const group = (v) => phases[v.pc];
