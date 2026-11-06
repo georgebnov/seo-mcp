@@ -7,6 +7,7 @@ const names = {
   token: "No saved answer for today, the server reads the token",
   notConnected: "Not connected, no call spent",
   ledger: "The server reads the ledger under its lock",
+  busy: "The ledger is busy: no call sent, no call spent",
   refused: "Refused before the network, no call spent",
   reserved: "1 call is reserved in the ledger",
   flight: "The request is on the network",
@@ -33,6 +34,7 @@ const labels = {
   FailureOld: "the same request failed before the window",
   TokenMissing: "the token is missing or empty",
   TokenRead: "the token is there",
+  LockBusy: "a stuck process holds the ledger lock for 2 seconds",
   RefuseBroken: "the ledger text or count is broken",
   RefuseBlocked: "the day is already blocked",
   RefuseLimit: "the count is at the limit",
@@ -44,6 +46,7 @@ const labels = {
   Answer: "Clarity answers with data",
   BadShape: "Clarity answers HTTP 200 with a wrong shape",
   Export429: "Clarity says the daily limit is reached (HTTP 429 of the Data Export API)",
+  Export429LockBusy: "Clarity says the daily limit is reached, and the ledger is busy",
   Mcp429: "an /mcp endpoint answers HTTP 429",
   OtherError: "Clarity answers another error",
   TimesOut: "the source times out",
@@ -51,7 +54,7 @@ const labels = {
 export const step = (action) => (action === "Done" ? null : labels[action]);
 const phases = {
   start: "Start", lock: "Saved answer", hit: "Saved answer", repeated: "Saved answer",
-  token: "Ledger", ledger: "Ledger", notConnected: "Stop", refused: "Stop",
+  token: "Ledger", ledger: "Ledger", notConnected: "Stop", refused: "Stop", busy: "Stop",
   reserved: "Spend", flight: "Spend",
   stored: "Answer", failed: "Stop", badAnswer: "Stop", dayBlocked: "Stop",
 };

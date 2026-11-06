@@ -183,10 +183,10 @@ async def sitemaps(site: Site, params: Params) -> dict[str, Any]:
     return ok(rows, thin=not rows, reason=None if rows else "Search Console lists no sitemap.")
 
 
-def _inspections(site: Site, count: int) -> net.Receipt:
+async def _inspections(site: Site, count: int) -> net.Receipt:
     key = site.field("gsc_property")
     quota.show(lambda: quota.view(LEDGER, key))
-    return quota.spend(LEDGER, key, count)
+    return await quota.spend(LEDGER, key, count)
 
 
 async def _inspect(
@@ -219,7 +219,7 @@ async def _top_urls(site: Site, headers: dict[str, str]) -> list[str]:
 async def index_status(site: Site, params: Params) -> dict[str, Any]:
     headers = await _headers(site)
     urls = [params.page] if params.page else await _top_urls(site, headers)
-    spent = _inspections(site, len(urls))
+    spent = await _inspections(site, len(urls))
     rows = list(await asyncio.gather(*(_inspect(site, url, headers, spent) for url in urls)))
     bad = [row for row in rows if "error" in row]
     if len(bad) == len(rows):
@@ -316,14 +316,9 @@ async def _url_inspection(site: Site, request: dict[str, Any]) -> dict[str, Any]
     url = page_url(site.host, request["inspectionUrl"], "inspectionUrl")
     body = {**request, "inspectionUrl": url, "siteUrl": site.field("gsc_property")}
     headers = await _headers(site)
+    spent = await _inspections(site, 1)
     reply = await net.request(
-        ENDPOINTS,
-        "POST",
-        INSPECT_API,
-        json=body,
-        headers=headers,
-        explain=True,
-        spent=_inspections(site, 1),
+        ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers, explain=True, spent=spent
     )
     return answer([reply.get("inspectionResult", {})], more_rows="no", applied=body)
 

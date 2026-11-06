@@ -54,7 +54,7 @@ async def two_callers(first_reply):
     one = asyncio.create_task(run("clarity", DASHBOARD))
     held = await asyncio.wait_for(gate.entered.get(), 5)
     two = asyncio.create_task(run("clarity", DASHBOARD))
-    await asyncio.sleep(clarity.LOCK_POLL_SECONDS * 3)
+    await asyncio.sleep(quota.LOCK_POLL_SECONDS * 3)
     assert len(gate.requests) == 1
     if isinstance(first_reply, Exception):
         held.set_exception(first_reply)

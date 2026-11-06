@@ -1,6 +1,7 @@
 """Google Analytics 4: organic traffic and organic landing pages."""
 
 import json
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,7 @@ from seo_mcp.api import Api, Method, Quota, Run, answer, row_limit, whole
 from seo_mcp.config import Site
 from seo_mcp.params import DATES, Params
 from seo_mcp.providers import _google
-from seo_mcp.results import ok
+from seo_mcp.results import Refused, ok
 
 HOST = "analyticsdata.googleapis.com"
 ENDPOINTS = (
@@ -73,13 +74,13 @@ def _left(reply_quota: dict[str, Any], name: str) -> Any:
     return (reply_quota.get(name) or {}).get("remaining")
 
 
-def _record(prop: str, pool: str, reply: dict[str, Any]) -> None:
+async def _record(prop: str, pool: str, reply: dict[str, Any]) -> None:
     seen = reply.get("propertyQuota")
     if not isinstance(seen, dict) or not isinstance(seen.get("tokensPerDay"), dict):
         return
     spent = seen["tokensPerDay"].get("consumed") or 0
     file = reading_path(prop, pool)
-    with quota.locked(file):
+    async with quota.locked(file):
         total = _stored(file).get("tokens_used_today", 0) + spent
         quota.write_json(
             file,
@@ -136,11 +137,9 @@ async def _post(
         headers={"Authorization": f"Bearer {token}"},
         explain=explain,
     )
-    try:
-        _record(prop, pool, reply)
-    except (OSError, TypeError):
-        # The answer is paid for: a full disk or a bad reading file must not lose it.
-        pass
+    # The answer is paid for: a full disk or a stuck reading file must not lose it.
+    with suppress(OSError, TypeError, Refused):
+        await _record(prop, pool, reply)
     return reply
 
 
