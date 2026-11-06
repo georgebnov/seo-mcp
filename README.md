@@ -118,6 +118,7 @@ Each list is also in the `not_in_the_api` field of `query_api`. This server does
 - Recording playback and download: the recordings method lists sessions with links, and Clarity has no recording download.
 - live_insights data older than 3 days.
 - More than 1,000 rows in live_insights: the API has no paging.
+- The documentation method: the endpoint answered HTTP 500 to each real question.
 - A retention limit: recordings and dashboard_query refuse no time frame, and rows of old days are simply absent. Empty rows do not prove zero activity.
 
 The `/mcp/` endpoints of Clarity (`recordings/sample`, `dashboard/query`, `documentation/query`) come from the [Microsoft Clarity MCP server](https://github.com/microsoft/clarity-mcp-server), and they have no reference page. Microsoft can change them, and this server sends what that project sends. Its filter names, values, and units are copied here with credit: see `THIRD_PARTY_NOTICES.md`.

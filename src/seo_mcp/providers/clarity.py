@@ -636,6 +636,7 @@ APIS = {
             "and Clarity has no recording download.",
             "live_insights data older than 3 days.",
             "More than 1,000 rows in live_insights: the API has no paging.",
+            "The documentation method: the endpoint answered HTTP 500 to each real question.",
             "A retention limit: recordings and dashboard_query refuse no time frame, and rows "
             "of old days are simply absent. Empty rows do not prove zero activity.",
         ),

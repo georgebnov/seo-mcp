@@ -254,7 +254,8 @@ TASKS: dict[str, Task] = {
                     _search_step(
                         ["ga4_landing_pages"],
                         "Get organic sessions that start on the page in both periods.",
-                        "comparison has the 2nd period. delta is main minus comparison.",
+                        "comparison has the 2nd period. delta is main minus comparison, and it "
+                        "is empty when a period has no sessions.",
                         compare=True,
                     ),
                 ),

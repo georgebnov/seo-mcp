@@ -478,12 +478,12 @@ async def test_crux_no_data_is_ok_and_says_so(live, fake_net):
 
 
 # Bing.
-async def test_bing_method_fills_the_site_and_quotes_text_arguments(live):
+async def test_bing_method_fills_the_site_and_quotes_only_query_text(live):
     data = await ask("bing", "GetQueryPageDetailStats", {"query": "shoes", "page": "/a"})
     params = sent(live)[0].url.params
     assert params["siteUrl"] == "https://www.example.com/"
     assert params["query"] == '"shoes"'
-    assert params["page"] == '"https://www.example.com/a"'
+    assert params["page"] == "https://www.example.com/a"
     assert data["rows"][0]["Date"] == "1970-01-02"
     assert "bing-key" not in json.dumps(data)
 
@@ -492,7 +492,7 @@ async def test_bing_page_index_stays_a_number(live):
     await ask("bing", "GetUrlLinks", {"link": "/a", "page": 2})
     params = sent(live)[0].url.params
     assert params["page"] == "2"
-    assert params["link"] == '"https://www.example.com/a"'
+    assert params["link"] == "https://www.example.com/a"
 
 
 async def test_bing_arguments_are_required_and_on_the_site(live):
