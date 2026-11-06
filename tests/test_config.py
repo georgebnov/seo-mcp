@@ -38,11 +38,17 @@ def test_site_by_cwd_uses_path_parts(write_config, repo, monkeypatch):
         config.resolve("")
 
 
-def test_unknown_host_never_guesses(write_config):
+def test_unknown_host_never_guesses(write_config, repo, monkeypatch):
     write_config()
+    monkeypatch.chdir(repo)
     with pytest.raises(config.ConfigError) as caught:
         config.resolve("example.com")
     assert "www.example.com" in str(caught.value)
+
+
+def test_absolute_repo_path_selects_the_site(write_config, repo):
+    write_config()
+    assert config.resolve(str(repo / "src")).host == "www.example.com"
 
 
 def test_unknown_field_is_refused_without_its_value(write_config):

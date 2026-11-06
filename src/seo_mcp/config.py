@@ -89,6 +89,10 @@ def load() -> list[Site]:
     return sites
 
 
+def _hosts(sites: list[Site]) -> str:
+    return ", ".join(site.host for site in sites)
+
+
 def resolve(site: str) -> Site:
     """Find a site by exact host or repo path. An empty value means the current folder."""
     sites = load()
@@ -96,9 +100,11 @@ def resolve(site: str) -> Site:
     for entry in sites:
         if entry.host == wanted:
             return entry
+    # A bare word is a mistyped host, never a path under the current folder.
+    if wanted and not wanted.startswith(("/", "~")):
+        raise ConfigError(f"No site matches {site}. Known sites: {_hosts(sites)}.")
     folder = Path(site or os.getcwd()).expanduser().resolve()
     matches = [entry for entry in sites if folder.is_relative_to(entry.repo_path)]
     if matches:
         return max(matches, key=lambda entry: len(entry.repo_path.parts))
-    known = ", ".join(entry.host for entry in sites)
-    raise ConfigError(f"No site matches {site or folder}. Known sites: {known}.")
+    raise ConfigError(f"No site matches {site or folder}. Known sites: {_hosts(sites)}.")
