@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import httpx2
 import pytest
 
-from seo_mcp import core, providers
+from seo_mcp import core, providers, shared
 from seo_mcp.providers import clarity
 
 SITE = {
@@ -220,6 +220,10 @@ async def test_default_result_has_only_the_fields_of_today(live):
         "rows_total",
         "truncated",
         "rows",
+        "from_cache",
+        "cached_at",
+        "cache_age_seconds",
+        "cache_expires_at",
     }
 
 
@@ -559,7 +563,7 @@ async def test_clarity_stops_at_the_daily_budget(write_config, fake_net, monkeyp
     monkeypatch.setenv("CLARITY_ENV", "clarity-token-value-1234")
     write_config(SITE)
     calls = fake_net(lambda _: httpx2.Response(500))
-    mark = clarity.failure_path(clarity.cache_path("www.example.com"))
+    mark = shared.failure_path(clarity.cache_path("www.example.com"))
     for _ in range(clarity.DAILY_CALLS):
         data = await ask(["clarity"])
         assert "HTTP 500" in data["sources"]["clarity"]["reason"]

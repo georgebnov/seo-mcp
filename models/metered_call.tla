@@ -29,8 +29,8 @@ TakeLock == pc = "start" /\ pc' = "lock" /\ Same
 CacheHit == pc = "lock" /\ cache = "today" /\ pc' = "hit" /\ Same
 CacheOld == pc = "lock" /\ cache = "olderDay" /\ pc' = "token" /\ Same
 CacheNone == pc = "lock" /\ cache = "none" /\ pc' = "token" /\ Same
-\* clarity._recent_failure: the failure of the same request is under the window.
-\* clarity._read_cache: an answer of today that an older server saved fails the shape check.
+\* shared._recent_failure: the failure of the same request is under the window.
+\* shared._saved: an answer of today that an older server saved fails the shape check.
 CacheBad == pc = "lock" /\ cache = "badToday" /\ pc' = "token" /\ Same
 FailureRepeat == pc = "lock" /\ cache = "failedInWindow" /\ pc' = "repeated" /\ Same
 FailureOld == pc = "lock" /\ cache = "failedBefore" /\ pc' = "token" /\ Same
@@ -68,7 +68,7 @@ ConnectFails == pc = "reserved" /\ pc' = "failed" /\ Same
 Answer ==
   /\ pc = "flight" /\ pc' = "stored" /\ cache' = "today"
   /\ UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
-\* clarity._cached: HTTP 200 with a wrong shape, so the failure window starts and nothing is saved.
+\* shared.once: HTTP 200 with a wrong shape, so the failure window starts and nothing is saved.
 BadShape ==
   /\ pc = "flight" /\ pc' = "badAnswer" /\ cache' = "failedInWindow"
   /\ UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>

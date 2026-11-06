@@ -52,7 +52,7 @@ class ApiError(Exception):
         self.note = note
 
 
-def _check(allowed: tuple[Endpoint, ...], method: str, url: str) -> Endpoint:
+def check(allowed: tuple[Endpoint, ...], method: str, url: str) -> Endpoint:
     parts = urlsplit(url)
     secure = parts.scheme == "https" and parts.netloc == parts.hostname
     listed = [
@@ -94,7 +94,7 @@ async def request(
     spent: Receipt | None = None,
     **kwargs: Any,
 ) -> Any:
-    _pay(_check(allowed, method, url), spent)
+    _pay(check(allowed, method, url), spent)
     try:
         async with httpx2.AsyncClient(
             transport=transport,

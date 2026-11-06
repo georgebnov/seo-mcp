@@ -22,3 +22,6 @@
 - Stop a second Clarity call after a failure: a waiter or a repeat of a request that can have reached the API gets the same failure for 60 seconds and spends nothing.
 - Fix a bad HTTP 200 answer of Clarity: the server checks the shape before it saves an answer, so a source no longer fails with `AttributeError` until the next UTC day. The reason says what happened.
 - Add a 2 second limit to the ledger lock: a stuck process no longer freezes all sources, and a metered call that cannot get the lock sends nothing.
+- Share identical requests of all sources and methods: parallel agents send 1 live call, and a saved answer serves repeats for 5 minutes (30 seconds for a GA4 realtime report). Each answer shows `from_cache`, `cached_at`, `cache_age_seconds`, and `cache_expires_at`.
+- Extend the failure window of 60 seconds and the shape check to all sources and methods.
+- Trim the outer spaces of a Clarity dashboard question, so that they do not spend a new call.

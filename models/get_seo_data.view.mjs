@@ -30,6 +30,7 @@ const labels = {
   OutOfRange: "the source sees a value out of its range, such as last_days 5 for Clarity",
   NoFieldOrKey: "the site has no field or key for the source",
   RefusedLocally: "the server refuses the call, such as at a quota",
+  SavedRows: "a saved answer of the same request is inside its time",
   Request: "the source sends its read request",
   Rows: "the API answers with rows",
   ThinRows: "the API answers with too few rows, so thin_data is set",

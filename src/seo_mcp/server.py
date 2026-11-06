@@ -47,6 +47,11 @@ Each source accepts only these parameters:
 A source that cannot apply a parameter does not run. Its status is unsupported, and
 unsupported_params and accepts say why. It never returns data without the filter. A source
 that ran shows the values that it used in applied.
+An answer from the network or a saved answer shows from_cache, cached_at, cache_age_seconds, and
+cache_expires_at. Identical requests share 1 live call: a saved answer serves for 5 minutes (30
+seconds for a GA4 realtime report, the UTC day for clarity). With several requests in a source,
+from_cache is true only when all were saved, and the oldest part gives the age. After a failed
+call, the same request does not go out for 60 seconds, reason says so, and it spends nothing.
 A source that spends a counted quota shows calls_used_today, daily_limit, and calls_left, or
 tokens_left for GA4. With few calls left, quota_warning appears. At the limit the server refuses
 before the network, and reason gives the reset time. Call list_sites to read this first.
@@ -96,9 +101,10 @@ key: do not send them. A field that the method does not have is an error, never 
 A row limit is at most 1000: read more rows with startRow or offset. more_rows is yes, no, or
 possible. If the API refuses a Google query, reason holds the message of the API.
 Each live clarity call spends 1 of 10 calls for the project each day. The same request on the
-same UTC day comes from the cache. After a failed clarity call, the same request does not go
-out for 60 seconds: reason says so, and it spends nothing.
-Each URL inspection spends 1 of 2000 for the site each day.
+same UTC day comes from the cache. Each URL inspection spends 1 of 2000 for the site each day.
+Identical requests share 1 live call: an answer shows from_cache, cached_at, cache_age_seconds,
+and cache_expires_at, and it serves for 5 minutes (30 seconds for a GA4 realtime report). After
+a failed call, the same request does not go out for 60 seconds, and it spends nothing.
 With a site, discovery shows quota: the docs, the limits, and the used count, with no network
 call. Read calls_left there or in list_sites before an expensive call. An answer that spends
 shows calls_used_today, daily_limit, and calls_left, and GA4 shows tokens_left from the API.

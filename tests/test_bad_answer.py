@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import httpx2
 import pytest
 
-from seo_mcp import core, quota
+from seo_mcp import core, quota, shared
 from seo_mcp.providers import clarity
 from test_query_api import HOST
 from test_quota import (
@@ -87,8 +87,8 @@ async def test_a_repeat_of_a_bad_answer_keeps_the_reason_and_spends_nothing(live
 async def test_the_source_works_again_after_the_window(live, fake_net):
     clarity_says(fake_net, {"message": "try later"})
     await core.get_seo_data(HOST, ["clarity"])
-    mark = clarity.failure_path(clarity.cache_path(HOST))
-    old = datetime.now(UTC) - timedelta(seconds=clarity.FAILURE_WINDOW_SECONDS)
+    mark = shared.failure_path(clarity.cache_path(HOST))
+    old = datetime.now(UTC) - timedelta(seconds=shared.FAILURE_WINDOW_SECONDS)
     mark.write_text(json.dumps({**json.loads(mark.read_text()), "failed_at": old.isoformat()}))
     clarity_says(fake_net, METRICS)
     result = (await core.get_seo_data(HOST, ["clarity"]))["sources"]["clarity"]

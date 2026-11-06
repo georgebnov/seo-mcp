@@ -79,6 +79,22 @@ The Clarity click tasks ask `dashboard_query` for the count first, then `recordi
 
 `tests/test_tasks.py` runs each step through the real tools, so a task cannot name a method, a field, or a filter that does not exist. It cannot prove what Clarity answers: each `read` text says when a question is not yet proven on real data.
 
+### Saved answers
+
+18 agents can ask the same thing in 1 audit, so identical requests share 1 live call, also between server processes. The key is the site, the HTTP method, the URL, the query, the body, and whether the call asks for the API's error text. Another page, date, or field is another request, and 2 sources that send the same request share it.
+
+| Request | A saved answer serves for |
+| --- | --- |
+| Each read of Search Console, GA4, PageSpeed, the Chrome UX Report, and Bing, and URL Inspection | 5 minutes |
+| A GA4 realtime report | 30 seconds |
+| Clarity | The rest of the UTC day |
+
+An answer shows `from_cache`, `cached_at`, `cache_age_seconds`, and `cache_expires_at`. With several requests in 1 source, `from_cache` is `true` only when all were saved, the oldest part gives the age, and the first to end gives `cache_expires_at`. The server has no way to force a fresh read: wait for `cache_expires_at`. A saved answer spends nothing and serves also at the limit. The server never serves it after `cache_expires_at`.
+
+After a failed call that can have reached the API (an HTTP error, a read timeout, a source timeout in flight, or an HTTP 200 of a wrong shape), the same request does not go out for 60 seconds: a waiter or a repeat gets the same failure, spends nothing, and `reason` gives the seconds left. The server does not save an answer of a wrong shape. A connection that did not open allows a retry at once, and each try of a counted API still counts, so a long network outage can spend the local count of the day. `index_status` keeps a URL that failed in the saved answer when another URL worked, so a repeat does not spend all URLs again.
+
+Saved answers are in `shared/` in the cache folder, and an entry older than 1 hour goes away. Only a digest of a request reaches a file name, and a saved answer is scrubbed first.
+
 ### Quota
 
 The server spends no call to show quota. `list_sites` has a `quota` object for each site, with 1 entry for each connected API. `query_api` discovery has a `quota` object too: the doc link and the published limits, and with a `site`, the count in `now`. A row of a `task` has the same object.
@@ -167,7 +183,7 @@ To store a key in the macOS Keychain, copy it and run `security add-generic-pass
 - **Search Console and GA4:** create a [service account](https://console.cloud.google.com/iam-admin/serviceaccounts) and download its JSON key. Enable the Search Console API and the Google Analytics Data API. Add the account's email to the Search Console property and to the GA4 property as a viewer. Put the file in `google_service_account`.
 - **PageSpeed and Chrome UX Report:** create an API key in the [Google Cloud console](https://console.cloud.google.com/apis/credentials) and enable both APIs. Put it in `google_api_key`.
 - **Bing:** create an API key in [Bing Webmaster Tools](https://www.bing.com/webmasters) under Settings, API access. Put it in `bing_api_key`.
-- **Clarity:** a project admin creates a token in the [Clarity](https://clarity.microsoft.com) project under Settings, Data Export. Each project has its own token, so put `clarity_token` in the `secrets` object of the site. The API allows 10 calls for each project each day, so the server saves each answer in `~/.cache/seo-mcp` (`SEO_MCP_CACHE_DIR` overrides it) and serves it for the rest of the UTC day. The result shows `cached_at`. The cache key holds the project, the days, the dimensions, and the request, so a changed `clarity_project` cannot read the answer of the old project. A ledger file counts each live call, also a failed one, for the UTC day. At 10 the server refuses before the network. All Clarity paths share this count, and parallel agents wait for 1 fetch of the same answer. After a failed call that can have reached Clarity (an HTTP error, a read timeout, or a source timeout in flight), the same request does not go out for 60 seconds: a waiter or a repeat gets the same failure, spends nothing, and `reason` gives the seconds left. An HTTP 200 that does not have the shape of the method is such a failure too: the server does not save it, and `reason` says so. A connection that did not open allows a retry at once, and each try still counts, so a long network outage can spend the local count of the day. See [Quota](#quota). If 2 sites share 1 Clarity project, give both the same `clarity_project` field so that they share 1 count and 1 cache.
+- **Clarity:** a project admin creates a token in the [Clarity](https://clarity.microsoft.com) project under Settings, Data Export. Each project has its own token, so put `clarity_token` in the `secrets` object of the site. The API allows 10 calls for each project each day, so the server saves each answer in `~/.cache/seo-mcp` (`SEO_MCP_CACHE_DIR` overrides it) and serves it for the rest of the UTC day. The result shows `cached_at`. The cache key holds the project, the days, the dimensions, and the request, so a changed `clarity_project` cannot read the answer of the old project. A ledger file counts each live call, also a failed one, for the UTC day. At 10 the server refuses before the network. All Clarity paths share this count, and parallel agents wait for 1 fetch of the same answer. See [Saved answers](#saved-answers) and [Quota](#quota). If 2 sites share 1 Clarity project, give both the same `clarity_project` field so that they share 1 count and 1 cache.
 
 ## Add a provider
 

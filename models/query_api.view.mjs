@@ -33,6 +33,8 @@ const labels = {
   SiteBad: "the site does not resolve",
   ValueWrong: "a value is wrong for the method",
   LocalRefusal: "the ledger refuses the call",
+  SavedAnswer: "a saved answer of the same request is inside its time",
+  SharedFailure: "the same request failed inside the window",
   ReadQuery: "the server fills the site and the key and sends 1 listed read request",
   Rows: "the API answers with data",
   Google400: "a Google API answers HTTP 400 with a message",

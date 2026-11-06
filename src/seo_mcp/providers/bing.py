@@ -5,7 +5,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from seo_mcp import net
+from seo_mcp import net, shared
 from seo_mcp.api import Api, Method, Quota, Run, answer, as_rows, whole
 from seo_mcp.config import Site
 from seo_mcp.params import MAX_TEXT, BadInput, Params, page_url
@@ -46,7 +46,8 @@ async def bing_links(site: Site, params: Params) -> dict[str, Any]:
     site_url = site.field("bing_site_url")
     # The Bing API takes its key only in the query string.
     query = {"siteUrl": site_url, "page": 0, "apikey": site.secret("bing_api_key")}
-    body = await net.request(ENDPOINTS, "GET", f"{API}/GetLinkCounts", params=query)
+    url = f"{API}/GetLinkCounts"
+    body = await shared.request(site, ENDPOINTS, "GET", url, params=query, holds="d")
     data = body["d"]
     rows = [{"url": row["Url"], "inbound_links": row["Count"]} for row in data.get("Links") or []]
     rows.sort(key=lambda row: row["inbound_links"], reverse=True)
@@ -94,7 +95,8 @@ def _reader(name: str) -> Run:
         for key, value in given.items():
             query[key] = _argument(site, key, arguments[key], value)
         query["apikey"] = site.secret("bing_api_key")
-        reply = await net.request(ENDPOINTS, "GET", f"{API}/{name}", params=query)
+        url = f"{API}/{name}"
+        reply = await shared.request(site, ENDPOINTS, "GET", url, params=query, holds="d")
         data = reply["d"]
         pages = data.get("TotalPages") if isinstance(data, dict) else None
         listed = next(

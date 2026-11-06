@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from seo_mcp import net
+from seo_mcp import net, shared
 from seo_mcp.api import Api, Method, Quota, Run, answer, one_of, whole
 from seo_mcp.config import Site
 from seo_mcp.params import BadInput, Params, page_url
@@ -42,7 +42,9 @@ async def page_speed(site: Site, params: Params) -> dict[str, Any]:
     query = [("url", params.page or f"https://{site.host}/"), ("strategy", "mobile")]
     query += [("category", name) for name in CATEGORIES]
     headers = _key_header(site.optional_secret("google_api_key"))
-    reply = await net.request(ENDPOINTS, "GET", PSI_API, params=query, headers=headers)
+    reply = await shared.request(
+        site, ENDPOINTS, "GET", PSI_API, params=query, headers=headers, holds="lighthouseResult"
+    )
     lighthouse = reply["lighthouseResult"]
     audits = lighthouse.get("audits", {})
     rows: list[dict[str, Any]] = [
@@ -89,7 +91,9 @@ async def chrome_field_data(site: Site, params: Params) -> dict[str, Any]:
     headers = _key_header(site.secret("google_api_key"))
     body = {"url": params.page} if params.page else {"origin": f"https://{site.host}"}
     try:
-        reply = await net.request(ENDPOINTS, "POST", CRUX_API, json=body, headers=headers)
+        reply = await shared.request(
+            site, ENDPOINTS, "POST", CRUX_API, json=body, headers=headers, holds="record"
+        )
     except net.ApiError as exc:
         if exc.status == 404:
             scope = "page" if params.page else "site"
@@ -130,8 +134,15 @@ async def _psi(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     if "locale" in request:
         query.append(("locale", str(request["locale"])))
     headers = _key_header(site.optional_secret("google_api_key"))
-    reply = await net.request(
-        ENDPOINTS, "GET", PSI_API, params=query, headers=headers, explain=True
+    reply = await shared.request(
+        site,
+        ENDPOINTS,
+        "GET",
+        PSI_API,
+        params=query,
+        headers=headers,
+        explain=True,
+        holds="lighthouseResult",
     )
     lighthouse = reply.get("lighthouseResult", {})
     rows = [
@@ -176,8 +187,8 @@ def _crux_reader(endpoint: str, periods: str) -> Run:
             whole("collectionPeriodCount", request["collectionPeriodCount"], 1, MAX_PERIODS)
         headers = _key_header(site.secret("google_api_key"))
         try:
-            reply = await net.request(
-                ENDPOINTS, "POST", endpoint, json=body, headers=headers, explain=True
+            reply = await shared.request(
+                site, ENDPOINTS, "POST", endpoint, json=body, headers=headers, explain=True
             )
         except net.ApiError as exc:
             if exc.status == 404:
