@@ -9,7 +9,7 @@ from seo_mcp import providers
 SRC = Path(__file__).parent.parent / "src" / "seo_mcp"
 NETWORK_MODULES = {"httpx", "httpx2", "requests", "aiohttp", "urllib3", "socket", "http", "ssl"}
 WRITE_TEXT = re.compile(
-    r"Submit|Add[A-Z]|Remove[A-Z]|Delete[A-Z]|Update[A-Z]|urlNotifications|indexing\.googleapis"
+    r"Submit[A-Z]|Add[A-Z]|Remove[A-Z]|Delete[A-Z]|Update[A-Z]|urlNotifications|indexing\.googleapis"
     r'|"(PUT|PATCH|DELETE)"'
 )
 

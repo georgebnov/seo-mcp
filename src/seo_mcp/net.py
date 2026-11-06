@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 import httpx2
 
-REQUEST_TIMEOUT_SECONDS = 60
+REQUEST_TIMEOUT_SECONDS = 90
 
 # Tests replace this. Nothing else mocks the network.
 transport: httpx2.AsyncBaseTransport | None = None

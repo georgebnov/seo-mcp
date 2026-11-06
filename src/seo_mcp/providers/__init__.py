@@ -5,11 +5,11 @@ from typing import Any
 
 from seo_mcp.config import Site
 from seo_mcp.net import Endpoint
-from seo_mcp.providers import bing
+from seo_mcp.providers import _google, bing, clarity, ga4, gsc, pagespeed
 
 Source = Callable[[Site], Awaitable[dict[str, Any]]]
 
-MODULES: tuple[Any, ...] = (bing,)
+MODULES: tuple[Any, ...] = (_google, gsc, ga4, pagespeed, bing, clarity)
 
 SOURCES: dict[str, Source] = {name: fn for m in MODULES for name, fn in m.SOURCES.items()}
 ENDPOINTS: tuple[Endpoint, ...] = tuple(e for m in MODULES for e in m.ENDPOINTS)

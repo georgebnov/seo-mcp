@@ -2,6 +2,7 @@
 
 import json
 import time
+from typing import Any
 
 from google.auth import crypt, jwt
 
@@ -12,7 +13,8 @@ from seo_mcp.results import NotConnected
 OAUTH_URL = "https://oauth2.googleapis.com/token"
 GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
-AUTH_ENDPOINTS = (net.Endpoint("POST", "oauth2.googleapis.com", r"/token"),)
+ENDPOINTS = (net.Endpoint("POST", "oauth2.googleapis.com", r"/token"),)
+SOURCES: dict[str, Any] = {}
 TOKEN_SECONDS = 3600
 REFRESH_MARGIN_SECONDS = 60
 
@@ -49,7 +51,7 @@ async def token(site: Site, scope: str) -> str:
     grant = jwt.encode(signer, claims).decode()
     secrets.remember(grant)
     body = await net.request(
-        AUTH_ENDPOINTS,
+        ENDPOINTS,
         "POST",
         OAUTH_URL,
         data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": grant},
