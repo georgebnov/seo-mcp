@@ -5,7 +5,7 @@ from collections.abc import Awaitable
 from typing import Any
 
 from seo_mcp import api as full_api
-from seo_mcp import config, net, providers
+from seo_mcp import config, net, providers, tasks
 from seo_mcp.config import ConfigError, Site
 from seo_mcp.params import COMPARE_NEEDS, NONE, BadInput, Params, parse
 from seo_mcp.results import NotConnected, Refused, Unsupported, failed, ok, unsupported
@@ -165,7 +165,22 @@ def _catalog() -> dict[str, Any]:
         {"api": name, "title": entry.title, "methods": sorted(entry.methods)}
         for name, entry in providers.APIS.items()
     ]
-    return ok(rows, thin=False, limit=len(rows))
+    return ok(rows, thin=False, limit=len(rows), tasks=tasks.summaries())
+
+
+def _no_task(reason: str) -> dict[str, Any]:
+    return unsupported(["task"], safe_reason(reason), sorted(tasks.TASKS))
+
+
+def _task(site: str, api: str, asked: str) -> dict[str, Any]:
+    names = tasks.find(asked)
+    if not names:
+        return _no_task("No task matches this ask, and the server does not guess a call.")
+    built = {name: tasks.build(name, site, api) for name in names}
+    rows = [{**row, "window": item["window"]} for item in built.values() for row in item["rows"]]
+    if not rows:
+        return _no_task(f"{api} has no recipe for this task.")
+    return scrub(ok(rows, thin=False, limit=len(rows)))
 
 
 def _options(name: str, entry: full_api.Api) -> dict[str, Any]:
@@ -194,12 +209,17 @@ async def query_api(
     api: str = "",
     method: str = "",
     request: dict[str, Any] | None = None,
+    task: str = "",
 ) -> dict[str, Any]:
+    if task and (method or request is not None):
+        return failed("error", "A task finds a call and sends none. Omit method and request.")
     if not api:
-        return _catalog()
+        return _task(site, "", task) if task else _catalog()
     entry = providers.APIS.get(api)
     if entry is None:
         return failed("error", safe_reason(f"Unknown api. Known: {', '.join(providers.APIS)}."))
+    if task:
+        return _task(site, api, task)
     if not method:
         return _options(api, entry)
     item = entry.methods.get(method)

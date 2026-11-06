@@ -6,7 +6,7 @@ A read-only [MCP](https://modelcontextprotocol.io) server that gives an agent th
 
 - `list_sites`: the sites in your sites file, and what each one has connected.
 - `get_seo_data`: the simple path. Name a site, the sources that you need, and optionally a time frame, a page, a query, or a comparison.
-- `query_api`: the full path. It sends 1 official read query of 1 API, for a question that `get_seo_data` cannot ask.
+- `query_api`: the full path. It sends 1 official read query of 1 API, for a question that `get_seo_data` cannot ask. With `task`, it finds the call for a thing that you want.
 
 ### `get_seo_data`
 
@@ -42,10 +42,10 @@ A source that takes `page` also takes `compare_page`. A source that takes dates 
 ### `query_api`
 
 ```
-query_api(site?, api?, method?, request?)
+query_api(site?, api?, method?, request?, task?)
 ```
 
-1. Call it with no `api`: it lists the APIs and methods.
+1. Call it with no `api`: it lists the APIs, the methods, and the tasks.
 2. Call it with `api` and no `method`: it lists the fields, the valid values, the docs, and what the API does not give. For GA4, the method `metadata` lists the live dimensions and metrics of the property, with custom ones.
 3. Call it with `api`, `method`, and `request`: `request` is the official JSON of that method. The server fills the site, the property, and the key.
 
@@ -59,6 +59,25 @@ query_api(site?, api?, method?, request?)
 | `clarity` | `live_insights`, `recordings`, `dashboard_query`, `documentation` | The Data Export API, and the 3 read endpoints of the official Clarity MCP server |
 
 A field that the method does not have is an error, never dropped. A row limit is at most 1000: read more rows with `startRow` or `offset`. `more_rows` is `yes`, `no`, or `possible`, because Search Console gives no total. A result stops at about 100 KB and then shows `truncated`. If a Google API refuses a query, `reason` holds the message of the API after the server removes secrets.
+
+### Find a call with `task`
+
+Call `query_api(task="dead clicks")`, or say what you want in words: `query_api(task="which pages have dead clicks")`. The server matches whole phrases, and it makes no network call and sends no query. It needs no sites file. `api` keeps 1 provider, and `site` goes into each call. A `task` goes with no `method` and no `request`.
+
+Each row of the result is 1 provider. `steps` holds the exact calls in order, with real dates and how to read each answer. `means` says what the answer means, `limits` says what it cannot show, and `window` gives the dates. `needs` lists the marks that you must fill, such as `<page>` (a path) or `<page_url>` (a full URL). A provider that cannot answer has no steps, and `not_available` says why. An ask that matches no task gets status `unsupported`, with the task names in `accepts`: the server does not guess a call.
+
+| `task` | Providers |
+| --- | --- |
+| `dead_clicks`, `rage_clicks`, `quickback_clicks` | Clarity |
+| `scroll_depth_by_page` | Clarity, GA4 |
+| `most_clicked_elements` | Clarity |
+| `page_over_two_periods` | Search Console, GA4, Clarity; not Bing |
+| `queries_of_page` | Search Console, Bing; not GA4 |
+| `core_web_vitals` | Chrome UX Report, PageSpeed |
+
+The Clarity click tasks ask `dashboard_query` for the count first, then `recordings` for the elements. They look back 90 days, because a short window often holds no such click.
+
+`tests/test_tasks.py` runs each step through the real tools, so a task cannot name a method, a field, or a filter that does not exist. It cannot prove what Clarity answers: each `read` text says when a question is not yet proven on real data.
 
 ### What a dashboard shows and the API does not give
 
@@ -134,6 +153,7 @@ To store a key in the macOS Keychain, copy it and run `security add-generic-pass
    - `APIS`: the read methods for `query_api`. Each method lists its request fields, and the API lists what it does not give.
 2. Add the module to `MODULES` in `providers/__init__.py`.
 3. Add a test with the `fake_net` fixture, and add the sources to the table above.
+4. Add a recipe to `src/seo_mcp/tasks.py`. `tests/test_tasks.py` fails when an API has no task.
 
 A `POST` endpoint fails `tests/test_read_only.py` until you add it to the pinned list. Add only a call that reads.
 
