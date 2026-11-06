@@ -66,13 +66,12 @@ def _argument(site: Site, name: str, kind: str, value: Any) -> Any:
     if kind == INDEX:
         return whole(name, value, 0, MAX_PAGE_INDEX)
     if kind == URL:
-        text = page_url(site.host, value, name)
-    elif isinstance(value, str) and 1 <= len(value) <= MAX_TEXT:
-        text = value
-    else:
-        raise BadInput(f"{name} must be text of 1 to {MAX_TEXT} characters.")
-    # The JSON form of this API reads a text argument as a JSON string, with its quotes.
-    return json.dumps(text)
+        # The API answers HTTP 400 to a URL in quotes.
+        return page_url(site.host, value, name)
+    if isinstance(value, str) and 1 <= len(value) <= MAX_TEXT:
+        # The JSON form of this API reads a text argument as a JSON string, with its quotes.
+        return json.dumps(value)
+    raise BadInput(f"{name} must be text of 1 to {MAX_TEXT} characters.")
 
 
 def _clean(row: dict[str, Any]) -> dict[str, Any]:
