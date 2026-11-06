@@ -61,7 +61,11 @@ async def clarity(site: Site) -> dict[str, Any]:
     from_cache = stored is not None
     if stored is None:
         params = {"numOfDays": WINDOW_DAYS, "dimension1": "URL"}
-        headers = {"Authorization": f"Bearer {site.secret('clarity_token')}"}
+        headers = {
+            "Authorization": f"Bearer {site.secret('clarity_token')}",
+            "Content-Type": "application/json",
+            "User-Agent": NAME,
+        }
         answer = await net.request(ENDPOINTS, "GET", API, params=params, headers=headers)
         stored = {"cached_at": datetime.now(UTC).isoformat(), "answer": answer}
         _write_cache(path, stored)

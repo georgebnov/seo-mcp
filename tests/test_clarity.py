@@ -51,6 +51,8 @@ async def test_live_call_sends_the_documented_request(write_config, fake_net):
     assert result["status"] == "ok"
     assert result["from_cache"] is False
     assert calls[0].headers["authorization"] == f"Bearer {TOKEN}"
+    assert calls[0].headers["content-type"] == "application/json"
+    assert calls[0].headers["user-agent"] == "seo-mcp"
     assert calls[0].url.params["numOfDays"] == "3"
     assert calls[0].url.params["dimension1"] == "URL"
     assert result["totals"] == {"sessions": 110}
