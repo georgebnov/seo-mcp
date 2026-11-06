@@ -16,6 +16,16 @@ class Endpoint(NamedTuple):
     method: str
     host: str
     path: str
+    metered: str = ""
+
+
+class Receipt:
+    """Proof that a ledger counted calls. Each metered call uses 1 of them."""
+
+    def __init__(self, ledger: str, calls: int, day: str) -> None:
+        self.ledger = ledger
+        self.calls = calls
+        self.day = day
 
 
 class NotAllowed(Exception):
@@ -31,20 +41,27 @@ class ApiError(Exception):
         self.detail = detail
 
 
-def _check(allowed: tuple[Endpoint, ...], method: str, url: str) -> None:
+def _check(allowed: tuple[Endpoint, ...], method: str, url: str) -> Endpoint:
     parts = urlsplit(url)
-    listed = (
-        parts.scheme == "https"
-        and parts.netloc == parts.hostname
-        and any(
-            endpoint.method == method
-            and endpoint.host == parts.hostname
-            and re.fullmatch(endpoint.path, parts.path)
-            for endpoint in allowed
-        )
-    )
-    if not listed:
+    secure = parts.scheme == "https" and parts.netloc == parts.hostname
+    listed = [
+        endpoint
+        for endpoint in allowed
+        if endpoint.method == method
+        and endpoint.host == parts.hostname
+        and re.fullmatch(endpoint.path, parts.path)
+    ]
+    if not secure or not listed:
         raise NotAllowed(f"{method} to {parts.hostname} is not in the ENDPOINTS list.")
+    return listed[0]
+
+
+def _pay(endpoint: Endpoint, spent: Receipt | None) -> None:
+    if not endpoint.metered:
+        return
+    if spent is None or spent.ledger != endpoint.metered or spent.calls < 1:
+        raise NotAllowed(f"A call to {endpoint.host} needs a receipt of {endpoint.metered}.")
+    spent.calls -= 1
 
 
 def _google_message(response: httpx2.Response) -> str | None:
@@ -58,9 +75,15 @@ def _google_message(response: httpx2.Response) -> str | None:
 
 
 async def request(
-    allowed: tuple[Endpoint, ...], method: str, url: str, *, explain: bool = False, **kwargs: Any
+    allowed: tuple[Endpoint, ...],
+    method: str,
+    url: str,
+    *,
+    explain: bool = False,
+    spent: Receipt | None = None,
+    **kwargs: Any,
 ) -> Any:
-    _check(allowed, method, url)
+    _pay(_check(allowed, method, url), spent)
     try:
         async with httpx2.AsyncClient(
             transport=transport,

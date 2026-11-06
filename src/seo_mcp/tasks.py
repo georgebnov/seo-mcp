@@ -17,7 +17,14 @@ SEARCH_LAG_DAYS = 3
 SAMPLE_SESSIONS = 50
 INPUT_MARK = re.compile(r"<[a-z_]+>")
 
-CLARITY_QUOTA = "Each step spends 1 of the 10 Clarity calls of the project for the UTC day."
+CLARITY_QUOTA = (
+    "Each step spends 1 of the 10 Clarity calls of the project for the UTC day. Read calls_left "
+    "in quota, or in list_sites, before you start."
+)
+ZERO_COUNT_STOP = (
+    "If the dashboard count is 0 (no page has a count above 0), do not call recordings: it "
+    "spends 1 call on a sample that cannot show such a click. Report the 0 and stop."
+)
 OLD_DATA = (
     "Empty rows do not prove zero activity. Clarity refuses no time frame, and it does not "
     "state how long it keeps data: rows of old days are simply absent. Try a longer window."
@@ -38,6 +45,7 @@ class Step(NamedTuple):
     tool: str
     args: dict[str, Any]
     read: str
+    skip_if: str = ""
 
 
 class Recipe(NamedTuple):
@@ -68,7 +76,7 @@ def _sessions(flag: str, read: str) -> Step:
     request = {"filters": {"date": span, flag: True}, "count": SAMPLE_SESSIONS}
     args = {"api": "clarity", "method": "recordings", "request": request}
     why = "Optional: see which elements, in a sample of sessions."
-    return Step(why, "query_api", args, read)
+    return Step(why, "query_api", args, read, ZERO_COUNT_STOP)
 
 
 def _search_step(sources: list[str], why: str, read: str, compare: bool = False) -> Step:
@@ -91,7 +99,7 @@ def _click_recipe(flag: str, question: str, count_read: str, event_read: str, me
             _sessions(flag, event_read),
         ),
         means,
-        (CLARITY_QUOTA, OLD_DATA, OTHER_HOSTS, COUNT_ONLY, SESSION_LINKS),
+        (CLARITY_QUOTA, ZERO_COUNT_STOP, OLD_DATA, OTHER_HOSTS, COUNT_ONLY, SESSION_LINKS),
     )
 
 
@@ -155,7 +163,7 @@ TASKS: dict[str, Task] = {
                 ),
                 "A quickback is a click to a page, then a fast return. The page did not "
                 "give what the link promised.",
-                (CLARITY_QUOTA, OLD_DATA, OTHER_HOSTS, COUNT_ONLY, SESSION_LINKS),
+                (CLARITY_QUOTA, ZERO_COUNT_STOP, OLD_DATA, OTHER_HOSTS, COUNT_ONLY, SESSION_LINKS),
             ),
         ),
     ),
@@ -443,12 +451,13 @@ def _fill(value: Any, marks: dict[str, str]) -> Any:
 
 def _step(step: Step, site: str, marks: dict[str, str]) -> dict[str, Any]:
     args = _fill(step.args, marks)
-    return {
+    row = {
         "why": step.why,
         "tool": step.tool,
         "args": {"site": site, **args} if site else args,
         "read": step.read,
     }
+    return {**row, "skip_if": step.skip_if} if step.skip_if else row
 
 
 def _row(name: str, recipe: Recipe, site: str, marks: dict[str, str]) -> dict[str, Any]:

@@ -122,3 +122,31 @@ async def test_403_names_a_cut_token_as_a_cause(write_config, fake_net):
 async def test_no_token_is_not_connected(write_config):
     write_config()
     assert (await get())["status"] == "not_connected"
+
+
+async def test_a_changed_project_does_not_read_the_old_answer(write_config, fake_net):
+    calls = fake_net(lambda _: httpx2.Response(200, json=LIVE))
+    write_config({**SITE, "clarity_project": "old-project"})
+    assert (await get())["from_cache"] is False
+    write_config({**SITE, "clarity_project": "new-project"})
+    assert (await get())["from_cache"] is False
+    assert len(calls) == 2
+
+
+async def test_a_changed_project_does_not_read_an_old_dashboard_answer(write_config, fake_net):
+    calls = fake_net(lambda _: httpx2.Response(200, json={"data": [{"a": 1}]}))
+    request = {"query": "q"}
+    write_config({**SITE, "clarity_project": "old-project"})
+    first = await core.query_api("www.example.com", "clarity", "dashboard_query", request)
+    write_config({**SITE, "clarity_project": "new-project"})
+    second = await core.query_api("www.example.com", "clarity", "dashboard_query", request)
+    assert (first["from_cache"], second["from_cache"]) == (False, False)
+    assert len(calls) == 2
+
+
+async def test_a_site_with_no_project_field_keeps_its_cache_file(write_config, fake_net):
+    write_config(SITE)
+    fake_net(lambda _: httpx2.Response(200, json=LIVE))
+    await get()
+    assert (clarity.cache_path("www.example.com")).name == "clarity-www.example.com-3d-URL.json"
+    assert clarity.cache_path("www.example.com").exists()

@@ -13,4 +13,6 @@ A read-only stdio MCP server. Python, uv, ruff, mypy, pytest. Run `just check` b
 - A way to get a thing goes in `tasks.py` as a task. A step that names a method, a field, or a filter must run in `tests/test_tasks.py`.
 - A source never ignores a parameter. It declares what it applies in `ACCEPTS`, and it does not run with any other parameter.
 - Each live Clarity call goes through `_cached` in `clarity.py`, so that it spends from the ledger.
+- An endpoint with a daily call limit names its ledger in `metered`. `net.request` refuses it without a receipt from `quota.spend`.
+- An API with no number in its docs says so in `Quota.limits`. Never put a number there from a source that is not the official docs.
 - Commits use Conventional Commits. Work on a branch and open a PR.

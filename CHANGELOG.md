@@ -8,7 +8,13 @@
 - Add Clarity session recording lists and dashboard questions through the endpoints of the official Clarity MCP server.
 - Count each live Clarity call in a daily ledger, and let parallel server processes wait for 1 fetch of the same answer.
 - Check each Clarity recording filter value before a call spends quota, and list the valid values, the URL operators, and the units in `query_api`.
-- Add the Clarity `documentation` method, show the question that Clarity answered in `dashboard_query`, and label `recordings` as a sample.
+- Show the question that Clarity answered in `dashboard_query`, and label `recordings` as a sample.
 - Add `task` to `query_api`: an agent asks for a thing such as dead clicks, and gets the exact calls, the fields, and the meaning for each provider, with no network call.
 - Fix the Bing methods that take a URL: the API refused the URL in quotes with HTTP 400.
+- Fix the Clarity cache key: it holds the project, so a changed `clarity_project` cannot read the answer of the old project.
+- Show quota with no network call in `list_sites` and `query_api` discovery: the used count, the limit, and what is left, with the published limits and doc links of each API.
+- Show `calls_used_today`, `daily_limit`, `calls_left`, and the reset time in each answer that spends quota, also in a failure. Add `quota_warning` when few calls are left.
+- Count URL Inspection calls in a daily ledger, and read the real GA4 token quota from each report.
+- Stop the day when the Clarity Data Export API answers HTTP 429.
+- Add a rule to the Clarity click tasks: when the dashboard count is 0, do not call `recordings`.
 - List in the README what each dashboard shows and the API does not give.

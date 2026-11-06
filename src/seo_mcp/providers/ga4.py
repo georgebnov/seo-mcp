@@ -1,10 +1,13 @@
 """Google Analytics 4: organic traffic and organic landing pages."""
 
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
-from seo_mcp import net
-from seo_mcp.api import Api, Method, Run, answer, row_limit, whole
+from seo_mcp import net, quota
+from seo_mcp.api import Api, Method, Quota, Run, answer, row_limit, whole
 from seo_mcp.config import Site
 from seo_mcp.params import DATES, Params
 from seo_mcp.providers import _google
@@ -29,6 +32,116 @@ ORGANIC = {
         "stringFilter": {"matchType": "EXACT", "value": "Organic Search"},
     }
 }
+
+
+# The docs state that daily quotas refresh at midnight Pacific Standard Time. A fixed offset
+# also keeps the server able to start on a host with no timezone data.
+RESET_ZONE = timezone(timedelta(hours=-8))
+DAILY_TOKENS = {"standard": 200_000, "analytics_360": 2_000_000}
+LOW_DAY_TOKENS = 20_000
+LOW_HOUR_TOKENS = 4_000
+POOLS = {"runReport": "core", "runPivotReport": "core", "runRealtimeReport": "realtime"}
+COUNTED = (
+    "tokens_left comes from the API, at seen_at. tokens_used_today sums the tokens of the calls "
+    "of this machine, through this cache folder."
+)
+NO_READING = "The server has no reading since the last reset: the next GA4 report gives one."
+
+
+def reading_path(prop: str, pool: str) -> Path:
+    return quota.folder() / f"ga4-quota-{quote(prop, safe='')}-{pool}.json"
+
+
+def _pacific_day() -> str:
+    return datetime.now(RESET_ZONE).date().isoformat()
+
+
+def _next_reset() -> str:
+    next_day = datetime.now(RESET_ZONE).date() + timedelta(days=1)
+    return datetime(next_day.year, next_day.month, next_day.day, tzinfo=RESET_ZONE).isoformat()
+
+
+def _stored(file: Path) -> dict[str, Any]:
+    try:
+        stored = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return stored if isinstance(stored, dict) and stored.get("day") == _pacific_day() else {}
+
+
+def _left(reply_quota: dict[str, Any], name: str) -> Any:
+    return (reply_quota.get(name) or {}).get("remaining")
+
+
+def _record(prop: str, pool: str, reply: dict[str, Any]) -> None:
+    seen = reply.get("propertyQuota")
+    if not isinstance(seen, dict) or not isinstance(seen.get("tokensPerDay"), dict):
+        return
+    spent = seen["tokensPerDay"].get("consumed") or 0
+    file = reading_path(prop, pool)
+    with quota.locked(file):
+        total = _stored(file).get("tokens_used_today", 0) + spent
+        quota.write_json(
+            file,
+            {
+                "day": _pacific_day(),
+                "seen_at": datetime.now(RESET_ZONE).isoformat(),
+                "tokens_used_today": total,
+                "tokens_spent": spent,
+                "tokens_left": _left(seen, "tokensPerDay"),
+                "tokens_left_this_hour": _left(seen, "tokensPerHour"),
+                "tokens_left_for_project_this_hour": _left(seen, "tokensPerProjectPerHour"),
+            },
+        )
+
+
+def _low(left: Any, hour_left: Any) -> str | None:
+    if isinstance(left, int) and left < LOW_DAY_TOKENS:
+        return f"Only {left} GA4 tokens are left for this day."
+    if isinstance(hour_left, int) and hour_left < LOW_HOUR_TOKENS:
+        return f"Only {hour_left} GA4 tokens are left for this hour."
+    return None
+
+
+def _view(prop: str, pool: str) -> dict[str, Any]:
+    stored = _stored(reading_path(prop, pool))
+    fields: dict[str, Any] = {
+        "tokens_used_today": stored.get("tokens_used_today", 0),
+        "daily_token_limit": DAILY_TOKENS,
+        "tokens_left": stored.get("tokens_left"),
+        "tokens_left_this_hour": stored.get("tokens_left_this_hour"),
+        "tokens_left_for_project_this_hour": stored.get("tokens_left_for_project_this_hour"),
+        "tokens_spent": stored.get("tokens_spent"),
+        "seen_at": stored.get("seen_at"),
+        "resets_at": _next_reset(),
+        "reset_stated": True,
+        "counted": COUNTED,
+    }
+    if not stored:
+        fields["note"] = NO_READING
+    warning = _low(fields["tokens_left"], fields["tokens_left_this_hour"])
+    return {**fields, "quota_warning": warning} if warning else fields
+
+
+async def _post(
+    prop: str, call: str, body: dict[str, Any], token: str, *, explain: bool = False
+) -> Any:
+    pool = POOLS[call]
+    quota.show(lambda: _view(prop, pool))
+    reply = await net.request(
+        ENDPOINTS,
+        "POST",
+        f"https://{HOST}/v1beta/properties/{prop}:{call}",
+        json=body,
+        headers={"Authorization": f"Bearer {token}"},
+        explain=explain,
+    )
+    try:
+        _record(prop, pool, reply)
+    except (OSError, TypeError):
+        # The answer is paid for: a full disk or a bad reading file must not lose it.
+        pass
+    return reply
 
 
 def _window(params: Params) -> dict[str, str]:
@@ -70,10 +183,9 @@ async def _report(
         "metricAggregations": ["TOTAL"],
         "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
         "limit": fetch,
+        "returnPropertyQuota": True,
     }
-    url = f"https://{HOST}/v1beta/properties/{prop}:runReport"
-    headers = {"Authorization": f"Bearer {token}"}
-    reply = await net.request(ENDPOINTS, "POST", url, json=body, headers=headers)
+    reply = await _post(prop, "runReport", body, token)
     names = [header["name"] for header in reply.get("metricHeaders", [])]
     rows = [
         {
@@ -162,15 +274,9 @@ def _reader(call: str, paging: bool, limits: bool = True) -> Run:
             )
         if "offset" in request:
             offset = whole("offset", request["offset"], 0, 2**53)
+        body.setdefault("returnPropertyQuota", True)
         token = await _google.token(site, _google.GA4_SCOPE)
-        reply = await net.request(
-            ENDPOINTS,
-            "POST",
-            f"https://{HOST}/v1beta/properties/{prop}:{call}",
-            json=body,
-            headers={"Authorization": f"Bearer {token}"},
-            explain=True,
-        )
+        reply = await _post(prop, call, body, token, explain=True)
         rows = _flat(reply, reply.get("rows", []))
         count = reply.get("rowCount")
         more = "possible" if count is None else "yes" if offset + len(rows) < count else "no"
@@ -203,10 +309,31 @@ async def _metadata(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     return answer(rows, more_rows="no", row_count=len(rows))
 
 
+def now(site: Site) -> dict[str, Any]:
+    prop = site.field("ga4_property_id")
+    return {pool: _view(prop, pool) for pool in sorted(set(POOLS.values()))}
+
+
 APIS = {
     "ga4": Api(
         title="Google Analytics 4 Data API",
         docs="https://developers.google.com/analytics/devguides/reporting/data/v1/rest",
+        quota=Quota(
+            "https://developers.google.com/analytics/devguides/reporting/data/v1/quotas",
+            (
+                "Each of the core and realtime pools: 200,000 tokens for each property each "
+                "day, 40,000 each hour, 14,000 for each project each hour. Analytics 360: "
+                "2,000,000, 400,000, and 140,000.",
+                "10 concurrent requests for each property, 50 on Analytics 360.",
+                "All daily quotas refresh at midnight Pacific Standard Time. Hourly quotas "
+                "refresh within an hour.",
+                "The token cost of a call is known only after it runs, so the server warns "
+                "and does not refuse. Most calls cost 10 tokens or fewer.",
+                "The API does not say the tier of a property, so the server shows both limits.",
+            ),
+            frozenset({"ga4_property_id", "google_service_account"}),
+            now,
+        ),
         methods={
             "run_report": Method(
                 _reader("runReport", paging=True),

@@ -196,3 +196,34 @@ def test_tool_description_and_readme_list_each_task():
 
 def test_the_server_instructions_point_to_tasks():
     assert "task" in server.server.instructions
+
+
+def sampled_recipes():
+    """Each recipe that asks the dashboard for a count, then spends a call on a sample."""
+    for name, entry in tasks.TASKS.items():
+        for recipe in entry.recipes:
+            methods = [step.args.get("method") for step in recipe.steps]
+            if "dashboard_query" in methods and "recordings" in methods:
+                yield name, recipe
+
+
+def test_the_click_tasks_keep_2_steps_with_the_dashboard_first():
+    found = {name: recipe for name, recipe in sampled_recipes()}
+    assert set(found) == {"dead_clicks", "rage_clicks", "quickback_clicks"}
+    for recipe in found.values():
+        methods = [step.args["method"] for step in recipe.steps]
+        assert methods == ["dashboard_query", "recordings"]
+
+
+async def test_a_count_of_0_stops_the_sample_step():
+    for name, recipe in sampled_recipes():
+        assert tasks.ZERO_COUNT_STOP in recipe.limits, name
+        data = await core.query_api(api="clarity", task=name)
+        first, second = data["rows"][0]["steps"]
+        assert "skip_if" not in first
+        assert second["skip_if"] == tasks.ZERO_COUNT_STOP
+        assert "do not call recordings" in tasks.ZERO_COUNT_STOP
+
+
+def test_the_readme_states_the_rule_of_a_count_of_0():
+    assert "do not call `recordings`" in README.read_text()

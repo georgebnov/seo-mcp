@@ -3,7 +3,7 @@
 from typing import Any
 
 from seo_mcp import net
-from seo_mcp.api import Api, Method, Run, answer, one_of, whole
+from seo_mcp.api import Api, Method, Quota, Run, answer, one_of, whole
 from seo_mcp.config import Site
 from seo_mcp.params import BadInput, Params, page_url
 from seo_mcp.results import ok
@@ -197,6 +197,13 @@ APIS = {
     "pagespeed": Api(
         title="PageSpeed Insights",
         docs="https://developers.google.com/speed/docs/insights/rest/v5/pagespeedapi/runpagespeed",
+        quota=Quota(
+            "https://developers.google.com/speed/docs/insights/v5/get-started",
+            (
+                "The docs state no number. The Quotas page of the API in the Google Cloud "
+                "console shows the real limit of the project of the key.",
+            ),
+        ),
         methods={
             "run": Method(
                 _psi,
@@ -214,6 +221,14 @@ APIS = {
     "crux": Api(
         title="Chrome UX Report",
         docs="https://developer.chrome.com/docs/crux/api",
+        quota=Quota(
+            "https://developer.chrome.com/docs/crux/api",
+            (
+                "150 queries each minute for each Google Cloud project. The docs state no "
+                "daily limit, so the server keeps no daily count.",
+            ),
+            frozenset({"google_api_key"}),
+        ),
         methods={
             "record": Method(
                 _crux_reader(CRUX_API, "collectionPeriod"),

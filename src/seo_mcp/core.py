@@ -5,7 +5,7 @@ from collections.abc import Awaitable
 from typing import Any
 
 from seo_mcp import api as full_api
-from seo_mcp import config, net, providers, tasks
+from seo_mcp import config, net, providers, quota, tasks
 from seo_mcp.config import ConfigError, Site
 from seo_mcp.params import COMPARE_NEEDS, NONE, BadInput, Params, parse
 from seo_mcp.results import NotConnected, Refused, Unsupported, failed, ok, unsupported
@@ -25,24 +25,32 @@ def _accepts(name: str) -> list[str]:
     return sorted(accepted | {key for key, need in COMPARE_NEEDS.items() if need in accepted})
 
 
+def _failed(reason: str) -> dict[str, Any]:
+    return {**failed("error", reason), **quota.shown()}
+
+
 async def _guard(job: Awaitable[dict[str, Any]]) -> dict[str, Any]:
+    # The job runs in this task, so a quota that it names is visible here on each exit: a
+    # call that failed or timed out can still have spent, and a provider cannot forget this.
+    quota.forget()
     # A reason is fixed text. Exception text can hold a URL, and a URL can hold a key.
     try:
         async with asyncio.timeout(SOURCE_TIMEOUT_SECONDS):
-            return await job
+            result = await job
+            return {**result, **quota.shown()}
     except Unsupported:
         raise
     except NotConnected as exc:
         return failed("not_connected", safe_reason(str(exc)))
     except (Refused, BadInput) as exc:
-        return failed("error", safe_reason(str(exc)))
+        return _failed(safe_reason(str(exc)))
     except TimeoutError:
-        return failed("error", f"The source timed out after {SOURCE_TIMEOUT_SECONDS:g} seconds.")
+        return _failed(f"The source timed out after {SOURCE_TIMEOUT_SECONDS:g} seconds.")
     except net.ApiError as exc:
         hint = exc.detail or STATUS_HINTS.get(exc.status or 0, "")
-        return failed("error", safe_reason(f"{exc} from the API. {hint}".strip()))
+        return _failed(safe_reason(f"{exc} from the API. {hint}".strip()))
     except Exception as exc:  # noqa: BLE001
-        return failed("error", f"The source failed with {type(exc).__name__}.")
+        return _failed(f"The source failed with {type(exc).__name__}.")
 
 
 async def _run(name: str, site: Site, params: Params) -> dict[str, Any]:
@@ -160,9 +168,41 @@ def describe_sources() -> str:
     return "\n".join(lines)
 
 
-def _catalog() -> dict[str, Any]:
+def _connected(entry: full_api.Api, site: Site) -> bool:
+    return entry.quota.needs <= set(site.fields) | set(site.secrets)
+
+
+def _quota(entry: full_api.Api, site: Site | None) -> dict[str, Any]:
+    """Show the published limits, and the count of the site when one resolves. No network."""
+    info: dict[str, Any] = {"docs": entry.quota.docs, "limits": list(entry.quota.limits)}
+    if site and entry.quota.now and _connected(entry, site):
+        info["now"] = entry.quota.now(site)
+    return info
+
+
+def _site_quota(entry: full_api.Api, site: Site) -> dict[str, Any]:
+    if entry.quota.now:
+        return {"tracked": True, **entry.quota.now(site)}
+    return {"tracked": False, "limits": list(entry.quota.limits)}
+
+
+def _target(site: str) -> Site | None:
+    """Discovery works with no sites file, so a site that does not resolve is not an error."""
+    try:
+        return config.resolve(site)
+    except (NotConnected, ConfigError):
+        return None
+
+
+def _catalog(site: str) -> dict[str, Any]:
+    target = _target(site)
     rows = [
-        {"api": name, "title": entry.title, "methods": sorted(entry.methods)}
+        {
+            "api": name,
+            "title": entry.title,
+            "methods": sorted(entry.methods),
+            "quota": _quota(entry, target),
+        }
         for name, entry in providers.APIS.items()
     ]
     return ok(rows, thin=False, limit=len(rows), tasks=tasks.summaries())
@@ -177,13 +217,22 @@ def _task(site: str, api: str, asked: str) -> dict[str, Any]:
     if not names:
         return _no_task("No task matches this ask, and the server does not guess a call.")
     built = {name: tasks.build(name, site, api) for name in names}
-    rows = [{**row, "window": item["window"]} for item in built.values() for row in item["rows"]]
+    target = _target(site)
+    rows = [
+        {
+            **row,
+            "window": item["window"],
+            "quota": _quota(providers.APIS[row["api"]], target),
+        }
+        for item in built.values()
+        for row in item["rows"]
+    ]
     if not rows:
         return _no_task(f"{api} has no recipe for this task.")
     return scrub(ok(rows, thin=False, limit=len(rows)))
 
 
-def _options(name: str, entry: full_api.Api) -> dict[str, Any]:
+def _options(name: str, entry: full_api.Api, site: str) -> dict[str, Any]:
     rows = [
         {
             "method": method,
@@ -201,6 +250,7 @@ def _options(name: str, entry: full_api.Api) -> dict[str, Any]:
         docs=entry.docs,
         options=entry.options,
         not_in_the_api=list(entry.gaps),
+        quota=_quota(entry, _target(site)),
     )
 
 
@@ -214,14 +264,14 @@ async def query_api(
     if task and (method or request is not None):
         return failed("error", "A task finds a call and sends none. Omit method and request.")
     if not api:
-        return _task(site, "", task) if task else _catalog()
+        return _task(site, "", task) if task else _catalog(site)
     entry = providers.APIS.get(api)
     if entry is None:
         return failed("error", safe_reason(f"Unknown api. Known: {', '.join(providers.APIS)}."))
     if task:
         return _task(site, api, task)
     if not method:
-        return _options(api, entry)
+        return _options(api, entry, site)
     item = entry.methods.get(method)
     if item is None:
         return failed("error", safe_reason(f"Unknown method. Known: {', '.join(entry.methods)}."))
@@ -249,6 +299,11 @@ def list_sites() -> dict[str, Any]:
             "repo_path": str(site.repo_path),
             "fields": sorted(site.fields),
             "secrets": sorted(site.secrets),
+            "quota": {
+                name: _site_quota(entry, site)
+                for name, entry in providers.APIS.items()
+                if _connected(entry, site)
+            },
         }
         for site in sites
     ]

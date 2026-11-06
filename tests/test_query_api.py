@@ -331,7 +331,7 @@ async def test_run_report_sends_2_periods_and_flattens_rows(live):
     }
     data = await ask("ga4", "run_report", request)
     body = json.loads(sent(live)[0].content)
-    assert body == {**request, "limit": api.MAX_ROWS}
+    assert body == {**request, "limit": api.MAX_ROWS, "returnPropertyQuota": True}
     assert data["rows"] == [{"pagePath": "/a", "dateRange": "date_range_0", "sessions": 7.0}]
     assert data["row_count"] == 5
     assert data["more_rows"] == "yes"
@@ -628,7 +628,6 @@ async def test_all_clarity_paths_share_1_budget(live, write_config):
         ("live_insights", {"numOfDays": 1}),
         ("recordings", {"filters": {"date": DAY}}),
         ("dashboard_query", {"query": "q"}),
-        ("documentation", {"query": "q"}),
     ):
         data = await ask("clarity", method, request)
         assert data["status"] == "error"
@@ -711,19 +710,22 @@ async def test_dashboard_shows_the_question_that_clarity_answered(live, fake_net
     assert data["answered_question"] == "Rewritten question"
 
 
-async def test_documentation_sends_the_question_and_keeps_the_text(live, fake_net):
-    calls = fake_net(lambda _: httpx2.Response(200, json={"answer": "Text"}))
-    data = await ask("clarity", "documentation", {"query": "How long are recordings kept?"})
-    assert calls[0].url.path == "/mcp/documentation/query"
-    assert json.loads(calls[0].content) == {"query": "How long are recordings kept?"}
-    assert data["rows"] == [{"answer": "Text"}]
-    assert data["calls_used_today"] == 1
-
-
-async def test_documentation_refuses_an_empty_question_before_it_spends(live):
-    data = await ask("clarity", "documentation", {"query": " "})
+async def test_a_removed_method_is_unknown_and_spends_nothing(live):
+    data = await ask("clarity", "documentation", {"query": "q"})
     assert data["status"] == "error"
+    assert "Unknown method" in data["reason"]
     assert not live
+    assert not clarity.ledger_path(HOST).exists()
+
+
+async def test_the_catalog_lists_only_calls_that_work():
+    options = await core.query_api(api="clarity")
+    assert [row["method"] for row in options["rows"]] == [
+        "live_insights",
+        "recordings",
+        "dashboard_query",
+    ]
+    assert "documentation" not in json.dumps(options)
 
 
 # The size of a result that goes into a model context.
