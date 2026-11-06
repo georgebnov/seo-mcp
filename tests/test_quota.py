@@ -223,7 +223,9 @@ URL = "https://api.example.test/v1/read"
 
 def test_each_endpoint_with_a_daily_call_limit_is_metered():
     found = {(e.host, e.path) for e in providers.ENDPOINTS if e.metered}
-    assert found == METERED
+    assert found == METERED, (
+        f"Fix: name the ledger in metered in ENDPOINTS, or update METERED. {found ^ METERED}"
+    )
 
 
 async def test_a_metered_endpoint_needs_a_receipt(fake_net):
