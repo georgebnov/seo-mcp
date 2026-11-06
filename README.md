@@ -110,7 +110,7 @@ The server spends no call to show quota. `list_sites` has a `quota` object for e
 | [Chrome UX Report](https://developer.chrome.com/docs/crux/api) | 150 queries each minute for each Google Cloud project. No daily limit stated. | Shows the limit. |
 | [Bing](https://learn.microsoft.com/en-us/bingwebmaster/getting-access) | The docs state no number for the read methods. | Shows that the docs state no number. |
 
-An answer that spends a counted quota shows `calls_used_today`, `daily_limit`, `calls_left`, `resets_at`, and `reset_stated`, also when the call fails or times out, because a failed call can count at the API. With few calls left, `quota_warning` appears: at most 2 for Clarity, at most 200 for URL Inspection. A call that the ledger refuses never reaches the network, and `reason` gives the reset time. `index_status` spends 1 call for each URL, all or none.
+An answer that spends a counted quota shows `calls_used_today`, `daily_limit`, `calls_left`, `resets_at`, and `reset_stated`, also when the call fails or times out, because a failed call can count at the API. With few calls left, `quota_warning` appears: at most 2 for Clarity, at most 200 for URL Inspection. A call that the ledger refuses never reaches the network, and `reason` gives the used count, the limit, and the reset time. `index_status` spends 1 call for each URL, all or none.
 
 A ledger lock waits at most 2 seconds. If a stuck process holds it, the call fails with a `reason` that names the file, sends nothing, and spends nothing, and the other sources of the call go on. A read of the quota needs no lock.
 
