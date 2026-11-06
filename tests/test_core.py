@@ -1,6 +1,7 @@
 import asyncio
 import json
 
+import httpx2
 import pytest
 
 from seo_mcp import core, net, providers
@@ -129,3 +130,20 @@ async def test_list_sites_names_no_secret_value(write_config, monkeypatch):
     assert row["fields"] == ["gsc_property"]
     assert row["secrets"] == ["t"]
     assert "secret-value-99" not in json.dumps(data)
+
+
+async def test_a_connection_failure_reads_as_a_sentence(write_config, fake_net, monkeypatch):
+    def refuse(request):
+        raise httpx2.ConnectError("no route")
+
+    write_config({})
+    net.transport = httpx2.MockTransport(refuse)
+    data = await core.get_seo_data("www.example.com", ["page_speed"])
+    assert data["sources"]["page_speed"]["reason"] == "The connection failed."
+
+
+async def test_an_http_failure_names_the_status_and_the_api(write_config, fake_net):
+    write_config({})
+    fake_net(lambda _: httpx2.Response(500))
+    data = await core.get_seo_data("www.example.com", ["page_speed"])
+    assert data["sources"]["page_speed"]["reason"] == "HTTP 500 from the API."
