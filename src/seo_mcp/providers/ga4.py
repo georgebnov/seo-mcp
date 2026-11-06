@@ -47,12 +47,9 @@ async def _report(site: Site, dimension: str, limit: int) -> dict[str, Any]:
         }
         for row in answer.get("rows", [])
     ]
-    totals = {
-        name: float(cell["value"])
-        for name, cell in zip(
-            names, (answer.get("totals") or [{}])[0].get("metricValues", []), strict=True
-        )
-    }
+    # GA4 leaves out rows and totals when the window has no sessions.
+    total_cells = (answer.get("totals") or [{}])[0].get("metricValues", [])
+    totals = {name: float(cell["value"]) for name, cell in zip(names, total_cells, strict=False)}
     reason = None if rows else "GA4 reports no organic sessions in the window."
     thin = totals.get("sessions", 0) < THIN_SESSIONS
     return ok(rows, thin=thin, reason=reason, limit=limit, window=WINDOW, totals=totals)

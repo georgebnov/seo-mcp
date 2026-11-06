@@ -211,7 +211,9 @@ async def test_ga4_landing_pages(write_config, fake_net, account):
 
 async def test_ga4_empty_report_is_thin(write_config, fake_net, account):
     write_config(SITE, account)
-    fake_net(api(ga4=lambda _: httpx2.Response(200, json={"metricHeaders": []})))
+    fake_net(
+        api(ga4=lambda _: httpx2.Response(200, json={"metricHeaders": [{"name": "sessions"}]}))
+    )
     result = await get("ga4_organic")
     assert result["status"] == "ok"
     assert result["thin_data"] is True
