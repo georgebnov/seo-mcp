@@ -22,6 +22,8 @@ async def bing_links(site: Site) -> dict[str, Any]:
     total = sum(row["inbound_links"] for row in rows)
     pages = data.get("TotalPages") or 1
     reason = f"This is page 1 of {pages} of the link list." if pages > 1 else None
+    if not rows:
+        reason = "Bing has no inbound links on record for this site."
     return ok(rows, thin=total < THIN_INBOUND_LINKS, reason=reason, totals={"inbound_links": total})
 
 

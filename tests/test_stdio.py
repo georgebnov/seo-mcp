@@ -27,7 +27,8 @@ async def test_two_tools_and_an_honest_result(write_config, repo, tmp_path):
                 await session.initialize()
                 tools = (await session.list_tools()).tools
                 sites = payload(await session.call_tool("list_sites", {}))
-                data = payload(await session.call_tool("get_seo_data", {}))
+                data = await session.call_tool("get_seo_data", {"sources": ["bing_links"]})
+                data = payload(data)
     assert sorted(tool.name for tool in tools) == ["get_seo_data", "list_sites"]
     assert all(tool.annotations.read_only_hint for tool in tools)
     assert sites["rows"][0]["host"] == "www.example.com"

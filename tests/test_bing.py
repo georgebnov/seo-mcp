@@ -43,6 +43,15 @@ async def test_few_links_are_thin(write_config, fake_net):
     assert (await get())["thin_data"] is True
 
 
+async def test_no_links_is_ok_and_says_so(write_config, fake_net):
+    write_config(SITE, SHARED)
+    fake_net(lambda _: links(pages=0))
+    result = await get()
+    assert result["status"] == "ok"
+    assert result["thin_data"] is True
+    assert result["reason"]
+
+
 async def test_more_pages_are_reported(write_config, fake_net):
     write_config(SITE, SHARED)
     fake_net(lambda _: links(("https://www.example.com/a", 30), pages=4))
