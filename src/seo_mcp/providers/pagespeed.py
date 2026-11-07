@@ -43,7 +43,13 @@ async def page_speed(site: Site, params: Params) -> dict[str, Any]:
     query += [("category", name) for name in CATEGORIES]
     headers = _key_header(site.optional_secret("google_api_key"))
     reply = await shared.request(
-        site, ENDPOINTS, "GET", PSI_API, params=query, headers=headers, holds="lighthouseResult"
+        site,
+        ENDPOINTS,
+        "GET",
+        PSI_API,
+        params=query,
+        headers=headers,
+        good=shared.holds("lighthouseResult"),
     )
     lighthouse = reply["lighthouseResult"]
     audits = lighthouse.get("audits", {})
@@ -92,7 +98,13 @@ async def chrome_field_data(site: Site, params: Params) -> dict[str, Any]:
     body = {"url": params.page} if params.page else {"origin": f"https://{site.host}"}
     try:
         reply = await shared.request(
-            site, ENDPOINTS, "POST", CRUX_API, json=body, headers=headers, holds="record"
+            site,
+            ENDPOINTS,
+            "POST",
+            CRUX_API,
+            json=body,
+            headers=headers,
+            good=shared.holds("record"),
         )
     except net.ApiError as exc:
         if exc.status == 404:
@@ -142,7 +154,7 @@ async def _psi(site: Site, request: dict[str, Any]) -> dict[str, Any]:
         params=query,
         headers=headers,
         explain=True,
-        holds="lighthouseResult",
+        good=shared.holds("lighthouseResult"),
     )
     lighthouse = reply.get("lighthouseResult", {})
     rows = [

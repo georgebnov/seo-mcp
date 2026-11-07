@@ -39,6 +39,9 @@ MISS_REASON = (
     "No rows match. A page or query filter is an exact, case-sensitive match, and "
     "Search Console hides rare queries."
 )
+# A live read of a date range with no data gave only responseAggregationType, with no rows.
+REPORT = shared.documented("rows", "responseAggregationType", "metadata")
+SITEMAP_LIST = shared.documented("sitemap")
 
 
 def _window(params: Params) -> dict[str, str]:
@@ -103,7 +106,7 @@ async def _analytics(
     dimensions = body.get("dimensions", [])
     url = f"{SITES_API}/{prop}/searchAnalytics/query"
     reply = await shared.request(
-        site, ENDPOINTS, "POST", url, json=body, headers=headers, explain=explain
+        site, ENDPOINTS, "POST", url, json=body, headers=headers, explain=explain, good=REPORT
     )
     return [
         {
@@ -170,7 +173,8 @@ async def quick_wins(site: Site, params: Params) -> dict[str, Any]:
 async def sitemaps(site: Site, params: Params) -> dict[str, Any]:
     prop = quote(site.field("gsc_property"), safe="")
     url = f"{SITES_API}/{prop}/sitemaps"
-    reply = await shared.request(site, ENDPOINTS, "GET", url, headers=await _headers(site))
+    headers = await _headers(site)
+    reply = await shared.request(site, ENDPOINTS, "GET", url, headers=headers, good=SITEMAP_LIST)
     rows = [
         {
             "path": item["path"],
@@ -373,7 +377,7 @@ async def _sitemap_list(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     url = f"{SITES_API}/{prop}/sitemaps"
     headers = await _headers(site)
     reply = await shared.request(
-        site, ENDPOINTS, "GET", url, params=query, headers=headers, explain=True
+        site, ENDPOINTS, "GET", url, params=query, headers=headers, explain=True, good=SITEMAP_LIST
     )
     return answer(reply.get("sitemap", []), more_rows="no", applied=query)
 

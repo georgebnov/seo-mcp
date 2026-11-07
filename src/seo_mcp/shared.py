@@ -54,6 +54,20 @@ def is_object(reply: Any) -> bool:
     return isinstance(reply, dict)
 
 
+def holds(name: str) -> Check:
+    """Each good answer of this read has the field."""
+    return lambda reply: is_object(reply) and name in reply
+
+
+def documented(*names: str) -> Check:
+    """The docs list all fields of the answer, and they do not say what an empty answer holds.
+
+    {} and any 1 of the fields pass, so a real empty answer stays ok. Other text, such as
+    {"message": "try later"}, is a failure: it must not read as "no data".
+    """
+    return lambda reply: is_object(reply) and (not reply or any(name in reply for name in names))
+
+
 def entry(site: Site, *parts: Any) -> Path:
     """The file of a request. Only a digest reaches the disk, also of a key in a query."""
     text = json.dumps([KEY_FORMAT, site.host, *parts], sort_keys=True, default=str)
@@ -216,12 +230,12 @@ async def request(
     method: str,
     url: str,
     *,
-    holds: str = "",
+    good: Check = is_object,
     keep: int = ANSWER_SECONDS,
     explain: bool = False,
     **kwargs: Any,
 ) -> Any:
-    """Send 1 read that has no ledger. holds names the field that each good answer has.
+    """Send 1 read that has no ledger. good tells a good answer from a failed HTTP 200.
 
     The headers stay out of the key, because a token changes each hour. The URL and the body
     name the property, so a saved answer ends at the latest after keep seconds.
@@ -231,8 +245,5 @@ async def request(
 
     async def send(_: None) -> Any:
         return await net.request(allowed, method, url, explain=explain, **kwargs)
-
-    def good(reply: Any) -> bool:
-        return is_object(reply) and (not holds or holds in reply)
 
     return await once(path, send, good=good, until=after(keep))
