@@ -151,9 +151,12 @@ JUNK = [
     ["text"],
     "text",
     5,
+    {},
     {"message": "try later"},
     {"data": "text"},
     {"inspectionResult": "text"},
+    {"inspectionResult": None},
+    {"inspectionResult": ["text"]},
     {"inspectionResult": {"indexStatusResult": "text"}},
 ]
 CLARITY = (clarity.LEDGER, HOST)

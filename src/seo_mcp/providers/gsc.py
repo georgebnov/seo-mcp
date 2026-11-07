@@ -197,11 +197,17 @@ def _index_status(reply: Any) -> dict[str, Any]:
     Any other exception would pass shared.once with no failure window, and it would end the
     gather of the batch with other inspections in flight.
     """
-    result = reply.get("inspectionResult", {}) if isinstance(reply, dict) else None
+    result = reply.get("inspectionResult") if isinstance(reply, dict) else None
     status = result.get("indexStatusResult", {}) if isinstance(result, dict) else None
     if not isinstance(status, dict):
         raise net.ApiError(200, net.BAD_SHAPE)
     return status
+
+
+def _canonical_match(status: dict[str, Any]) -> bool | None:
+    """Claim no match when neither side names a canonical: an unknown URL has neither."""
+    google, user = status.get("googleCanonical"), status.get("userCanonical")
+    return google == user if google or user else None
 
 
 async def _inspect(
@@ -220,7 +226,7 @@ async def _inspect(
         "verdict": status.get("verdict"),
         "coverage_state": status.get("coverageState"),
         "last_crawl_time": status.get("lastCrawlTime"),
-        "canonical_match": status.get("googleCanonical") == status.get("userCanonical"),
+        "canonical_match": _canonical_match(status),
     }
 
 
