@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable
+from datetime import date
 from typing import Any
 
 from seo_mcp import api as full_api
@@ -62,6 +63,26 @@ async def _run(name: str, site: Site, params: Params) -> dict[str, Any]:
         return unsupported(exc.params, safe_reason(str(exc)), _accepts(name))
 
 
+def _days(result: dict[str, Any]) -> int | None:
+    coverage = result.get("coverage")
+    if not coverage:
+        return None
+    start, end = (date.fromisoformat(coverage[name]) for name in ("start_date", "end_date"))
+    return (end - start).days + 1
+
+
+def _warn_of_unequal_ranges(result: dict[str, Any], other: dict[str, Any]) -> None:
+    """A move changes 1 range only: the agent decides what to do with the other."""
+    main, comparison = _days(result), _days(other)
+    if "date_moved" not in result and "date_moved" not in other:
+        return
+    if main is None or comparison is None or main == comparison:
+        return
+    result["range_days"] = {"main": main, "comparison": comparison}
+    note = f"The 2 ranges are now {main} and {comparison} days, so delta compares unequal ranges."
+    result["reason"] = " ".join(filter(None, [result["reason"], note]))
+
+
 def _delta(result: dict[str, Any], other: dict[str, Any]) -> dict[str, float]:
     """Give the main value minus the comparison value, in the unit of each total."""
     first, second = result.get("totals") or {}, other.get("totals") or {}
@@ -91,6 +112,7 @@ async def _asked(
         result["comparison"] = rest[0]
         if result["status"] == rest[0]["status"] == "ok" and "totals" in result:
             result["delta"] = _delta(result, rest[0])
+            _warn_of_unequal_ranges(result, rest[0])
     return result
 
 

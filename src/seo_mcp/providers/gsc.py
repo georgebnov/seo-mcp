@@ -10,9 +10,20 @@ from urllib.parse import quote
 from seo_mcp import net, quota, shared
 from seo_mcp.api import Api, Method, Quota, answer, one_of, row_limit, whole
 from seo_mcp.config import Site
-from seo_mcp.params import DATES, MAX_TEXT, NONE, BadInput, Params, page_url, period
+from seo_mcp.params import (
+    DATES,
+    MAX_TEXT,
+    NONE,
+    BadInput,
+    Params,
+    moved,
+    moved_note,
+    page_url,
+    period,
+    too_late,
+)
 from seo_mcp.providers import _google
-from seo_mcp.results import ok
+from seo_mcp.results import Refused, ok
 
 Rows = list[dict[str, Any]]
 
@@ -62,9 +73,18 @@ def _fixed_end() -> date:
     return _today() - timedelta(days=LAG_DAYS)
 
 
+def _newest_end(name: str, start: date, end: date) -> date:
+    """Today is the newest day: dataState all gives it, and it is partial."""
+    today = _today()
+    if start > today:
+        raise too_late(name, today)
+    return min(end, today)
+
+
 def _window(params: Params) -> dict[str, str]:
     if params.start and params.end:
-        return {"start": params.start.isoformat(), "end": params.end.isoformat()}
+        end = _newest_end("start_date", params.start, params.end)
+        return {"start": params.start.isoformat(), "end": end.isoformat()}
     end = _fixed_end()
     start = end - timedelta(days=(params.last_days or WINDOW_DAYS) - 1)
     return {"start": start.isoformat(), "end": end.isoformat()}
@@ -176,7 +196,7 @@ async def _last_complete(site: Site, headers: dict[str, str]) -> tuple[date, str
         "dimensions": ["date"],
         "dataState": "all",
     }
-    with suppress(net.ApiError):
+    with suppress(net.ApiError, Refused):
         last = _reported(await _analytics(site, body, headers))
         if last:
             return last, "api", API_HOW
@@ -186,6 +206,10 @@ async def _last_complete(site: Site, headers: dict[str, str]) -> tuple[date, str
 def _coverage(window: dict[str, str], known: tuple[date, str, str], state: str) -> dict[str, Any]:
     start, end = date.fromisoformat(window["start"]), date.fromisoformat(window["end"])
     return _google.coverage(start, end, *known, ZONE, data_state=state)
+
+
+def _shift(asked: date | None, sent: str) -> dict[str, Any]:
+    return {"date_moved": moved(asked, sent)} if asked and asked.isoformat() != sent else {}
 
 
 def _by_traffic(row: dict[str, Any]) -> tuple[int, int]:
@@ -198,8 +222,8 @@ async def _report(
     params: Params,
     keep: Callable[[Rows], Rows] | None = None,
 ) -> dict[str, Any]:
-    headers = await _headers(site)
     window = _window(params)
+    headers = await _headers(site)
     rows, totals, known = await asyncio.gather(
         _rows(site, dimensions, headers, window, params),
         _rows(site, [], headers, window, params),
@@ -210,8 +234,10 @@ async def _report(
     seen = min(total["impressions"], sum(row["impressions"] for row in rows))
     rows = keep(rows) if keep else sorted(rows, key=_by_traffic, reverse=True)
     coverage = _coverage(window, known, _state(window))
+    shift = _shift(params.end, window["end"])
     gaps = _gaps(params) + _partial_note(coverage)
     notes = gaps + ([MISS_REASON] if not rows and (params.page or params.query) else [])
+    notes += [moved_note(item) for item in shift.values()]
     return ok(
         rows,
         thin=seen < THIN_IMPRESSIONS,
@@ -220,6 +246,7 @@ async def _report(
         totals=total,
         coverage=coverage,
         **({"incomplete": True} if gaps else {}),
+        **shift,
     )
 
 
@@ -406,22 +433,26 @@ async def _search_analytics(site: Site, request: dict[str, Any]) -> dict[str, An
     _check_groups(request.get("dimensionFilterGroups", []))
     whole("startRow", request.get("startRow", 0), 0, 2**31 - 1)
     limit = row_limit("rowLimit", request.get("rowLimit"), "startRow")
-    body = {**request, "rowLimit": limit}
+    sent = _newest_end("startDate", start, end) if start and end else end
+    body = {**request, "rowLimit": limit, "endDate": str(sent)}
     reply = await _analytics(site, body, await _headers(site), explain=True)
     rows = _flat(body, reply)
     # 1 method sends 1 query, so the value comes only from this reply.
     last = _reported(reply)
     known = (last or _fixed_end(), "api" if last else "estimate", API_HOW if last else ASK_HOW)
-    window = {"start": request["startDate"], "end": request["endDate"]}
+    window = {"start": request["startDate"], "end": body["endDate"]}
     coverage = _coverage(window, known, str(request.get("dataState", "final")))
+    shift = _shift(end, body["endDate"])
     gaps = _gaps(Params(start, end)) + _partial_note(coverage)
+    notes = gaps + [moved_note(item) for item in shift.values()]
     return answer(
         rows,
         more_rows="possible" if len(rows) == limit else "no",
-        reason=" ".join(gaps) or None,
+        reason=" ".join(notes) or None,
         applied=body,
         coverage=coverage,
         **({"incomplete": True} if gaps else {}),
+        **shift,
     )
 
 

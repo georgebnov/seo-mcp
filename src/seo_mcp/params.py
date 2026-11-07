@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import date
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -64,10 +64,26 @@ def period(
     start, end = _date(first, start_text), _date(last, end_text)
     if start > end:
         raise BadInput(f"{first} must not be after {last}.")
-    # A property in a time zone ahead of UTC can already be on the next day.
-    if end > datetime.now(UTC).date() + timedelta(days=1):
-        raise BadInput(f"{last} is in the future.")
     return start, end
+
+
+def moved(asked: object, sent: object) -> dict[str, str]:
+    """Each source has its own newest day, so a source moves an end date and shows the move."""
+    return {"asked_end_date": str(asked), "sent_end_date": str(sent)}
+
+
+def moved_note(item: dict[str, str]) -> str:
+    return (
+        f"The end date moved from {item['asked_end_date']} to {item['sent_end_date']}: "
+        "this source has no later day."
+    )
+
+
+def too_late(name: str, latest: object) -> BadInput:
+    return BadInput(
+        f"{name} is after the most recent day of this source ({latest}), so no range is left. "
+        "The server sent nothing."
+    )
 
 
 def page_url(host: str, value: str, name: str = "page") -> str:

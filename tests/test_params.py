@@ -7,7 +7,7 @@ import httpx2
 import pytest
 
 from seo_mcp import core, providers, shared
-from seo_mcp.providers import clarity
+from seo_mcp.providers import clarity, gsc
 
 SITE = {
     "gsc_property": "sc-domain:example.com",
@@ -36,6 +36,10 @@ GOOD_DAY = "2026-01-10"
 
 def days_ago(days: int) -> str:
     return (datetime.now(UTC).date() - timedelta(days=days)).isoformat()
+
+
+def search_console_days_ago(days: int) -> str:
+    return (gsc._today() - timedelta(days=days)).isoformat()
 
 
 def body_of(request) -> dict:
@@ -126,7 +130,6 @@ async def ask(sources, **params):
         ({"start_date": GOOD_DAY}, "end_date"),
         ({"end_date": GOOD_DAY}, "start_date"),
         ({"start_date": "2026-01-11", "end_date": GOOD_DAY}, "start_date"),
-        ({"start_date": GOOD_DAY, "end_date": "2999-01-01"}, "end_date"),
         ({"start_date": GOOD_DAY, "end_date": GOOD_DAY, "last_days": 7}, "last_days"),
         ({"last_days": 0}, "last_days"),
         ({"last_days": 100000}, "last_days"),
@@ -183,8 +186,8 @@ async def test_input_text_with_a_secret_shape_never_returns(live):
 async def test_search_console_default_body_is_unchanged(live):
     await ask(["search_queries"])
     bodies = [body_of(call) for call in api_calls(live)]
-    end = days_ago(3)
-    start = days_ago(30)
+    end = search_console_days_ago(3)
+    start = search_console_days_ago(30)
     window = {"startDate": start, "endDate": end, "rowLimit": 25000}
     assert {"dimensions": ["query"], **window} in bodies
     assert {"dimensions": [], **window} in bodies
@@ -273,7 +276,7 @@ async def test_search_console_filters_reach_rows_and_totals(live):
 async def test_last_days_ends_where_the_default_window_ends(live):
     data = await ask(["search_pages", "ga4_organic"], last_days=7)
     window = data["sources"]["search_pages"]["window"]
-    assert window == {"start": days_ago(9), "end": days_ago(3)}
+    assert window == {"start": search_console_days_ago(9), "end": search_console_days_ago(3)}
     ga4 = next(call for call in api_calls(live) if call.url.path.endswith(":runReport"))
     assert body_of(ga4)["dateRanges"] == [{"startDate": "9daysAgo", "endDate": "3daysAgo"}]
     assert body_of(ga4)["limit"] == 8

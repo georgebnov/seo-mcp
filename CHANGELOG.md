@@ -39,3 +39,5 @@
 - Fix a default range that moved with the hour: Search Console read today in UTC, so a query changed its dates late in the Pacific day. A Search Console day is now a day of PST, as the docs state.
 - Change the default GA4 range to end 3 days before today, so that it ends on a complete day. It ended yesterday. `last_days` keeps its length.
 - Send `dataState` `all` for a `get_seo_data` Search Console range that passes the fixed end, so that the partial days keep their data. The server sends 1 extra read for each site, shared for 5 minutes, because the docs give `firstIncompleteDate` no other way.
+- Move an end date past the newest day of a source to that day, for each source, in `get_seo_data` and in the date fields of `query_api`. It was a refusal. `date_moved` shows the asked and the sent date, and `reason` says so. With a comparison, `range_days` reports when a move makes the 2 ranges different in length.
+- Refuse a start date past the newest day of a source, before any request, so that the server never sends an empty or reversed range.

@@ -51,7 +51,7 @@ Search Console and GA4 keep updating recent days, so a recent day can hold data 
 | `data_state` | Search Console only: the `dataState` of the request. |
 | `partial_days` | `from` and `to` of the partial days of the range, or `null`. |
 
-The same query gives the same range at each hour of a day: a default range or a `last_days` range ends 3 days before today, from the clock only. The zone is PST (UTC-8) for Search Console, as its docs give a request date, and the property zone for GA4, where the server sends `NdaysAgo` and GA4 reads it in that zone. A range that you name goes out as you name it: the data comes back, and `partial_days` marks the partial days.
+The same query gives the same range at each hour of a day: a default range or a `last_days` range ends 3 days before today, from the clock only. The zone is PST (UTC-8) for Search Console, as its docs give a request date, and the property zone for GA4, where the server sends `NdaysAgo` and GA4 reads it in that zone. A range that you name goes out as you name it, up to the newest day of the source: the data comes back, and `partial_days` marks the partial days.
 
 | Path | `dataState` | `last_complete_day` |
 | --- | --- | --- |
@@ -65,6 +65,22 @@ The docs give `firstIncompleteDate` only with `dataState` `all` and a grouping b
 GA4 has no such field. Its help page says that processing can take 24-48 hours, so the estimate is 3 days. Late events can still arrive after this. `query_api` shows 1 `coverage` for each of `dateRanges`. On a host with no timezone data, GA4 dates use UTC, and `time_zone` says so.
 
 The other dated sources have no such value here: `clarity`, the Bing traffic methods, and the 28-day windows of the Chrome UX Report.
+
+### An end date past the newest day
+
+Each source has its own newest day, so the server moves an end date for each source, in `get_seo_data` and in the date fields of `query_api`. The result shows the move: `date_moved` holds `asked_end_date` and `sent_end_date`, `reason` says so, and `applied` of `query_api` shows what went out. In `query_api` GA4, `date_moved` lists the moved `dateRanges`.
+
+| Source | Newest day | Moved end |
+| --- | --- | --- |
+| Search Console | Today in PST (UTC-8) | That day. |
+| GA4 | Today in the property zone, known only after the reply | `today`, which GA4 reads in the property zone. |
+| Clarity `recordings` | Today in UTC | The end of that day, so that a repeat is the same request and spends nothing. |
+
+A property ahead of UTC can already be on the next day, so GA4 moves an end only when it is past the UTC day plus 1 day: that day is after the newest day in each zone. A start on or after the UTC day keeps its own day as the end, because `today` can come before it in a property behind UTC, and the server never sends a reversed range. An end of the UTC day plus 1 day goes out as it is, and in a property behind UTC it holds no data yet.
+
+A move changes 1 range only. If a comparison is in the call and the move makes the 2 ranges different in length, `range_days` gives both lengths and `reason` says so. Read `delta` with that in mind.
+
+A start date past the newest day leaves no range. The server refuses it with a clear `reason`, sends nothing, and spends nothing. `start_date` after `end_date` is refused too.
 
 ### `query_api`
 

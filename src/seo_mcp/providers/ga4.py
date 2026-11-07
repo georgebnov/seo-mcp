@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from seo_mcp import net, quota, shared
 from seo_mcp.api import Api, Method, Quota, Run, answer, row_limit, whole
 from seo_mcp.config import Site
-from seo_mcp.params import DATES, Params
+from seo_mcp.params import DATE_SHAPE, DATES, BadInput, Params, moved, moved_note, too_late
 from seo_mcp.providers import _google
 from seo_mcp.results import Refused, ok
 
@@ -159,9 +159,40 @@ async def _post(
     return await shared.once(path, send, until=shared.after(keep))
 
 
+def _day(text: Any) -> date | None:
+    """A relative date such as 7daysAgo has no day here: GA4 reads it in the property zone."""
+    if not isinstance(text, str) or not DATE_SHAPE.fullmatch(text):
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _newest_end(name: str, start_text: Any, end_text: Any) -> Any:
+    """Give the end to send. The zone of the property is known only after the reply.
+
+    A property ahead of UTC can already be on the next day, so only a day past that is sure to
+    be after the newest day. "today" lets GA4 read it in the property zone. A property behind
+    UTC can still be on the day before: a start on or after the UTC day then keeps its own day,
+    because "today" could reverse the range.
+    """
+    start, end = _day(start_text), _day(end_text)
+    if start and end and start > end:
+        raise BadInput(f"{name} must not be after the end date.")
+    utc_today = _google.today_in(UTC)
+    furthest = utc_today + timedelta(days=1)
+    if start and start > furthest:
+        raise too_late(name, furthest)
+    if not end or end <= furthest:
+        return end_text
+    return start_text if start and start >= utc_today else "today"
+
+
 def _window(params: Params) -> dict[str, str]:
     if params.start and params.end:
-        return {"startDate": params.start.isoformat(), "endDate": params.end.isoformat()}
+        start, end = params.start.isoformat(), params.end.isoformat()
+        return {"startDate": start, "endDate": _newest_end("start_date", start, end)}
     days = params.last_days or WINDOW_DAYS
     return {"startDate": f"{days + LAG_DAYS - 1}daysAgo", "endDate": f"{LAG_DAYS}daysAgo"}
 
@@ -206,7 +237,9 @@ def _property_zone(reply: dict[str, Any]) -> tuple[tzinfo, str]:
         return UTC, "UTC"
 
 
-def _coverage(reply: dict[str, Any], window: dict[str, Any]) -> dict[str, Any] | None:
+def _coverage(reply: dict[str, Any], window: Any) -> dict[str, Any] | None:
+    if not isinstance(window, dict):
+        return None
     zone, name = _property_zone(reply)
     today = _google.today_in(zone)
     start, end = (_real_day(str(window.get(key)), today) for key in ("startDate", "endDate"))
@@ -220,8 +253,8 @@ async def _report(
     site: Site, dimension: str, limit: int, fetch: int, params: Params
 ) -> dict[str, Any]:
     prop = site.field("ga4_property_id")
-    token = await _google.token(site, _google.GA4_SCOPE)
     window = _window(params)
+    token = await _google.token(site, _google.GA4_SCOPE)
     body = {
         "dateRanges": [window],
         "dimensions": [{"name": dimension}],
@@ -247,17 +280,21 @@ async def _report(
     # GA4 leaves out rows and totals when the window has no sessions.
     total_cells = (reply.get("totals") or [{}])[0].get("metricValues", [])
     totals = {name: float(cell["value"]) for name, cell in zip(names, total_cells, strict=False)}
-    reason = None if rows else "GA4 reports no organic sessions in the window."
+    notes = [] if rows else ["GA4 reports no organic sessions in the window."]
     thin = totals.get("sessions", 0) < THIN_SESSIONS
-    extra = {"page_match": PAGE_MATCH} if params.page else {}
+    extra: dict[str, Any] = {"page_match": PAGE_MATCH} if params.page else {}
+    coverage = _coverage(reply, window)
+    if params.end and coverage and window["endDate"] != params.end.isoformat():
+        extra["date_moved"] = moved(params.end, coverage["end_date"])
+        notes.append(moved_note(extra["date_moved"]))
     return ok(
         rows,
         thin=thin,
-        reason=reason,
+        reason=" ".join(notes) or None,
         limit=limit,
         window=window,
         totals=totals,
-        coverage=_coverage(reply, window),
+        coverage=coverage,
         **extra,
     )
 
@@ -433,10 +470,21 @@ def _flat(reply: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, A
     return [_flat_row(row, dimensions, metrics) for row in rows]
 
 
+def _sent_range(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    end = _newest_end("dateRanges startDate", item.get("startDate"), item.get("endDate"))
+    return {**item, "endDate": end} if "endDate" in item else item
+
+
 def _reader(call: str, paging: bool, limits: bool = True) -> Run:
     async def run(site: Site, request: dict[str, Any]) -> dict[str, Any]:
         prop = site.field("ga4_property_id")
         body = dict(request)
+        asked = request.get("dateRanges")
+        ranges = asked if isinstance(asked, list) else []
+        if ranges:
+            body["dateRanges"] = [_sent_range(item) for item in ranges]
         offset = 0
         if limits:
             body["limit"] = row_limit(
@@ -454,10 +502,27 @@ def _reader(call: str, paging: bool, limits: bool = True) -> Run:
         for name in ("totals", "maximums", "minimums"):
             if name in reply:
                 extra[name] = _flat(reply, reply[name])
-        ranges = body.get("dateRanges")
-        if isinstance(ranges, list):
-            extra["coverage"] = [_coverage(reply, item) for item in ranges]
-        return answer(rows, more_rows=more, row_count=count, applied=body, **extra)
+        notes: list[str] = []
+        if ranges:
+            extra["coverage"] = [_coverage(reply, item) for item in body["dateRanges"]]
+            shifts = [
+                moved(item["endDate"], shown["end_date"])
+                for item, sent, shown in zip(
+                    ranges, body["dateRanges"], extra["coverage"], strict=True
+                )
+                if shown and item != sent
+            ]
+            notes = [moved_note(item) for item in shifts]
+            if shifts:
+                extra["date_moved"] = shifts
+        return answer(
+            rows,
+            more_rows=more,
+            row_count=count,
+            reason=" ".join(notes) or None,
+            applied=body,
+            **extra,
+        )
 
     return run
 

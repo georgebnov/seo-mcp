@@ -9,9 +9,9 @@ import httpx2
 import pytest
 
 from seo_mcp import core, providers, server
-from seo_mcp.providers import _google, ga4, gsc
+from seo_mcp.providers import _google, clarity, ga4, gsc
 from test_query_api import HOST
-from test_quota import replies
+from test_quota import metered_requests, replies
 
 SOURCE = Path(__file__).parent.parent / "src" / "seo_mcp"
 README = Path(__file__).parent.parent / "README.md"
@@ -32,6 +32,7 @@ def freeze(monkeypatch, moment):
     monkeypatch.setattr(_google, "datetime", Frozen, raising=False)
     monkeypatch.setattr(gsc, "datetime", Frozen, raising=False)
     monkeypatch.setattr(ga4, "datetime", Frozen, raising=False)
+    monkeypatch.setattr(clarity, "datetime", Frozen, raising=False)
 
 
 def row(day, dimensions):
@@ -297,6 +298,235 @@ async def test_a_host_with_no_timezone_data_still_answers(live, fake_net, monkey
     assert result["coverage"]["time_zone"] == "UTC"
 
 
+# An end past the newest day of a source moves to that day, and the result shows the move.
+
+
+def sent_bodies(calls, host):
+    return [json.loads(call.content) for call in calls if call.url.host == host]
+
+
+async def test_a_search_console_end_past_today_moves_to_today(live, fake_net, monkeypatch):
+    freeze(monkeypatch, MORNING)
+    calls = search_console(fake_net, "2026-03-16", days=["2026-03-17"])
+    result = await source("search_queries", start_date="2026-03-10", end_date="2026-04-01")
+    assert result["status"] == "ok"
+    assert result["date_moved"] == {
+        "asked_end_date": "2026-04-01",
+        "sent_end_date": "2026-03-18",
+    }
+    assert "moved from 2026-04-01 to 2026-03-18" in result["reason"]
+    reports = [body for body in bodies(calls) if not is_coverage_read(body)]
+    assert {body["endDate"] for body in reports} == {"2026-03-18"}
+    assert result["coverage"]["end_date"] == "2026-03-18"
+
+
+async def test_the_search_console_day_is_not_the_utc_day(live, fake_net, monkeypatch):
+    freeze(monkeypatch, NIGHT)
+    assert NIGHT.astimezone(UTC).date().isoformat() == "2026-03-19"
+    search_console(fake_net, "2026-03-16")
+    result = await source("search_queries", start_date="2026-03-10", end_date="2026-03-19")
+    assert result["date_moved"]["sent_end_date"] == "2026-03-18"
+
+
+async def test_an_end_inside_the_source_days_does_not_move(live, fake_net, monkeypatch):
+    freeze(monkeypatch, MORNING)
+    search_console(fake_net, "2026-03-16")
+    result = await source("search_queries", start_date="2026-03-10", end_date="2026-03-18")
+    assert "date_moved" not in result
+
+
+async def test_a_ga4_end_past_each_zone_moves_to_the_day_of_the_property(
+    live, fake_net, monkeypatch
+):
+    freeze(monkeypatch, MORNING)
+    calls = analytics(fake_net, "Asia/Tokyo")
+    result = await source("ga4_organic", start_date="2026-03-10", end_date="2026-04-01")
+    assert sent_bodies(calls, ga4.HOST)[0]["dateRanges"][0]["endDate"] == "today"
+    assert result["date_moved"] == {
+        "asked_end_date": "2026-04-01",
+        "sent_end_date": "2026-03-18",
+    }
+    assert "moved from 2026-04-01" in result["reason"]
+
+
+async def test_a_ga4_end_of_a_zone_ahead_of_utc_does_not_move(live, fake_net, monkeypatch):
+    # The UTC day is the 18th, and a property ahead of UTC can already be on the 19th.
+    freeze(monkeypatch, datetime(2026, 3, 18, 20, 0, tzinfo=UTC))
+    calls = analytics(fake_net, "Asia/Tokyo")
+    result = await source("ga4_organic", start_date="2026-03-10", end_date="2026-03-19")
+    assert sent_bodies(calls, ga4.HOST)[0]["dateRanges"][0]["endDate"] == "2026-03-19"
+    assert "date_moved" not in result
+
+
+@pytest.mark.parametrize("start", ["2026-03-18", "2026-03-19"])
+async def test_a_ga4_move_can_never_reverse_a_range(live, fake_net, monkeypatch, start):
+    # A property behind UTC can still be on the 17th, so "today" would come before this start.
+    freeze(monkeypatch, datetime(2026, 3, 18, 2, 0, tzinfo=UTC))
+    calls = analytics(fake_net, "America/Los_Angeles")
+    await source("ga4_organic", start_date=start, end_date="2026-04-01")
+    assert sent_bodies(calls, ga4.HOST)[0]["dateRanges"] == [{"startDate": start, "endDate": start}]
+
+
+async def test_query_api_moves_a_search_console_end(live, fake_net, monkeypatch):
+    freeze(monkeypatch, MORNING)
+    calls = search_console(fake_net)
+    data = await search_analytics({"startDate": "2026-03-10", "endDate": "2026-04-01"})
+    assert bodies(calls)[0]["endDate"] == "2026-03-18"
+    assert data["applied"]["endDate"] == "2026-03-18"
+    assert data["date_moved"]["asked_end_date"] == "2026-04-01"
+    assert "moved from 2026-04-01" in data["reason"]
+
+
+async def test_query_api_moves_each_ga4_range_alone(live, fake_net, monkeypatch):
+    freeze(monkeypatch, MORNING)
+    calls = analytics(fake_net, "America/Los_Angeles")
+    request = {
+        "dateRanges": [
+            {"startDate": "2026-03-01", "endDate": "2026-04-01"},
+            {"startDate": "2026-02-01", "endDate": "2026-02-10"},
+            {"startDate": "7daysAgo", "endDate": "yesterday"},
+        ],
+        "metrics": [{"name": "sessions"}],
+    }
+    data = await core.query_api(HOST, "ga4", "run_report", request)
+    sent = sent_bodies(calls, ga4.HOST)[0]["dateRanges"]
+    assert [item["endDate"] for item in sent] == ["today", "2026-02-10", "yesterday"]
+    assert data["date_moved"] == [
+        {"asked_end_date": "2026-04-01", "sent_end_date": "2026-03-18"},
+    ]
+
+
+RECORDING = {
+    "filters": {"date": {"start": "2026-03-10T00:00:00.000Z", "end": "2026-04-01T00:00:00.000Z"}}
+}
+
+
+async def test_query_api_moves_a_clarity_end_to_the_end_of_the_utc_day(live, fake_net, monkeypatch):
+    freeze(monkeypatch, MORNING)
+
+    def reply(request):
+        if metered_requests([request]):
+            return httpx2.Response(200, json=[])
+        return None
+
+    calls = fake_net(replies(reply))
+    data = await core.query_api(HOST, "clarity", "recordings", RECORDING)
+    latest = "2026-03-18T23:59:59.999Z"
+    body = json.loads(metered_requests(calls)[0].content)
+    assert body["end"] == latest
+    assert body["filters"]["date"]["end"] == latest
+    assert data["date_moved"]["sent_end_date"] == latest
+    await core.query_api(HOST, "clarity", "recordings", RECORDING)
+    assert len(metered_requests(calls)) == 1, (
+        "A repeat of a moved request must be the same request."
+    )
+
+
+async def test_a_move_that_makes_2_ranges_unequal_is_reported(live, fake_net, monkeypatch):
+    freeze(monkeypatch, MORNING)
+    search_console(fake_net, "2026-03-16")
+    result = await source(
+        "search_queries",
+        start_date="2026-03-11",
+        end_date="2026-03-30",
+        compare_start_date="2026-02-01",
+        compare_end_date="2026-02-20",
+    )
+    assert result["range_days"] == {"main": 8, "comparison": 20}
+    assert "8 and 20 days" in result["reason"]
+    assert "unequal" in result["reason"]
+    assert "date_moved" not in result["comparison"]
+    assert result["comparison"]["coverage"]["end_date"] == "2026-02-20"
+
+
+async def test_a_move_that_keeps_2_ranges_equal_adds_no_note(live, fake_net, monkeypatch):
+    freeze(monkeypatch, MORNING)
+    search_console(fake_net, "2026-03-16")
+    result = await source(
+        "search_queries",
+        start_date="2026-03-11",
+        end_date="2026-03-30",
+        compare_start_date="2026-02-01",
+        compare_end_date="2026-02-08",
+    )
+    assert "range_days" not in result
+
+
+# A start past the newest day leaves no range, so nothing goes out and nothing is spent.
+
+
+def sent_nothing(calls):
+    assert not calls, f"The server sent {[str(call.url) for call in calls]}"
+
+
+@pytest.mark.parametrize("name", ["search_queries", "ga4_organic"])
+async def test_a_start_past_the_newest_day_is_refused(live, fake_net, monkeypatch, name):
+    freeze(monkeypatch, MORNING)
+    calls = fake_net(replies(lambda _: None))
+    result = await source(name, start_date="2026-03-25", end_date="2026-04-01")
+    assert result["status"] == "error"
+    assert "most recent day" in result["reason"]
+    assert "sent nothing" in result["reason"]
+    sent_nothing(calls)
+
+
+@pytest.mark.parametrize(
+    ("api", "method", "request_body"),
+    [
+        (
+            "search_console",
+            "search_analytics",
+            {"startDate": "2026-03-25", "endDate": "2026-04-01"},
+        ),
+        (
+            "ga4",
+            "run_report",
+            {"dateRanges": [{"startDate": "2026-03-25", "endDate": "2026-04-01"}]},
+        ),
+        (
+            "clarity",
+            "recordings",
+            {
+                "filters": {
+                    "date": {
+                        "start": "2026-03-25T00:00:00.000Z",
+                        "end": "2026-04-01T00:00:00.000Z",
+                    }
+                }
+            },
+        ),
+    ],
+    ids=["search_console", "ga4", "clarity"],
+)
+async def test_query_api_refuses_a_start_past_the_newest_day(
+    live, fake_net, monkeypatch, api, method, request_body
+):
+    freeze(monkeypatch, MORNING)
+    calls = fake_net(replies(lambda _: None))
+    data = await core.query_api(HOST, api, method, request_body)
+    assert data["status"] == "error"
+    assert "most recent day" in data["reason"]
+    sent_nothing(calls)
+
+
+@pytest.mark.parametrize("name", ["search_queries", "ga4_organic"])
+async def test_a_start_after_the_end_is_still_refused(live, fake_net, monkeypatch, name):
+    freeze(monkeypatch, MORNING)
+    calls = fake_net(replies(lambda _: None))
+    data = await core.get_seo_data(HOST, [name], start_date="2026-03-10", end_date="2026-03-01")
+    assert data["status"] == "error"
+    assert "must not be after" in data["reason"]
+    sent_nothing(calls)
+
+
+async def test_a_ga4_start_after_the_end_in_query_api_is_refused(live, fake_net):
+    calls = fake_net(replies(lambda _: None))
+    request = {"dateRanges": [{"startDate": "2026-03-10", "endDate": "2026-03-01"}]}
+    data = await core.query_api(HOST, "ga4", "run_report", request)
+    assert data["status"] == "error"
+    sent_nothing(calls)
+
+
 # Rules that hold for each source.
 
 COVERED = {"search_queries", "search_pages", "quick_wins", "ga4_organic", "ga4_landing_pages"}
@@ -309,6 +539,17 @@ def test_each_dated_source_shows_coverage_or_is_named():
     wrong = sorted(dated - COVERED - NO_COVERAGE)
     fix = "Add coverage to these dated sources in their provider, then add them to COVERED:"
     assert not wrong, f"{fix} {wrong}"
+
+
+@pytest.mark.parametrize("name", sorted(COVERED))
+async def test_each_covered_source_shows_a_moved_end(live, monkeypatch, name):
+    freeze(monkeypatch, MORNING)
+    result = await source(name, start_date="2026-03-10", end_date="2026-04-01")
+    assert result["status"] == "ok"
+    moved = result["date_moved"]
+    assert moved["asked_end_date"] == "2026-04-01"
+    assert moved["sent_end_date"] == result["coverage"]["end_date"]
+    assert "moved from" in result["reason"]
 
 
 @pytest.mark.parametrize("name", sorted(COVERED))
@@ -334,3 +575,4 @@ def test_the_rule_of_a_real_0_is_in_the_text(text):
     assert "up to last_complete_day" in flat.replace("`", "")
     assert "real 0" in flat
     assert "partial" in flat
+    assert "date_moved" in flat
