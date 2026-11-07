@@ -47,7 +47,7 @@ async def bing_links(site: Site, params: Params) -> dict[str, Any]:
     # The Bing API takes its key only in the query string.
     query = {"siteUrl": site_url, "page": 0, "apikey": site.secret("bing_api_key")}
     url = f"{API}/GetLinkCounts"
-    body = await shared.request(site, ENDPOINTS, "GET", url, params=query, holds="d")
+    body = await shared.request(site, ENDPOINTS, "GET", url, params=query, good=shared.holds("d"))
     data = body["d"]
     rows = [{"url": row["Url"], "inbound_links": row["Count"]} for row in data.get("Links") or []]
     rows.sort(key=lambda row: row["inbound_links"], reverse=True)
@@ -96,7 +96,9 @@ def _reader(name: str) -> Run:
             query[key] = _argument(site, key, arguments[key], value)
         query["apikey"] = site.secret("bing_api_key")
         url = f"{API}/{name}"
-        reply = await shared.request(site, ENDPOINTS, "GET", url, params=query, holds="d")
+        reply = await shared.request(
+            site, ENDPOINTS, "GET", url, params=query, good=shared.holds("d")
+        )
         data = reply["d"]
         pages = data.get("TotalPages") if isinstance(data, dict) else None
         listed = next(
