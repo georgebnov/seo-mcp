@@ -6,10 +6,10 @@ import json
 import httpx2
 import pytest
 
-from seo_mcp import core, net, quota
+from seo_mcp import core, net, quota, shared
 from seo_mcp.providers import gsc
 from test_query_api import HOST, SITE, answer
-from test_quota import metered_requests, replies
+from test_quota import INSPECT, metered_requests, replies, run
 
 PAGE = f"https://{HOST}/a"
 HOME = f"https://{HOST}/"
@@ -29,6 +29,9 @@ BAD_REPLIES = [
     {"inspectionResult": {"indexStatusResult": None}},
     {"inspectionResult": {"indexStatusResult": ["text"]}},
 ]
+
+NO_RESULT = [body for body in BAD_REPLIES if "indexStatusResult" not in str(body)]
+LINK_ONLY = {"inspectionResult": {"inspectionResultLink": "x"}}
 
 
 def count():
@@ -162,3 +165,60 @@ async def test_a_bad_reply_does_not_end_the_batch_with_calls_in_flight(live):
     assert transport.in_flight == 0
     assert result["status"] == "ok"
     assert "1 of 2 URLs failed" in result["reason"]
+
+
+def inspection_answers():
+    return [
+        path for path in shared.folder().glob("*.json") if "inspectionResult" in path.read_text()
+    ]
+
+
+async def inspect():
+    return await run("search_console", INSPECT)
+
+
+@pytest.mark.parametrize("body", NO_RESULT)
+async def test_a_bad_reply_of_the_method_is_a_clear_failure(live, fake_net, body):
+    inspection_says(fake_net, lambda _: body)
+    data = await inspect()
+    assert data["status"] == "error"
+    assert data["rows"] == []
+    assert "shape" in data["reason"]
+    assert "Error" not in data["reason"]
+    assert data["calls_used_today"] == 1
+    assert not inspection_answers()
+
+
+@pytest.mark.parametrize("body", NO_RESULT)
+async def test_a_repeat_of_a_bad_reply_of_the_method_sends_nothing(live, fake_net, body):
+    calls = inspection_says(fake_net, lambda _: body)
+    await inspect()
+    data = await inspect()
+    assert data["status"] == "error"
+    assert "shape" in data["reason"]
+    assert "did not send it again" in data["reason"]
+    assert len(metered_requests(calls)) == 1
+    assert count() == 1
+
+
+async def test_a_good_reply_of_the_method_is_saved(live, fake_net):
+    calls = inspection_says(fake_net, lambda _: LINK_ONLY)
+    first = await inspect()
+    second = await inspect()
+    assert first["status"] == "ok"
+    assert first["rows"] == [LINK_ONLY["inspectionResult"]]
+    assert second["from_cache"] is True
+    assert len(metered_requests(calls)) == 1
+
+
+async def test_a_bad_reply_that_an_old_server_saved_is_not_served(live, fake_net):
+    calls = inspection_says(fake_net, lambda _: LINK_ONLY)
+    await inspect()
+    (path,) = inspection_answers()
+    saved = json.loads(path.read_text())
+    path.write_text(json.dumps({**saved, "answer": {"inspectionResult": "text"}}))
+    data = await inspect()
+    assert data["status"] == "ok"
+    assert data["from_cache"] is False
+    assert data["rows"] == [LINK_ONLY["inspectionResult"]]
+    assert len(metered_requests(calls)) == 2
