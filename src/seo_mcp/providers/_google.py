@@ -26,7 +26,11 @@ _tokens: dict[tuple[str, str], tuple[str, float]] = {}
 
 
 def answer_day() -> date:
-    """The day rule at the time of the answer: a saved answer keeps the days of its own call."""
+    """The day rule at the time of the oldest answer of this source.
+
+    A saved answer keeps the days of its own call. With several answers, the oldest gives the
+    earlier day, so an estimate marks more days partial, never fewer.
+    """
     at = shared.shown().get("cached_at")
     return today(datetime.fromisoformat(at) if at else None)
 

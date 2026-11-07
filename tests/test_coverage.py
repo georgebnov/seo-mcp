@@ -232,6 +232,20 @@ async def test_the_search_console_estimate_is_complete_in_pst_at_each_hour(
         assert date.fromisoformat(coverage["last_complete_day"]) <= newest_complete, moment
 
 
+async def test_a_saved_search_console_report_keeps_its_estimate_across_midnight(
+    live, fake_net, monkeypatch
+):
+    calls = search_console(fake_net)
+    named = {"start_date": "2026-03-10", "end_date": "2026-03-18"}
+    freeze(monkeypatch, datetime(2026, 3, 18, 23, 58, tzinfo=UTC))
+    first = await source("search_queries", **named)
+    freeze(monkeypatch, datetime(2026, 3, 19, 0, 1, tzinfo=UTC))
+    second = await source("search_queries", **named)
+    assert len(reports(calls)) == 2, "The 2nd report must come from the saved answer."
+    assert first["coverage"]["last_complete_day"] == ESTIMATE
+    assert second["coverage"] == first["coverage"]
+
+
 async def test_a_failed_coverage_read_keeps_the_report(live, fake_net, monkeypatch):
     freeze(monkeypatch, MORNING)
 

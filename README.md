@@ -53,7 +53,7 @@ Search Console and GA4 keep updating recent days, so a recent day can hold data 
 
 The server works in days only. It does no hour or zone math, and it never computes today in the zone of a source. Each source says where its days end:
 
-- Search Console: a default range or a `last_days` range ends on `last_complete_day`, which is `firstIncompleteDate` minus 1 day. The range moves only when the API value moves, never with the clock.
+- Search Console: a default range or a `last_days` range ends on `last_complete_day`, which is `firstIncompleteDate` minus 1 day. The range moves only when the API value moves, never with the hour. When the API gives no value, the range ends on the estimate, which moves with the UTC date.
 - GA4: a default range or a `last_days` range goes out as `NdaysAgo`, and GA4 reads it in the property zone. `coverage` shows these values as they went out, so a saved answer keeps its days after midnight.
 - Where the server must compare your date with the current day, it uses 1 rule: the UTC date, with no zone. Each place on Earth is on that date, the day before, or the day after, so the check allows 1 day, in the direction that never refuses or moves a valid date. An estimate takes the day in the safe direction too, so that it does not call a partial day complete. An estimate uses the UTC date of the answer, so a saved answer keeps its days.
 
@@ -61,7 +61,7 @@ A range that you name goes out as you name it, up to the newest day of the sourc
 
 | Path | `dataState` | `last_complete_day` |
 | --- | --- | --- |
-| `get_seo_data` Search Console, range up to 3 days before today | `final` (the default of the API) | `metadata.firstIncompleteDate` minus 1 day, from 1 extra read |
+| `get_seo_data` Search Console, range up to `last_complete_day` | `final` (the default of the API) | `metadata.firstIncompleteDate` minus 1 day, from 1 extra read |
 | `get_seo_data` Search Console, range that ends later | `all`, so that the partial days keep their data | The same |
 | `query_api` `search_analytics` | What you send (no `dataState` means `final`) | `metadata.firstIncompleteDate` minus 1 day if the reply has it, else an estimate |
 | `get_seo_data` GA4, `query_api` GA4 reports | GA4 has none | An estimate: `3daysAgo`, which GA4 reads in the property zone |

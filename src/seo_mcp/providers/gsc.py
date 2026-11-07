@@ -256,6 +256,9 @@ async def _report(
         _rows(site, dimensions, headers, window, params, state),
         _rows(site, [], headers, window, params, state),
     )
+    if known[1] == "estimate":
+        # A saved report keeps the estimate of its own call, also after midnight.
+        known = _estimate(_google.answer_day())
     total = totals[0] if totals else {"clicks": 0, "impressions": 0}
     # Search Console hides rare queries, so the rows can sum to far less than the total.
     seen = min(total["impressions"], sum(row["impressions"] for row in rows))
