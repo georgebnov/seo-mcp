@@ -197,9 +197,9 @@ def _index_status(reply: Any) -> dict[str, Any]:
     Any other exception would pass shared.once with no failure window, and it would end the
     gather of the batch with other inspections in flight.
     """
-    result = reply.get("inspectionResult", {}) if shared.is_object(reply) else None
-    status = result.get("indexStatusResult", {}) if shared.is_object(result) else None
-    if not shared.is_object(status):
+    result = reply.get("inspectionResult", {}) if isinstance(reply, dict) else None
+    status = result.get("indexStatusResult", {}) if isinstance(result, dict) else None
+    if not isinstance(status, dict):
         raise net.ApiError(200, net.BAD_SHAPE)
     return status
 
