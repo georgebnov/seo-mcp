@@ -357,9 +357,12 @@ async def _url_inspection(site: Site, request: dict[str, Any]) -> dict[str, Any]
             ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers, explain=True, spent=spent
         )
 
+    def good(reply: Any) -> bool:
+        return shared.is_object(reply) and isinstance(reply.get("inspectionResult"), dict)
+
     path = shared.entry(site, "url_inspection", body)
-    reply = await shared.once(path, send, prepare=prepare)
-    return answer([reply.get("inspectionResult", {})], more_rows="no", applied=body)
+    reply = await shared.once(path, send, prepare=prepare, good=good)
+    return answer([reply["inspectionResult"]], more_rows="no", applied=body)
 
 
 async def _sitemap_list(site: Site, request: dict[str, Any]) -> dict[str, Any]:

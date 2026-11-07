@@ -150,6 +150,7 @@ JUNK = [
     [],
     ["text"],
     "text",
+    None,
     5,
     {},
     {"message": "try later"},
@@ -216,6 +217,24 @@ async def test_a_repeat_of_any_reply_sends_nothing(live, fake_net, name, spent, 
     assert first > 0
     assert len(metered_requests(calls)) == first, f"{name} sent the repeat of a spent call."
     assert quota.view(*spent)["calls_used_today"] == first
+
+
+INSPECTIONS = [path for key, paths in SPENDERS.items() if key[0] == "gsc.py" for path in paths]
+NO_RESULT = [{}, {"message": "try later"}, {"inspectionResult": "text"}]
+
+
+@pytest.mark.parametrize("body", NO_RESULT, ids=json.dumps)
+@pytest.mark.parametrize(("name", "_", "call"), INSPECTIONS, ids=[path[0] for path in INSPECTIONS])
+async def test_no_inspection_result_is_a_failure_on_each_path(live, fake_net, name, _, call, body):
+    def reply(request):
+        return httpx2.Response(200, json=body) if metered_requests([request]) else None
+
+    fake_net(replies(reply))
+    data = await call()
+    result = data.get("sources", {}).get("index_status", data)
+    fix = "Require an inspectionResult object before the path shows or saves a reply."
+    assert result["status"] == "error", f"gsc.py: {name} showed a failed call as ok. {fix}"
+    assert "shape" in result["reason"]
 
 
 def test_each_function_that_spends_is_in_the_sweep():
