@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Callable
 from contextlib import suppress
-from datetime import date, timedelta, timezone
+from datetime import date, timedelta
 from typing import Any
 from urllib.parse import quote
 
@@ -14,12 +14,14 @@ from seo_mcp.params import (
     DATES,
     MAX_TEXT,
     NONE,
+    SLACK_DAYS,
     BadInput,
     Params,
     moved,
     moved_note,
     page_url,
     period,
+    today,
     too_late,
 )
 from seo_mcp.providers import _google
@@ -37,16 +39,19 @@ ENDPOINTS = (
     net.Endpoint("POST", HOST, r"/v1/urlInspection/index:inspect", "url-inspection-calls"),
 )
 WINDOW_DAYS = 28
-# The docs say that data is typically available after 2-3 days. A default range ends here, from
-# the clock only: firstIncompleteDate can change during a day, and the range must not.
+# The docs say that data is typically available after 2-3 days. A default range ends on the
+# last complete day that the API gives, and on this estimate only when the API gives none.
 LAG_DAYS = 3
-# The docs give the dates of a request "in PST (UTC - 8:00)".
-PST = timezone(timedelta(hours=-8))
-ZONE = "PST (UTC-8)"
+# The docs give the dates of a request "in PT time (UTC - 7:00/8:00)". The server reads no zone:
+# a PT day is never after the UTC date, so the UTC date is the newest day that can have data.
+ZONE = "PT (UTC-7 or UTC-8)"
 # The docs: a query grouped by date for the past 10 days finds the newest data.
 COVERAGE_DAYS = 10
 API_HOW = "metadata.firstIncompleteDate of Search Console, minus 1 day."
-ESTIMATE_HOW = f"{LAG_DAYS} days before today in {ZONE}, from the docs: data takes 2-3 days."
+ESTIMATE_HOW = (
+    f"An estimate: {LAG_DAYS + SLACK_DAYS} days before the UTC date of the answer. The "
+    f"docs say that data takes 2-3 days, and a {ZONE} day can be 1 day before the UTC date."
+)
 ASK_HOW = f"{ESTIMATE_HOW} Send dataState all with the dimension date for the value of the API."
 # The API maximum for 1 call. A sort of fewer rows can miss the real top rows.
 FETCH_ROWS = 25000
@@ -76,39 +81,46 @@ SITEMAP = shared.documented(
 )
 
 
-def _today() -> date:
-    return _google.today_in(PST)
+Known = tuple[date, str, str]
 
 
-def _fixed_end() -> date:
-    return _today() - timedelta(days=LAG_DAYS)
+def _estimate(day: date) -> Known:
+    return day - timedelta(days=LAG_DAYS + SLACK_DAYS), "estimate", ESTIMATE_HOW
 
 
 def _newest_end(name: str, start: date, end: date) -> date:
-    """Today is the newest day: dataState all gives it, and it is partial."""
-    today = _today()
-    if start > today:
-        raise too_late(name, today)
-    return min(end, today)
+    """The UTC date is the newest day: dataState all gives it, and it is partial.
+
+    In PT it can still be the day before. That day then has no data, and it is marked partial:
+    a valid day never moves.
+    """
+    latest = today()
+    if start > latest:
+        raise too_late(name, latest)
+    return min(end, latest)
 
 
-def _window(params: Params) -> dict[str, str]:
-    if params.start and params.end:
-        end = _newest_end("start_date", params.start, params.end)
-        return {"start": params.start.isoformat(), "end": end.isoformat()}
-    end = _fixed_end()
-    start = end - timedelta(days=(params.last_days or WINDOW_DAYS) - 1)
-    return {"start": start.isoformat(), "end": end.isoformat()}
+def _named(asked: Params) -> dict[str, str] | None:
+    """The range that the agent named. A start past the newest day is refused before a call."""
+    if not (asked.start and asked.end):
+        return None
+    end = _newest_end("start_date", asked.start, asked.end)
+    return {"start": asked.start.isoformat(), "end": end.isoformat()}
 
 
-def _oldest_day(today: date) -> date:
-    year, month = divmod(today.year * 12 + today.month - 1 - HISTORY_MONTHS, 12)
-    return date(year, month + 1, min(today.day, 28))
+def _default(asked: Params, last: date) -> dict[str, str]:
+    start = last - timedelta(days=(asked.last_days or WINDOW_DAYS) - 1)
+    return {"start": start.isoformat(), "end": last.isoformat()}
+
+
+def _oldest_day(day: date) -> date:
+    year, month = divmod(day.year * 12 + day.month - 1 - HISTORY_MONTHS, 12)
+    return date(year, month + 1, min(day.day, 28))
 
 
 def _gaps(params: Params) -> list[str]:
     """Name the days of a custom range that Search Console cannot have."""
-    if params.start and params.start < _oldest_day(_today()):
+    if params.start and params.start < _oldest_day(today()):
         return [f"Search Console keeps {HISTORY_MONTHS} months, so older days have no data."]
     return []
 
@@ -140,6 +152,7 @@ async def _rows(
     headers: dict[str, str],
     window: dict[str, str],
     params: Params,
+    state: str,
 ) -> list[dict[str, Any]]:
     body = {
         "startDate": window["start"],
@@ -147,14 +160,14 @@ async def _rows(
         "dimensions": dimensions,
         "rowLimit": FETCH_ROWS,
         **_filters(params),
-        **({"dataState": "all"} if _state(window) == "all" else {}),
+        **({"dataState": "all"} if state == "all" else {}),
     }
     return _flat(body, await _analytics(site, body, headers))
 
 
-def _state(window: dict[str, str]) -> str:
-    """A range past the fixed end asks for fresh data: final data would drop those days."""
-    return "all" if window["end"] > _fixed_end().isoformat() else "final"
+def _state(window: dict[str, str], last: date) -> str:
+    """A range past the last complete day asks for fresh data: final data would drop those days."""
+    return "all" if window["end"] > last.isoformat() else "final"
 
 
 async def _analytics(
@@ -194,16 +207,16 @@ def _reported(reply: Any) -> date | None:
         return None
 
 
-async def _last_complete(site: Site, headers: dict[str, str]) -> tuple[date, str, str]:
+async def _last_complete(site: Site, headers: dict[str, str]) -> Known:
     """The docs give no other way: a report of final data has no metadata of its days.
 
-    The body changes only with the day, so all sources and agents of a site share this read.
-    The report stays good without it.
+    The body changes only with the UTC date, so all sources and agents of a site share this
+    read. The report stays good without it, and then it ends on the estimate.
     """
-    today = _today()
+    day = today()
     body = {
-        "startDate": (today - timedelta(days=COVERAGE_DAYS)).isoformat(),
-        "endDate": today.isoformat(),
+        "startDate": (day - timedelta(days=COVERAGE_DAYS)).isoformat(),
+        "endDate": day.isoformat(),
         "dimensions": ["date"],
         "dataState": "all",
     }
@@ -211,10 +224,10 @@ async def _last_complete(site: Site, headers: dict[str, str]) -> tuple[date, str
         last = _reported(await _analytics(site, body, headers))
         if last:
             return last, "api", API_HOW
-    return _fixed_end(), "estimate", ESTIMATE_HOW
+    return _estimate(day)
 
 
-def _coverage(window: dict[str, str], known: tuple[date, str, str], state: str) -> dict[str, Any]:
+def _coverage(window: dict[str, str], known: Known, state: str) -> dict[str, Any]:
     start, end = date.fromisoformat(window["start"]), date.fromisoformat(window["end"])
     return _google.coverage(start, end, *known, ZONE, data_state=state)
 
@@ -233,18 +246,24 @@ async def _report(
     params: Params,
     keep: Callable[[Rows], Rows] | None = None,
 ) -> dict[str, Any]:
-    window = _window(params)
+    named = _named(params)
     headers = await _headers(site)
-    rows, totals, known = await asyncio.gather(
-        _rows(site, dimensions, headers, window, params),
-        _rows(site, [], headers, window, params),
-        _last_complete(site, headers),
+    # 1 boundary decides the default range, the data state, and the coverage.
+    known = await _last_complete(site, headers)
+    window = named or _default(params, known[0])
+    state = _state(window, known[0])
+    rows, totals = await asyncio.gather(
+        _rows(site, dimensions, headers, window, params, state),
+        _rows(site, [], headers, window, params, state),
     )
+    if known[1] == "estimate":
+        # A saved report keeps the estimate of its own call, also after midnight.
+        known = _estimate(_google.answer_day())
     total = totals[0] if totals else {"clicks": 0, "impressions": 0}
     # Search Console hides rare queries, so the rows can sum to far less than the total.
     seen = min(total["impressions"], sum(row["impressions"] for row in rows))
     rows = keep(rows) if keep else sorted(rows, key=_by_traffic, reverse=True)
-    coverage = _coverage(window, known, _state(window))
+    coverage = _coverage(window, known, state)
     shift = _shift(params.end, window["end"])
     gaps = _gaps(params) + _partial_note(coverage)
     notes = gaps + ([MISS_REASON] if not rows and (params.page or params.query) else [])
@@ -344,7 +363,9 @@ async def _inspect(
 
 
 async def _top_urls(site: Site, headers: dict[str, str]) -> list[str]:
-    rows = await _rows(site, ["page"], headers, _window(NONE), NONE)
+    # Only the top pages matter here, so the estimate is enough: it costs no coverage read.
+    last = _estimate(today())[0]
+    rows = await _rows(site, ["page"], headers, _default(NONE, last), NONE, "final")
     pages = sorted(rows, key=_by_traffic, reverse=True)
     home = f"https://{site.host}/"
     return list(dict.fromkeys([home, *(row["page"] for row in pages)]))[:INSPECT_URLS]
@@ -450,7 +471,7 @@ async def _search_analytics(site: Site, request: dict[str, Any]) -> dict[str, An
     rows = _flat(body, reply)
     # 1 method sends 1 query, so the value comes only from this reply.
     last = _reported(reply)
-    known = (last or _fixed_end(), "api" if last else "estimate", API_HOW if last else ASK_HOW)
+    known = (last, "api", API_HOW) if last else (*_estimate(_google.answer_day())[:2], ASK_HOW)
     window = {"start": request["startDate"], "end": body["endDate"]}
     coverage = _coverage(window, known, str(request.get("dataState", "final")))
     shift = _shift(end, body["endDate"])

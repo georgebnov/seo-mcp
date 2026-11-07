@@ -6,12 +6,15 @@ only the agent has. tests/test_tasks.py runs each step through the real tools.
 """
 
 import re
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any, NamedTuple
+
+from seo_mcp import params
 
 CLARITY_DAYS = 90
 SEARCH_DAYS = 28
-# Search Console data ends about 3 days before the call.
+# Search Console data ends about 3 days before the call. A YYYY-MM-DD end of a task with a lag
+# takes 1 more day, so that it is complete in each zone: the server reads no zone.
 SEARCH_LAG_DAYS = 3
 # A session row is about 2 KB, and a result stops at about 100 KB.
 SAMPLE_SESSIONS = 50
@@ -193,7 +196,9 @@ TASKS: dict[str, Task] = {
                             "api": "ga4",
                             "method": "run_report",
                             "request": {
-                                "dateRanges": [{"startDate": "{start}", "endDate": "{end}"}],
+                                "dateRanges": [
+                                    {"startDate": "{start_ago}", "endDate": "{end_ago}"}
+                                ],
                                 "dimensions": [{"name": "pagePath"}],
                                 "metrics": [{"name": "eventCount"}],
                                 "dimensionFilter": {
@@ -420,8 +425,13 @@ def find(asked: str) -> list[str]:
     ]
 
 
+def _ago(days: int) -> str:
+    return "today" if days == 0 else f"{days}daysAgo"
+
+
 def _marks(task: Task, today: date) -> tuple[dict[str, str], dict[str, Any]]:
-    end = today - timedelta(days=task.lag)
+    lag = task.lag + params.SLACK_DAYS if task.lag else 0
+    end = today - timedelta(days=lag)
     start = end - timedelta(days=task.days - 1)
     days = {"start": start, "end": end}
     window: dict[str, Any] = {"start": str(start), "end": str(end), "days": task.days}
@@ -435,6 +445,9 @@ def _marks(task: Task, today: date) -> tuple[dict[str, str], dict[str, Any]]:
         marks[f"{{{name}_slash}}"] = day.strftime("%Y/%m/%d")
     marks["{start_instant}"] = f"{start}T00:00:00.000Z"
     marks["{end_instant}"] = f"{end}T23:59:59.999Z"
+    # GA4 reads a relative date in the property zone, so it needs no slack.
+    marks["{start_ago}"] = _ago(task.lag + task.days - 1)
+    marks["{end_ago}"] = _ago(task.lag)
     return marks, window
 
 
@@ -475,7 +488,7 @@ def _row(name: str, recipe: Recipe, site: str, marks: dict[str, str]) -> dict[st
 
 def build(name: str, site: str, api: str, today: date | None = None) -> dict[str, Any]:
     task = TASKS[name]
-    marks, window = _marks(task, today or datetime.now(UTC).date())
+    marks, window = _marks(task, today or params.today())
     recipes = [recipe for recipe in task.recipes if api in ("", recipe.api)]
     return {"window": window, "rows": [_row(name, item, site, marks) for item in recipes]}
 
