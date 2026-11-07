@@ -209,9 +209,9 @@ def _index_status(reply: Any) -> dict[str, Any]:
 
 
 def _canonical_match(status: dict[str, Any]) -> bool | None:
-    """Claim no match when neither side names a canonical: an unknown URL has neither."""
+    """Only 2 named canonicals can differ: a page with no declared canonical is no mismatch."""
     google, user = status.get("googleCanonical"), status.get("userCanonical")
-    return google == user if google or user else None
+    return google == user if google and user else None
 
 
 async def _inspect(

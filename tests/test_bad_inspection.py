@@ -110,6 +110,28 @@ async def test_no_canonical_on_either_side_is_no_match_claim(live, fake_net, sta
     assert result["rows"][0]["canonical_match"] is None
 
 
+GOOGLE = "https://www.example.com/a"
+USER = "https://www.example.com/b"
+
+
+@pytest.mark.parametrize(
+    ("fields", "match"),
+    [
+        ({"googleCanonical": GOOGLE}, None),
+        ({"googleCanonical": GOOGLE, "userCanonical": ""}, None),
+        ({"userCanonical": USER}, None),
+        ({"googleCanonical": "", "userCanonical": USER}, None),
+        ({"googleCanonical": GOOGLE, "userCanonical": USER}, False),
+        ({"googleCanonical": GOOGLE, "userCanonical": GOOGLE}, True),
+    ],
+    ids=["no user", "empty user", "no google", "empty google", "different", "same"],
+)
+async def test_only_2_named_canonicals_can_be_a_mismatch(live, fake_net, fields, match):
+    inspection_says(fake_net, lambda _: {"inspectionResult": {"indexStatusResult": fields}})
+    result = await index_status(page=PAGE)
+    assert result["rows"][0]["canonical_match"] is match
+
+
 async def test_a_batch_of_only_bad_replies_spends_once(live, fake_net):
     calls = inspection_says(fake_net, lambda _: {"inspectionResult": "text"})
     first = await index_status()
