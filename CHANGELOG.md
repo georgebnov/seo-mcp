@@ -27,3 +27,4 @@
 - Trim the outer spaces of a Clarity dashboard question, so that they do not spend a new call.
 - Fix the reason of a connection failure: it read `The connection failed. from the API.`
 - Give the used count, the limit, and the reset time in each refusal of a call ledger.
+- Extend the failure window of 60 seconds to a connection failure of a counted call: a network outage no longer spends the Clarity count of the day with immediate retries.

@@ -477,11 +477,11 @@ ALLOWED = {
 }
 
 
-def _direct_requests(path):
+def _callers(path, called):
     def visit(node, name):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             name = node.name
-        if isinstance(node, ast.Call) and ast.unparse(node.func) == "net.request":
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == called:
             yield path.name, name
         for child in ast.iter_child_nodes(node):
             yield from visit(child, name)
@@ -490,6 +490,17 @@ def _direct_requests(path):
 
 
 def test_each_api_call_goes_through_the_shared_guard():
-    found = {pair for path in sorted(SOURCE.rglob("*.py")) for pair in _direct_requests(path)}
+    found = {
+        pair for path in sorted(SOURCE.rglob("*.py")) for pair in _callers(path, "net.request")
+    }
     wrong = sorted(found - ALLOWED)
     assert not wrong, f"Call shared.request, so that repeats send nothing: {wrong}"
+
+
+def test_each_ledger_spend_is_in_a_prepare_step():
+    found = {
+        pair for path in sorted(SOURCE.rglob("*.py")) for pair in _callers(path, "quota.spend")
+    }
+    wrong = sorted(pair for pair in found if pair[1] != "prepare")
+    assert found
+    assert not wrong, f"Spend in the prepare step of shared.once, for the failure window: {wrong}"

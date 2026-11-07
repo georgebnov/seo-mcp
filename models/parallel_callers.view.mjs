@@ -14,7 +14,6 @@ export const state = (v) => {
   if (v.blocked) return "The day is blocked, 1 caller still waits";
   if (v.cache === "saved") return "The answer is saved, 1 caller still waits";
   if (v.failed) return "The call failed and the failure is kept, 1 caller still waits";
-  if (count(v, ["notSent"]) === 1) return "The connection did not open, 1 caller still waits";
   return "1 caller stopped waiting, 1 caller still waits";
 };
 const labels = {
@@ -22,7 +21,7 @@ const labels = {
   TakeLockRefused: "the waiting caller gets the lock and the ledger refuses",
   TakeLockSend: "a caller gets the lock, reserves 1 call, and sends",
   TakeLockRepeat: "the waiting caller gets the lock and shares the failure, with no spend",
-  TakeLockNotSent: "a caller reserves 1 call, and the connection does not open",
+  TakeLockNotSent: "a caller reserves 1 call, the connection does not open, and the failure is kept",
   WaitTimesOut: "a waiting caller reaches the source timeout",
   Answer: "Clarity answers with data",
   Fails: "the call fails or times out",
