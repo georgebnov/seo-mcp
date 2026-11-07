@@ -1,23 +1,28 @@
 """An HTTP 200 of a wrong shape is a failure: it is never saved, and it spends 1 call."""
 
+import ast
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx2
 import pytest
 
 from seo_mcp import core, quota, shared
-from seo_mcp.providers import clarity
-from test_query_api import HOST
+from seo_mcp.providers import clarity, gsc
+from test_query_api import HOST, SITE
 from test_quota import (
     DASHBOARD,
     INSIGHTS,
+    INSPECT,
     RECORDINGS,
     metered_requests,
     replies,
     run,
     set_ledger,
 )
+
+SOURCE = Path(__file__).parent.parent / "src" / "seo_mcp"
 
 METRICS = [{"metricName": "Traffic", "information": [{"Url": "u", "totalSessionCount": "7"}]}]
 BAD_INSIGHTS = [
@@ -138,3 +143,78 @@ async def test_a_good_answer_of_each_method_is_saved(live, fake_net, call, body)
     assert (await run("clarity", call))["status"] == "ok"
     assert len(saved_files()) == 1
     assert (await run("clarity", call))["from_cache"] is True
+
+
+# Each path that spends: a reply of any shape must not let a repeat spend again.
+JUNK = [
+    [],
+    ["text"],
+    "text",
+    5,
+    {"message": "try later"},
+    {"data": "text"},
+    {"inspectionResult": "text"},
+    {"inspectionResult": {"indexStatusResult": "text"}},
+]
+CLARITY = (clarity.LEDGER, HOST)
+INSPECTION = (gsc.LEDGER, SITE["gsc_property"])
+
+
+def source(name, **params):
+    return lambda: core.get_seo_data(HOST, [name], **params)
+
+
+def method(api, call):
+    return lambda: run(api, call)
+
+
+SPENDERS = {
+    ("clarity.py", "_cached"): [
+        ("clarity", CLARITY, source("clarity")),
+        ("live_insights", CLARITY, method("clarity", INSIGHTS)),
+        ("recordings", CLARITY, method("clarity", RECORDINGS)),
+        ("dashboard_query", CLARITY, method("clarity", DASHBOARD)),
+    ],
+    ("gsc.py", "_url_inspection"): [
+        ("url_inspection", INSPECTION, method("search_console", INSPECT)),
+    ],
+    ("gsc.py", "index_status"): [
+        ("index_status of 1 page", INSPECTION, source("index_status", page=f"https://{HOST}/a")),
+        ("index_status of a batch", INSPECTION, source("index_status")),
+    ],
+}
+PATHS = [path for paths in SPENDERS.values() for path in paths]
+
+
+def spends(function):
+    called = (ast.unparse(node.func) for node in ast.walk(function) if isinstance(node, ast.Call))
+    return "quota.spend" in called
+
+
+def spenders():
+    for path in sorted(SOURCE.rglob("*.py")):
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and spends(node):
+                yield path.name, node.name
+
+
+@pytest.mark.parametrize("body", JUNK, ids=json.dumps)
+@pytest.mark.parametrize(("name", "spent", "call"), PATHS, ids=[path[0] for path in PATHS])
+async def test_a_repeat_of_any_reply_sends_nothing(live, fake_net, name, spent, call, body):
+    def reply(request):
+        if metered_requests([request]):
+            return httpx2.Response(200, json=body)
+        return None
+
+    calls = fake_net(replies(reply))
+    await call()
+    first = len(metered_requests(calls))
+    await call()
+    assert first > 0
+    assert len(metered_requests(calls)) == first, f"{name} sent the repeat of a spent call."
+    assert quota.view(*spent)["calls_used_today"] == first
+
+
+def test_each_function_that_spends_is_in_the_sweep():
+    wrong = sorted(set(spenders()) ^ set(SPENDERS))
+    assert not wrong, f"Add each path of these functions to SPENDERS in {__file__}: {wrong}"
