@@ -10,7 +10,7 @@ import httpx2
 import pytest
 
 from seo_mcp import api, core, providers, server
-from seo_mcp.providers import bing, clarity
+from seo_mcp.providers import bing, clarity, ga4
 
 SITE = {
     "gsc_property": "sc-domain:example.com",
@@ -806,3 +806,42 @@ def test_tool_description_names_each_api_with_1_line():
     for name, entry in providers.APIS.items():
         assert entry.summary.strip()
         assert f"\n- {name}: {entry.summary}\n" in server.QUERY_API
+
+
+async def ga4_options():
+    return await core.query_api(api="ga4")
+
+
+async def test_ga4_options_hold_the_standard_names():
+    options = (await ga4_options())["options"]
+    assert {"sessionDefaultChannelGroup", "landingPage", "pagePath"} <= set(options["dimensions"])
+    assert {"sessions", "totalUsers", "keyEvents"} <= set(options["metrics"])
+    assert len(options["dimensions"]) == len(set(options["dimensions"]))
+    assert len(options["metrics"]) == len(set(options["metrics"]))
+
+
+async def test_ga4_options_say_when_metadata_is_needed_and_the_date_of_the_list():
+    rule = (await ga4_options())["options"]["dimensions_and_metrics"]
+    assert "metadata only for custom names or for a name that this list does not hold" in rule
+    assert ga4.NAMES_TAKEN_ON in rule
+    assert ga4.SCHEMA_DOCS in rule
+
+
+async def test_the_ga4_options_fit_in_1_answer():
+    data = await ga4_options()
+    assert len(json.dumps(data)) < api.MAX_BYTES
+    assert data["truncated"] is False
+
+
+def test_the_standard_ga4_names_stay_out_of_the_tool_text():
+    text = server.QUERY_API + core.describe_apis()
+    names = ga4.STANDARD_DIMENSIONS + ga4.STANDARD_METRICS
+    leaked = [name for name in names if len(name) > 12 and name in text]
+    assert not leaked, f"Keep the table out of the tool text: {leaked}"
+
+
+def test_each_ga4_name_of_the_server_is_a_standard_name():
+    dimensions = {ga4.ORGANIC["filter"]["fieldName"], "date", "landingPage"}
+    missing = sorted(set(ga4.METRICS) - set(ga4.STANDARD_METRICS))
+    missing += sorted(dimensions - set(ga4.STANDARD_DIMENSIONS))
+    assert not missing, f"Take these names from {ga4.SCHEMA_DOCS} into ga4.py: {missing}"
