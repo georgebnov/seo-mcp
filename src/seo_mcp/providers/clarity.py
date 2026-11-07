@@ -515,6 +515,7 @@ DOCS = "https://learn.microsoft.com/en-us/clarity/setup-and-installation/clarity
 APIS = {
     "clarity": Api(
         title="Microsoft Clarity",
+        summary="What visitors do on a page: clicks, scrolls, and lists of recordings.",
         docs=DOCS,
         quota=Quota(
             DOCS,

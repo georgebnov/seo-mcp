@@ -45,9 +45,10 @@ A source that takes `page` also takes `compare_page`. A source that takes dates 
 query_api(site?, api?, method?, request?, task?)
 ```
 
-1. Call it with no `api`: it lists the APIs, the methods, and the tasks.
-2. Call it with `api` and no `method`: it lists the fields, the valid values, the docs, and what the API does not give. For GA4, the method `metadata` lists the live dimensions and metrics of the property, with custom ones.
-3. Call it with `api`, `method`, and `request`: `request` is the official JSON of that method. The server fills the site, the property, and the key.
+The tool text names each API with 1 line, built from `APIS`, so an agent goes to step 1 with no discovery call. A call with no `api` lists the methods, the quota, and the tasks.
+
+1. Call it with `api` and no `method`: it lists the fields, the valid values, the docs, and what the API does not give. For GA4, the method `metadata` lists the live dimensions and metrics of the property, with custom ones.
+2. Call it with `api`, `method`, and `request`: `request` is the official JSON of that method. The server fills the site, the property, and the key.
 
 | `api` | `method` | Official call |
 | --- | --- | --- |
@@ -191,7 +192,7 @@ To store a key in the macOS Keychain, copy it and run `security add-generic-pass
    - `ENDPOINTS`: each call that the provider makes, as `net.Endpoint(method, host, path_regex)`. `net.request` refuses all other calls.
    - `SOURCES`: a map from source name to `async def source(site: Site, params: Params) -> dict`. Return `ok(rows, thin=...)`. Use `site.field(...)` and `site.secret(...)`, which give `not_connected` when the value is missing.
    - `ACCEPTS`: a map from source name to the parameters that it applies. The tool description comes from this map, and `tests/test_params.py` fails when a source declares a parameter that changes nothing.
-   - `APIS`: the read methods for `query_api`. Each method lists its request fields, and the API lists what it does not give and its published limits, with a doc link. If the docs state no number, say so.
+   - `APIS`: the read methods for `query_api`. The `summary` of an API is its 1 line in the tool text. Each method lists its request fields, and the API lists what it does not give and its published limits, with a doc link. If the docs state no number, say so.
 2. Add the module to `MODULES` in `providers/__init__.py`.
 3. Add a test with the `fake_net` fixture, and add the sources to the table above.
 4. Add a recipe to `src/seo_mcp/tasks.py`. `tests/test_tasks.py` fails when an API has no task.

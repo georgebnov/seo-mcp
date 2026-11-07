@@ -394,6 +394,7 @@ def now(site: Site) -> dict[str, Any]:
 APIS = {
     "search_console": Api(
         title="Google Search Console",
+        summary="Google Search clicks, rankings, URL index status, and sitemaps.",
         docs="https://developers.google.com/webmaster-tools/v1/api_reference_index",
         quota=Quota(
             "https://developers.google.com/webmaster-tools/limits",

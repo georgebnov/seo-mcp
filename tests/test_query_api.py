@@ -799,3 +799,10 @@ async def test_a_call_waits_for_another_process_that_fetches_the_same_answer(liv
 def test_tool_description_asks_for_named_sources():
     assert "Name the sources that you need" in server.GET_SEO_DATA
     assert "Leave it out" not in server.GET_SEO_DATA
+
+
+# An agent reads the choices at session start and goes direct to query_api(api="<name>").
+def test_tool_description_names_each_api_with_1_line():
+    for name, entry in providers.APIS.items():
+        assert entry.summary.strip()
+        assert f"\n- {name}: {entry.summary}\n" in server.QUERY_API
