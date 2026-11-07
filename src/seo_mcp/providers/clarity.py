@@ -5,7 +5,6 @@ import json
 import re
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
@@ -13,7 +12,7 @@ from urllib.parse import quote, urlsplit
 from seo_mcp import NAME, net, quota, shared
 from seo_mcp.api import Api, Method, Quota, answer, as_rows, one_of, whole
 from seo_mcp.config import Site
-from seo_mcp.params import BadInput, Params, moved, moved_note, too_late
+from seo_mcp.params import BadInput, Params, moved, moved_note, today, too_late
 from seo_mcp.results import Refused, Unsupported, ok
 
 API = "https://www.clarity.ms/export-data/api/v1/project-live-insights"
@@ -396,7 +395,7 @@ def _check_date(filters: dict[str, Any]) -> tuple[str, str]:
     if start > end:
         raise BadInput("filters.date start must not be after end.")
     # The end of the UTC day, not the time now: a repeat must be the same request, or it spends.
-    latest = f"{datetime.now(UTC).date().isoformat()}T23:59:59.999Z"
+    latest = f"{today().isoformat()}T23:59:59.999Z"
     if start > latest:
         raise too_late("filters.date start", latest)
     return start, min(end, latest)

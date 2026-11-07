@@ -7,7 +7,7 @@ import httpx2
 import pytest
 
 from seo_mcp import core, providers, shared
-from seo_mcp.providers import clarity, gsc
+from seo_mcp.providers import clarity
 
 SITE = {
     "gsc_property": "sc-domain:example.com",
@@ -39,7 +39,8 @@ def days_ago(days: int) -> str:
 
 
 def search_console_days_ago(days: int) -> str:
-    return (gsc._today() - timedelta(days=days)).isoformat()
+    """This fake has no firstIncompleteDate, so a default range ends on the estimate."""
+    return (datetime.now(UTC).date() - timedelta(days=days + 1)).isoformat()
 
 
 def body_of(request) -> dict:

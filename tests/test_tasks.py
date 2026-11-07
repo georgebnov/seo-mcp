@@ -1,7 +1,7 @@
 """An agent asks for a thing by name and gets the call. Each call here runs for real."""
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -132,12 +132,34 @@ def test_dates_are_real_and_a_window_has_the_named_length():
 def test_2_periods_have_the_same_length_and_do_not_overlap():
     filled = tasks.build("page_over_two_periods", "", "", today=date(2026, 11, 6))
     assert filled["window"] == {
-        "start": "2026-10-07",
-        "end": "2026-11-03",
+        "start": "2026-10-06",
+        "end": "2026-11-02",
         "days": 28,
-        "compare_start": "2026-09-09",
-        "compare_end": "2026-10-06",
+        "compare_start": "2026-09-08",
+        "compare_end": "2026-10-05",
     }
+
+
+@pytest.mark.parametrize("today", [date(2026, 3, 18), date(2026, 3, 19)])
+def test_a_task_end_with_a_lag_is_complete_in_each_zone(today):
+    task = tasks.TASKS["page_over_two_periods"]
+    end = date.fromisoformat(
+        tasks.build("page_over_two_periods", "", "", today=today)["window"]["end"]
+    )
+    # The day of a place is the UTC date, the day before, or the day after.
+    for place in (today - timedelta(days=1), today, today + timedelta(days=1)):
+        assert end <= place - timedelta(days=task.lag), place
+
+
+def test_a_ga4_task_step_sends_relative_dates_that_google_reads_in_the_property_zone():
+    built = [
+        tasks.build("scroll_depth_by_page", "", "ga4", today=day)
+        for day in (date(2026, 3, 18), date(2026, 3, 19))
+    ]
+    ranges = [
+        row["steps"][0]["args"]["request"]["dateRanges"] for item in built for row in item["rows"]
+    ]
+    assert ranges[0] == ranges[1] == [{"startDate": "89daysAgo", "endDate": "today"}]
 
 
 async def test_a_step_names_the_input_that_it_needs():

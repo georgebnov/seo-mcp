@@ -1,18 +1,28 @@
 """Google Analytics 4: organic traffic and organic landing pages."""
 
 import json
-import re
 from contextlib import suppress
-from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from seo_mcp import net, quota, shared
 from seo_mcp.api import Api, Method, Quota, Run, answer, row_limit, whole
 from seo_mcp.config import Site
-from seo_mcp.params import DATE_SHAPE, DATES, BadInput, Params, moved, moved_note, too_late
+from seo_mcp.params import (
+    DATES,
+    SLACK_DAYS,
+    BadInput,
+    Params,
+    bounds,
+    days_ago,
+    iso_day,
+    moved,
+    moved_note,
+    today,
+    too_late,
+)
 from seo_mcp.providers import _google
 from seo_mcp.results import Refused, ok
 
@@ -26,12 +36,16 @@ ENDPOINTS = (
 WINDOW_DAYS = 28
 # No field of the API marks a day complete. The help page says that processing can take 24-48
 # hours, so the last hit of a day is done at the start of the 3rd day after it. A relative date
-# goes out as text, and GA4 reads it in the property zone, so the hour cannot move the range.
+# goes out as text, and GA4 reads it in the property zone, so the server needs no zone.
 LAG_DAYS = 3
+LAST_COMPLETE = f"{LAG_DAYS}daysAgo"
 ESTIMATE_HOW = (
-    f"{LAG_DAYS} days before today in the property zone: the GA4 help says that processing can "
-    "take 24-48 hours. The API has no field for this."
+    f"An estimate: {LAST_COMPLETE}, which GA4 reads in the property zone. The GA4 help says that "
+    "processing can take 24-48 hours, and the API has no field for this. For a YYYY-MM-DD end, "
+    "partial_days holds each day that can be partial in some zone, from the UTC date of the "
+    "answer."
 )
+NO_ZONE = "The property zone: the reply names none."
 THIN_SESSIONS = 100
 MAX_DAILY_ROWS = 100
 PAGE_MATCH = "Sessions that start on this exact path, on every host of the property."
@@ -164,34 +178,26 @@ async def _post(
     return await shared.once(path, send, good=REPORT, until=shared.after(keep))
 
 
-def _day(text: Any) -> date | None:
-    """A relative date such as 7daysAgo has no day here: GA4 reads it in the property zone."""
-    if not isinstance(text, str) or not DATE_SHAPE.fullmatch(text):
-        return None
-    try:
-        return date.fromisoformat(text)
-    except ValueError:
-        return None
-
-
 def _newest_end(name: str, start_text: Any, end_text: Any) -> Any:
-    """Give the end to send. The zone of the property is known only after the reply.
+    """Give the end to send. The server reads no zone, and the day of the property is P.
 
-    A property ahead of UTC can already be on the next day, so only a day past that is sure to
-    be after the newest day. "today" lets GA4 read it in the property zone. A property behind
-    UTC can still be on the day before: a start on or after the UTC day then keeps its own day,
-    because "today" could reverse the range.
+    P is the UTC date U, U-1, or U+1. An end of U+1 or later is on or after P, so "today" is
+    exactly the earlier of the end and P: GA4 reads it in the property zone, and no valid day
+    is cut. A start of U or later can be after P, so "today" could reverse the range: then the
+    end stops at U+1, the newest day of any zone. An end of U or earlier goes out as it is.
     """
-    start, end = _day(start_text), _day(end_text)
+    start, end = iso_day(start_text), iso_day(end_text)
     if start and end and start > end:
         raise BadInput(f"{name} must not be after the end date.")
-    utc_today = _google.today_in(UTC)
-    furthest = utc_today + timedelta(days=1)
+    utc_day = today()
+    furthest = utc_day + timedelta(days=SLACK_DAYS)
     if start and start > furthest:
         raise too_late(name, furthest)
-    if not end or end <= furthest:
+    if not end or end < furthest:
         return end_text
-    return start_text if start and start >= utc_today else "today"
+    if start and start >= utc_day:
+        return furthest.isoformat()
+    return "today"
 
 
 def _window(params: Params) -> dict[str, str]:
@@ -219,39 +225,54 @@ def _filter(params: Params) -> dict[str, Any]:
     return {"andGroup": {"expressions": [ORGANIC, {"filter": page}]}}
 
 
-def _real_day(text: str, today: date) -> date | None:
-    relative = {"today": 0, "yesterday": 1}.get(text)
-    found = re.fullmatch(r"(\d+)daysAgo", text)
-    if found:
-        relative = int(found[1])
-    if relative is not None:
-        return today - timedelta(days=relative)
-    try:
-        return date.fromisoformat(text)
-    except ValueError:
-        return None
-
-
-def _property_zone(reply: dict[str, Any]) -> tuple[tzinfo, str]:
-    """A host can have no timezone data: the server still answers, and it names UTC."""
+def _zone(reply: dict[str, Any]) -> str:
+    """The zone name of the reply, as a label only: the server reads no zone."""
     metadata = reply.get("metadata")
     name = metadata.get("timeZone") if isinstance(metadata, dict) else None
-    try:
-        return ZoneInfo(str(name)), str(name)
-    except (ZoneInfoNotFoundError, ValueError, OSError):
-        return UTC, "UTC"
+    return name if isinstance(name, str) else NO_ZONE
+
+
+def _first_partial(end: str, day: date) -> str | None:
+    """The first day that can be partial, in the terms of the end, or None for a complete range.
+
+    A relative end is exact: GA4 reads both in 1 zone. For a YYYY-MM-DD end the property day is
+    U-1 at the earliest, so a day after U-1-3 can be partial in some zone.
+    """
+    ago = days_ago(end)
+    if ago is not None:
+        return f"{LAG_DAYS - 1}daysAgo" if ago < LAG_DAYS else None
+    first = day - timedelta(days=LAG_DAYS)
+    found = iso_day(end)
+    return first.isoformat() if found and found >= first else None
+
+
+def _partial(start: str, end: str, day: date) -> dict[str, str] | None:
+    first = _first_partial(end, day)
+    if first is None:
+        return None
+    start_ago, first_ago = days_ago(start), days_ago(first)
+    if start_ago is not None and first_ago is not None:
+        before = start_ago > first_ago
+    else:
+        begin, other = bounds(start, day), bounds(first, day)
+        before = bool(begin and other and begin[1] < other[0])
+    # A start that can be inside the partial days starts them: more days partial, never fewer.
+    return {"from": first if before else start, "to": end}
 
 
 def _coverage(reply: dict[str, Any], window: Any) -> dict[str, Any] | None:
     if not isinstance(window, dict):
         return None
-    zone, name = _property_zone(reply)
-    today = _google.today_in(zone)
-    start, end = (_real_day(str(window.get(key)), today) for key in ("startDate", "endDate"))
-    if not start or not end:
+    start, end = window.get("startDate"), window.get("endDate")
+    day = _google.answer_day()
+    if not (isinstance(start, str) and isinstance(end, str)):
         return None
-    last = today - timedelta(days=LAG_DAYS)
-    return _google.coverage(start, end, last, "estimate", ESTIMATE_HOW, name)
+    if not (bounds(start, day) and bounds(end, day)):
+        return None
+    partial = _partial(start, end, day)
+    return _google.described(
+        start, end, LAST_COMPLETE, "estimate", ESTIMATE_HOW, _zone(reply), partial
+    )
 
 
 async def _report(

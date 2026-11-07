@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -10,6 +10,10 @@ from urllib.parse import urlsplit
 MAX_TEXT = 4096
 MAX_LAST_DAYS = 3650
 DATE_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2}")
+RELATIVE = re.compile(r"(\d+)daysAgo")
+# The server works in days and reads no zone. Each place on Earth is on the UTC date, the day
+# before, or the day after (UTC-12 to UTC+14), so a check of a day allows this many days.
+SLACK_DAYS = 1
 DATES = frozenset({"start_date", "end_date"})
 # A comparison needs the same power as the parameter that it repeats.
 COMPARE_NEEDS = {
@@ -45,13 +49,53 @@ class Params:
 NONE = Params()
 
 
-def _date(name: str, text: str) -> date:
+def today(at: datetime | None = None) -> date:
+    """The 1 day rule of the server: the UTC date of now, or of at. It reads no zone."""
+    return (at or datetime.now(UTC)).astimezone(UTC).date()
+
+
+def iso_day(text: object) -> date | None:
+    if not isinstance(text, str) or not DATE_SHAPE.fullmatch(text):
+        return None
     try:
-        if not isinstance(text, str) or not DATE_SHAPE.fullmatch(text):
-            raise ValueError
         return date.fromisoformat(text)
     except ValueError:
-        raise BadInput(f"{name} must be a real date in the form YYYY-MM-DD.") from None
+        return None
+
+
+def days_ago(text: object) -> int | None:
+    """The N of a relative GA4 date. GA4 reads it in the property zone, so no day is known here."""
+    if text in ("today", "yesterday"):
+        return 0 if text == "today" else 1
+    found = RELATIVE.fullmatch(text) if isinstance(text, str) else None
+    return int(found[1]) if found else None
+
+
+def bounds(text: object, day: date) -> tuple[date, date] | None:
+    """The first and the last day that text can name in some place, on the UTC date day."""
+    ago = days_ago(text)
+    if ago is not None:
+        return day - timedelta(days=ago + SLACK_DAYS), day - timedelta(days=ago - SLACK_DAYS)
+    found = iso_day(text)
+    return (found, found) if found else None
+
+
+def length(start: object, end: object, day: date) -> tuple[int, int] | None:
+    """The fewest and the most days of a range. 2 relative dates resolve in 1 place: exact."""
+    first, last = days_ago(start), days_ago(end)
+    if first is not None and last is not None:
+        return first - last + 1, first - last + 1
+    begin, finish = bounds(start, day), bounds(end, day)
+    if not begin or not finish:
+        return None
+    return (finish[0] - begin[1]).days + 1, (finish[1] - begin[0]).days + 1
+
+
+def _date(name: str, text: str) -> date:
+    found = iso_day(text)
+    if not found:
+        raise BadInput(f"{name} must be a real date in the form YYYY-MM-DD.")
+    return found
 
 
 def period(

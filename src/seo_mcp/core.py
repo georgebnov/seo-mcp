@@ -2,13 +2,13 @@
 
 import asyncio
 from collections.abc import Awaitable
-from datetime import date
+from datetime import datetime
 from typing import Any
 
 from seo_mcp import api as full_api
 from seo_mcp import config, net, providers, quota, shared, tasks
 from seo_mcp.config import ConfigError, Site
-from seo_mcp.params import COMPARE_NEEDS, NONE, BadInput, Params, parse
+from seo_mcp.params import COMPARE_NEEDS, NONE, BadInput, Params, length, parse, today
 from seo_mcp.results import NotConnected, Refused, Unsupported, failed, ok, unsupported
 from seo_mcp.secrets import safe_reason, scrub
 
@@ -63,12 +63,22 @@ async def _run(name: str, site: Site, params: Params) -> dict[str, Any]:
         return unsupported(exc.params, safe_reason(str(exc)), _accepts(name))
 
 
-def _days(result: dict[str, Any]) -> int | None:
+def _days(result: dict[str, Any]) -> tuple[int, int] | None:
+    """The fewest and the most days. A move to GA4 today has no exact length with no zone."""
     coverage = result.get("coverage")
     if not coverage:
         return None
-    start, end = (date.fromisoformat(coverage[name]) for name in ("start_date", "end_date"))
-    return (end - start).days + 1
+    at = result.get("cached_at")
+    day = today(datetime.fromisoformat(at) if at else None)
+    return length(coverage["start_date"], coverage["end_date"], day)
+
+
+def _shown(days: tuple[int, int]) -> int | list[int]:
+    return days[0] if days[0] == days[1] else list(days)
+
+
+def _said(days: tuple[int, int]) -> str:
+    return str(days[0]) if days[0] == days[1] else f"{days[0]} to {days[1]}"
 
 
 def _warn_of_unequal_ranges(result: dict[str, Any], other: dict[str, Any]) -> None:
@@ -76,10 +86,13 @@ def _warn_of_unequal_ranges(result: dict[str, Any], other: dict[str, Any]) -> No
     main, comparison = _days(result), _days(other)
     if "date_moved" not in result and "date_moved" not in other:
         return
-    if main is None or comparison is None or main == comparison:
+    if main is None or comparison is None or main == comparison and main[0] == main[1]:
         return
-    result["range_days"] = {"main": main, "comparison": comparison}
-    note = f"The 2 ranges are now {main} and {comparison} days, so delta compares unequal ranges."
+    result["range_days"] = {"main": _shown(main), "comparison": _shown(comparison)}
+    exact = main[0] == main[1] and comparison[0] == comparison[1]
+    can = "compares" if exact else "can compare"
+    lengths = f"{_said(main)} and {_said(comparison)} days"
+    note = f"The 2 ranges are now {lengths}, so delta {can} unequal ranges."
     result["reason"] = " ".join(filter(None, [result["reason"], note]))
 
 
