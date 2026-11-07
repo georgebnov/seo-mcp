@@ -1,5 +1,6 @@
 """An agent sees the quota before it spends, and each answer that spends shows the count."""
 
+import ast
 import asyncio
 import json
 import re
@@ -536,7 +537,27 @@ async def test_a_bad_ga4_reading_does_not_lose_a_paid_answer(live, fake_net):
 
 def test_the_server_needs_no_timezone_data():
     for file in (Path(__file__).parent.parent / "src").rglob("*.py"):
-        assert "zoneinfo" not in file.read_text(), (
+        text = file.read_text()
+        if file.name == "ga4.py":
+            # Only a zone name of a reply needs the table, and that call can fail with no data.
+            tree = ast.parse(text)
+            calls = [
+                function.name
+                for function in ast.walk(tree)
+                if isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef)
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call) and ast.unparse(node.func) == "ZoneInfo"
+            ]
+            everywhere = sum(
+                isinstance(node, ast.Call) and ast.unparse(node.func) == "ZoneInfo"
+                for node in ast.walk(tree)
+            )
+            assert calls == ["_property_zone"] and everywhere == 1, (
+                "ga4.py: call ZoneInfo only in _property_zone: a call at import stops the server "
+                "on a host with no timezone data."
+            )
+            continue
+        assert "zoneinfo" not in text, (
             f"{file.name}: a host with no timezone data cannot start the server. "
             "Use a fixed offset from the docs."
         )

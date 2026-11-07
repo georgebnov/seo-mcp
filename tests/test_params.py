@@ -42,6 +42,16 @@ def body_of(request) -> dict:
     return json.loads(request.content)
 
 
+def reports(calls) -> list[dict]:
+    """The report bodies, without the read that finds the last complete day."""
+    bodies = [body_of(call) for call in api_calls(calls)]
+    return [
+        body
+        for body in bodies
+        if not (body.get("dimensions") == ["date"] and "rowLimit" not in body)
+    ]
+
+
 def gsc_row(keys, clicks=9, impressions=500):
     return {"keys": keys, "clicks": clicks, "impressions": impressions, "ctr": 0.1, "position": 5.0}
 
@@ -183,7 +193,7 @@ async def test_search_console_default_body_is_unchanged(live):
 async def test_ga4_default_body_is_unchanged(live):
     await ask(["ga4_landing_pages"])
     assert body_of(api_calls(live)[0]) == {
-        "dateRanges": [{"startDate": "28daysAgo", "endDate": "yesterday"}],
+        "dateRanges": [{"startDate": "30daysAgo", "endDate": "3daysAgo"}],
         "dimensions": [{"name": "landingPage"}],
         "metrics": [
             {"name": "sessions"},
@@ -217,6 +227,7 @@ async def test_default_result_has_only_the_fields_of_today(live):
         "thin_data",
         "window",
         "totals",
+        "coverage",
         "rows_total",
         "truncated",
         "rows",
@@ -235,7 +246,7 @@ async def test_search_console_filters_reach_rows_and_totals(live):
         page="/a",
         query="best shoes",
     )
-    bodies = [body_of(call) for call in api_calls(live)]
+    bodies = reports(live)
     assert len(bodies) == 2
     for body in bodies:
         assert body["startDate"] == "2026-01-01"
@@ -264,7 +275,7 @@ async def test_last_days_ends_where_the_default_window_ends(live):
     window = data["sources"]["search_pages"]["window"]
     assert window == {"start": days_ago(9), "end": days_ago(3)}
     ga4 = next(call for call in api_calls(live) if call.url.path.endswith(":runReport"))
-    assert body_of(ga4)["dateRanges"] == [{"startDate": "7daysAgo", "endDate": "yesterday"}]
+    assert body_of(ga4)["dateRanges"] == [{"startDate": "9daysAgo", "endDate": "3daysAgo"}]
     assert body_of(ga4)["limit"] == 8
 
 
@@ -280,7 +291,7 @@ async def test_search_console_end_inside_the_lag_says_so(live):
     data = await ask(["search_pages"], start_date=days_ago(10), end_date=days_ago(1))
     result = data["sources"]["search_pages"]
     assert result["incomplete"] is True
-    assert "3 days" in result["reason"]
+    assert "partial" in result["reason"]
 
 
 async def test_no_rows_for_a_filter_is_explained(write_config, fake_net, account):
@@ -449,8 +460,7 @@ async def test_compare_two_pages_on_search_console(live):
     assert result["applied"]["page"] == PAGE
     assert result["comparison"]["applied"]["page"] == OTHER
     expressions = {
-        body_of(call)["dimensionFilterGroups"][0]["filters"][0]["expression"]
-        for call in api_calls(live)
+        body["dimensionFilterGroups"][0]["filters"][0]["expression"] for body in reports(live)
     }
     assert expressions == {PAGE, OTHER}
 

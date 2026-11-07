@@ -1,11 +1,13 @@
 """Google Analytics 4: organic traffic and organic landing pages."""
 
 import json
+import re
 from contextlib import suppress
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from seo_mcp import net, quota, shared
 from seo_mcp.api import Api, Method, Quota, Run, answer, row_limit, whole
@@ -21,8 +23,15 @@ ENDPOINTS = (
     net.Endpoint("POST", HOST, r"/v1beta/properties/\d+:runRealtimeReport"),
     net.Endpoint("GET", HOST, r"/v1beta/properties/\d+/metadata"),
 )
-WINDOW = {"startDate": "28daysAgo", "endDate": "yesterday"}
 WINDOW_DAYS = 28
+# No field of the API marks a day complete. The help page says that processing can take 24-48
+# hours, so the last hit of a day is done at the start of the 3rd day after it. A relative date
+# goes out as text, and GA4 reads it in the property zone, so the hour cannot move the range.
+LAG_DAYS = 3
+ESTIMATE_HOW = (
+    f"{LAG_DAYS} days before today in the property zone: the GA4 help says that processing can "
+    "take 24-48 hours. The API has no field for this."
+)
 THIN_SESSIONS = 100
 MAX_DAILY_ROWS = 100
 PAGE_MATCH = "Sessions that start on this exact path, on every host of the property."
@@ -153,9 +162,8 @@ async def _post(
 def _window(params: Params) -> dict[str, str]:
     if params.start and params.end:
         return {"startDate": params.start.isoformat(), "endDate": params.end.isoformat()}
-    if params.last_days:
-        return {"startDate": f"{params.last_days}daysAgo", "endDate": "yesterday"}
-    return WINDOW
+    days = params.last_days or WINDOW_DAYS
+    return {"startDate": f"{days + LAG_DAYS - 1}daysAgo", "endDate": f"{LAG_DAYS}daysAgo"}
 
 
 def _days(params: Params) -> int:
@@ -173,6 +181,39 @@ def _filter(params: Params) -> dict[str, Any]:
     value = f"{parts.path}?{parts.query}" if parts.query else parts.path
     page = {"fieldName": field, "stringFilter": {"matchType": "EXACT", "value": value}}
     return {"andGroup": {"expressions": [ORGANIC, {"filter": page}]}}
+
+
+def _real_day(text: str, today: date) -> date | None:
+    relative = {"today": 0, "yesterday": 1}.get(text)
+    found = re.fullmatch(r"(\d+)daysAgo", text)
+    if found:
+        relative = int(found[1])
+    if relative is not None:
+        return today - timedelta(days=relative)
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _property_zone(reply: dict[str, Any]) -> tuple[tzinfo, str]:
+    """A host can have no timezone data: the server still answers, and it names UTC."""
+    metadata = reply.get("metadata")
+    name = metadata.get("timeZone") if isinstance(metadata, dict) else None
+    try:
+        return ZoneInfo(str(name)), str(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return UTC, "UTC"
+
+
+def _coverage(reply: dict[str, Any], window: dict[str, Any]) -> dict[str, Any] | None:
+    zone, name = _property_zone(reply)
+    today = _google.today_in(zone)
+    start, end = (_real_day(str(window.get(key)), today) for key in ("startDate", "endDate"))
+    if not start or not end:
+        return None
+    last = today - timedelta(days=LAG_DAYS)
+    return _google.coverage(start, end, last, "estimate", ESTIMATE_HOW, name)
 
 
 async def _report(
@@ -209,7 +250,16 @@ async def _report(
     reason = None if rows else "GA4 reports no organic sessions in the window."
     thin = totals.get("sessions", 0) < THIN_SESSIONS
     extra = {"page_match": PAGE_MATCH} if params.page else {}
-    return ok(rows, thin=thin, reason=reason, limit=limit, window=window, totals=totals, **extra)
+    return ok(
+        rows,
+        thin=thin,
+        reason=reason,
+        limit=limit,
+        window=window,
+        totals=totals,
+        coverage=_coverage(reply, window),
+        **extra,
+    )
 
 
 async def ga4_organic(site: Site, params: Params) -> dict[str, Any]:
@@ -404,6 +454,9 @@ def _reader(call: str, paging: bool, limits: bool = True) -> Run:
         for name in ("totals", "maximums", "minimums"):
             if name in reply:
                 extra[name] = _flat(reply, reply[name])
+        ranges = body.get("dateRanges")
+        if isinstance(ranges, list):
+            extra["coverage"] = [_coverage(reply, item) for item in ranges]
         return answer(rows, more_rows=more, row_count=count, applied=body, **extra)
 
     return run

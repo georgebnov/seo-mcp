@@ -2,7 +2,8 @@
 
 import asyncio
 from collections.abc import Callable
-from datetime import UTC, date, datetime, timedelta
+from contextlib import suppress
+from datetime import date, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -25,8 +26,17 @@ ENDPOINTS = (
     net.Endpoint("POST", HOST, r"/v1/urlInspection/index:inspect", "url-inspection-calls"),
 )
 WINDOW_DAYS = 28
-# Search Console data ends about 3 days before today.
+# The docs say that data is typically available after 2-3 days. A default range ends here, from
+# the clock only: firstIncompleteDate can change during a day, and the range must not.
 LAG_DAYS = 3
+# The docs give the dates of a request "in PST (UTC - 8:00)".
+PST = timezone(timedelta(hours=-8))
+ZONE = "PST (UTC-8)"
+# The docs: a query grouped by date for the past 10 days finds the newest data.
+COVERAGE_DAYS = 10
+API_HOW = "metadata.firstIncompleteDate of Search Console, minus 1 day."
+ESTIMATE_HOW = f"{LAG_DAYS} days before today in {ZONE}, from the docs: data takes 2-3 days."
+ASK_HOW = f"{ESTIMATE_HOW} Send dataState all with the dimension date for the value of the API."
 # The API maximum for 1 call. A sort of fewer rows can miss the real top rows.
 FETCH_ROWS = 25000
 THIN_IMPRESSIONS = 100
@@ -44,10 +54,18 @@ REPORT = shared.documented("rows", "responseAggregationType", "metadata")
 SITEMAP_LIST = shared.documented("sitemap")
 
 
+def _today() -> date:
+    return _google.today_in(PST)
+
+
+def _fixed_end() -> date:
+    return _today() - timedelta(days=LAG_DAYS)
+
+
 def _window(params: Params) -> dict[str, str]:
     if params.start and params.end:
         return {"start": params.start.isoformat(), "end": params.end.isoformat()}
-    end = datetime.now(UTC).date() - timedelta(days=LAG_DAYS)
+    end = _fixed_end()
     start = end - timedelta(days=(params.last_days or WINDOW_DAYS) - 1)
     return {"start": start.isoformat(), "end": end.isoformat()}
 
@@ -59,13 +77,16 @@ def _oldest_day(today: date) -> date:
 
 def _gaps(params: Params) -> list[str]:
     """Name the days of a custom range that Search Console cannot have."""
-    today = datetime.now(UTC).date()
-    gaps = []
-    if params.start and params.start < _oldest_day(today):
-        gaps.append(f"Search Console keeps {HISTORY_MONTHS} months, so older days have no data.")
-    if params.end and params.end > today - timedelta(days=LAG_DAYS):
-        gaps.append(f"Search Console data ends about {LAG_DAYS} days before today.")
-    return gaps
+    if params.start and params.start < _oldest_day(_today()):
+        return [f"Search Console keeps {HISTORY_MONTHS} months, so older days have no data."]
+    return []
+
+
+def _partial_note(coverage: dict[str, Any]) -> list[str]:
+    days = coverage["partial_days"]
+    if not days:
+        return []
+    return [f"{days['from']} to {days['to']} are partial: they can change and are not a drop."]
 
 
 def _filters(params: Params) -> dict[str, Any]:
@@ -95,19 +116,28 @@ async def _rows(
         "dimensions": dimensions,
         "rowLimit": FETCH_ROWS,
         **_filters(params),
+        **({"dataState": "all"} if _state(window) == "all" else {}),
     }
-    return await _analytics(site, body, headers)
+    return _flat(body, await _analytics(site, body, headers))
+
+
+def _state(window: dict[str, str]) -> str:
+    """A range past the fixed end asks for fresh data: final data would drop those days."""
+    return "all" if window["end"] > _fixed_end().isoformat() else "final"
 
 
 async def _analytics(
     site: Site, body: dict[str, Any], headers: dict[str, str], *, explain: bool = False
-) -> Rows:
+) -> Any:
     prop = quote(site.field("gsc_property"), safe="")
-    dimensions = body.get("dimensions", [])
     url = f"{SITES_API}/{prop}/searchAnalytics/query"
-    reply = await shared.request(
+    return await shared.request(
         site, ENDPOINTS, "POST", url, json=body, headers=headers, explain=explain, good=REPORT
     )
+
+
+def _flat(body: dict[str, Any], reply: Any) -> Rows:
+    dimensions = body.get("dimensions", [])
     return [
         {
             **dict(zip(dimensions, row.get("keys", []), strict=True)),
@@ -118,6 +148,44 @@ async def _analytics(
         }
         for row in reply.get("rows", [])
     ]
+
+
+def _reported(reply: Any) -> date | None:
+    """The docs give this field only for dataState all, grouped by date or by hour."""
+    metadata = reply.get("metadata")
+    found = metadata if isinstance(metadata, dict) else {}
+    text = found.get("firstIncompleteDate") or found.get("firstIncompleteHour")
+    if not isinstance(text, str):
+        return None
+    try:
+        return date.fromisoformat(text[:10]) - timedelta(days=1)
+    except ValueError:
+        return None
+
+
+async def _last_complete(site: Site, headers: dict[str, str]) -> tuple[date, str, str]:
+    """The docs give no other way: a report of final data has no metadata of its days.
+
+    The body changes only with the day, so all sources and agents of a site share this read.
+    The report stays good without it.
+    """
+    today = _today()
+    body = {
+        "startDate": (today - timedelta(days=COVERAGE_DAYS)).isoformat(),
+        "endDate": today.isoformat(),
+        "dimensions": ["date"],
+        "dataState": "all",
+    }
+    with suppress(net.ApiError):
+        last = _reported(await _analytics(site, body, headers))
+        if last:
+            return last, "api", API_HOW
+    return _fixed_end(), "estimate", ESTIMATE_HOW
+
+
+def _coverage(window: dict[str, str], known: tuple[date, str, str], state: str) -> dict[str, Any]:
+    start, end = date.fromisoformat(window["start"]), date.fromisoformat(window["end"])
+    return _google.coverage(start, end, *known, ZONE, data_state=state)
 
 
 def _by_traffic(row: dict[str, Any]) -> tuple[int, int]:
@@ -132,15 +200,17 @@ async def _report(
 ) -> dict[str, Any]:
     headers = await _headers(site)
     window = _window(params)
-    rows, totals = await asyncio.gather(
+    rows, totals, known = await asyncio.gather(
         _rows(site, dimensions, headers, window, params),
         _rows(site, [], headers, window, params),
+        _last_complete(site, headers),
     )
     total = totals[0] if totals else {"clicks": 0, "impressions": 0}
     # Search Console hides rare queries, so the rows can sum to far less than the total.
     seen = min(total["impressions"], sum(row["impressions"] for row in rows))
     rows = keep(rows) if keep else sorted(rows, key=_by_traffic, reverse=True)
-    gaps = _gaps(params)
+    coverage = _coverage(window, known, _state(window))
+    gaps = _gaps(params) + _partial_note(coverage)
     notes = gaps + ([MISS_REASON] if not rows and (params.page or params.query) else [])
     return ok(
         rows,
@@ -148,6 +218,7 @@ async def _report(
         reason=" ".join(notes) or None,
         window=window,
         totals=total,
+        coverage=coverage,
         **({"incomplete": True} if gaps else {}),
     )
 
@@ -336,13 +407,20 @@ async def _search_analytics(site: Site, request: dict[str, Any]) -> dict[str, An
     whole("startRow", request.get("startRow", 0), 0, 2**31 - 1)
     limit = row_limit("rowLimit", request.get("rowLimit"), "startRow")
     body = {**request, "rowLimit": limit}
-    rows = await _analytics(site, body, await _headers(site), explain=True)
-    gaps = _gaps(Params(start, end))
+    reply = await _analytics(site, body, await _headers(site), explain=True)
+    rows = _flat(body, reply)
+    # 1 method sends 1 query, so the value comes only from this reply.
+    last = _reported(reply)
+    known = (last or _fixed_end(), "api" if last else "estimate", API_HOW if last else ASK_HOW)
+    window = {"start": request["startDate"], "end": request["endDate"]}
+    coverage = _coverage(window, known, str(request.get("dataState", "final")))
+    gaps = _gaps(Params(start, end)) + _partial_note(coverage)
     return answer(
         rows,
         more_rows="possible" if len(rows) == limit else "no",
         reason=" ".join(gaps) or None,
         applied=body,
+        coverage=coverage,
         **({"incomplete": True} if gaps else {}),
     )
 
