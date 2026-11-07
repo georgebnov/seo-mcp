@@ -191,6 +191,19 @@ def _show_inspections(site: Site) -> str:
     return key
 
 
+def _index_status(reply: Any) -> dict[str, Any]:
+    """Read the status inside the failure path of _inspect: this call is already spent.
+
+    Any other exception would pass shared.once with no failure window, and it would end the
+    gather of the batch with other inspections in flight.
+    """
+    result = reply.get("inspectionResult", {}) if isinstance(reply, dict) else None
+    status = result.get("indexStatusResult", {}) if isinstance(result, dict) else None
+    if not isinstance(status, dict):
+        raise net.ApiError(200, net.BAD_SHAPE)
+    return status
+
+
 async def _inspect(
     site: Site, url: str, headers: dict[str, str], spent: net.Receipt
 ) -> dict[str, Any]:
@@ -199,9 +212,9 @@ async def _inspect(
         reply = await net.request(
             ENDPOINTS, "POST", INSPECT_API, json=body, headers=headers, spent=spent
         )
+        status = _index_status(reply)
     except net.ApiError as exc:
-        return {"url": url, "error": str(exc), "failure": exc}
-    status = reply.get("inspectionResult", {}).get("indexStatusResult", {})
+        return {"url": url, "error": exc.detail or str(exc), "failure": exc}
     return {
         "url": url,
         "verdict": status.get("verdict"),
