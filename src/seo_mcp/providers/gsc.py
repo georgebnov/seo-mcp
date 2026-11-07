@@ -230,7 +230,7 @@ async def index_status(site: Site, params: Params) -> dict[str, Any]:
         found = list(await asyncio.gather(*(_inspect(site, url, headers, spent) for url in urls)))
         failures = [row.pop("failure") for row in found if "failure" in row]
         if len(failures) == len(found):
-            # 1 sent request of the batch is enough to keep the failure window.
+            # The batch spent, so it keeps the failure window. A sent failure says more.
             raise next((failure for failure in failures if failure.sent), failures[0])
         return {"rows": found}
 

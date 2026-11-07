@@ -23,8 +23,9 @@ from seo_mcp.secrets import safe_reason, scrub
 ANSWER_SECONDS = 300
 # A realtime report changes each minute, so a repeat gets only the burst of 1 audit step.
 REALTIME_SECONDS = 30
-# A failed call can count at the API, so the same request waits this long. This stops a burst
-# of agents. It does not protect a day: a long outage still spends 1 call in each window.
+# A failed call can count at the API or in a ledger, so the same request waits this long. This
+# stops a burst of agents. It does not protect a day: a long outage still spends 1 call in each
+# window. A read with no ledger retries a connection failure at once: that try costs nothing.
 FAILURE_WINDOW_SECONDS = 60
 PRUNE_SECONDS = 3600
 PRUNE_BATCH = 100
@@ -173,9 +174,9 @@ async def once(
 ) -> Any:
     """Give the saved answer, the failure of the window, or the answer of 1 live call.
 
-    prepare runs before the request, for example to spend from a ledger: a repeat spends
-    nothing, and a saved answer still serves at the limit. send is the only step that can have
-    reached the API.
+    prepare runs before the request, and it is the only step that spends from a ledger: a
+    repeat spends nothing, and a saved answer still serves at the limit. send is the only step
+    that can have reached the API. Each failure of a spent call starts the failure window.
     """
     async with _only_sender(path):
         saved = _saved(path, good, until)
@@ -191,7 +192,7 @@ async def once(
             if not good(reply):
                 raise net.ApiError(200, net.BAD_SHAPE)
         except net.ApiError as exc:
-            if exc.sent:
+            if exc.sent or prepare is not _nothing:
                 _mark_failure(path, exc.status, exc.detail)
             raise
         except asyncio.CancelledError:

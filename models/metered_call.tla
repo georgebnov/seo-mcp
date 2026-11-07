@@ -6,7 +6,7 @@ CONSTANT Limit
 VARIABLES pc, api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt
 vars == <<pc, api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
 
-Ends == {"hit", "repeated", "badAnswer", "busy", "notConnected", "refused", "stored", "failed", "dayBlocked"}
+Ends == {"hit", "repeated", "badAnswer", "busy", "notConnected", "refused", "stored", "failed", "notSent", "dayBlocked"}
 
 Init ==
   /\ pc = "start"
@@ -63,7 +63,10 @@ Send ==
   /\ pc = "reserved" /\ receipt
   /\ pc' = "flight" /\ sent' = sent + 1
   /\ UNCHANGED <<api, cache, ledger, blocked, count, count0, sent0, blocked0, receipt>>
-ConnectFails == pc = "reserved" /\ pc' = "failed" /\ Same
+\* shared.once: the call counts, no request went out, and the failure window starts.
+ConnectFails ==
+  /\ pc = "reserved" /\ pc' = "notSent" /\ cache' = "failedInWindow"
+  /\ UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
 
 Answer ==
   /\ pc = "flight" /\ pc' = "stored" /\ cache' = "today"
@@ -95,6 +98,9 @@ Spec == Init /\ [][Next]_vars
 CacheHitSpendsNothing == pc = "hit" => (count = count0 /\ sent = sent0)
 \* A repeat of a failed request inside the window spends nothing.
 RepeatInWindowSpendsNothing == pc = "repeated" => (count = count0 /\ sent = sent0)
+\* A connection failure counts 1 time, sends nothing, and starts the failure window.
+ConnectionFailureKeepsTheWindow ==
+  pc = "notSent" => (count = count0 + 1 /\ sent = sent0 /\ cache = "failedInWindow")
 \* A ledger that a stuck process holds sends nothing and spends nothing.
 BusyLedgerSendsNothing == pc = "busy" => (count = count0 /\ sent = sent0)
 \* A bad HTTP 200 answer is never saved.

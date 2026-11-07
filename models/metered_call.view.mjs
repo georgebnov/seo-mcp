@@ -12,18 +12,12 @@ const names = {
   reserved: "1 call is reserved in the ledger",
   flight: "The request is on the network",
   stored: "The answer is saved for the UTC day and goes back",
-  failed: "The call failed, and the reserved call stays counted",
+  failed: "The call failed after the request went out, and it stays counted",
+  notSent: "No request went out, the reserved call stays counted, and the failure window starts",
   dayBlocked: "The day is blocked until the next UTC day",
 };
 export const title = "1 metered Clarity call";
-export const state = (v) => {
-  if (v.pc === "failed") {
-    return v.sent > v.sent0
-      ? "The call failed after the request went out, and it stays counted"
-      : "No request went out, and the reserved call stays counted";
-  }
-  return names[v.pc];
-};
+export const state = (v) => names[v.pc];
 const labels = {
   TakeLock: "the call takes the fetch lock",
   CacheHit: "a saved answer of today exists",
@@ -56,7 +50,7 @@ const phases = {
   start: "Start", lock: "Saved answer", hit: "Saved answer", repeated: "Saved answer",
   token: "Ledger", ledger: "Ledger", notConnected: "Stop", refused: "Stop", busy: "Stop",
   reserved: "Spend", flight: "Spend",
-  stored: "Answer", failed: "Stop", badAnswer: "Stop", dayBlocked: "Stop",
+  stored: "Answer", failed: "Stop", notSent: "Stop", badAnswer: "Stop", dayBlocked: "Stop",
 };
 export const group = (v) => phases[v.pc];
 export const colors = { Start: "blue", "Saved answer": "teal", Ledger: "yellow", Spend: "orange", Stop: "pink", Answer: "purple" };

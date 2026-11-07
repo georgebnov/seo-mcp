@@ -3,8 +3,9 @@
 \* The steps between the lock and the send have no await, so 1 step holds them.
 EXTENDS Naturals
 CONSTANT Limit
-VARIABLES pc, lock, cache, blocked, count, sent, firstOk, sentAfterBlock, failed, spentInWindow
-vars == <<pc, lock, cache, blocked, count, sent, firstOk, sentAfterBlock, failed, spentInWindow>>
+\* failed is the file of the failure. hadFailure is what happened, with or without that file.
+VARIABLES pc, lock, cache, blocked, count, sent, firstOk, sentAfterBlock, failed, hadFailure, spentInWindow
+vars == <<pc, lock, cache, blocked, count, sent, firstOk, sentAfterBlock, failed, hadFailure, spentInWindow>>
 Callers == {1, 2}
 Ends == {"hit", "answered", "refused", "failed", "notSent", "repeated", "dayBlocked", "timedOut"}
 
@@ -12,9 +13,9 @@ Init ==
   /\ pc = [c \in Callers |-> "waiting"]
   /\ lock = 0 /\ cache = "cold" /\ blocked = FALSE
   /\ count = 0 /\ sent = 0 /\ firstOk = FALSE /\ sentAfterBlock = FALSE
-  /\ failed = FALSE /\ spentInWindow = FALSE
+  /\ failed = FALSE /\ hadFailure = FALSE /\ spentInWindow = FALSE
 
-Keep == UNCHANGED <<failed, spentInWindow>>
+Keep == UNCHANGED <<failed, hadFailure, spentInWindow>>
 
 TakeLockHit(c) ==
   /\ pc[c] = "waiting" /\ lock = 0 /\ cache = "saved"
@@ -36,16 +37,16 @@ TakeLockSend(c) ==
   /\ pc' = [pc EXCEPT ![c] = "flight"]
   /\ lock' = c /\ count' = count + 1 /\ sent' = sent + 1
   /\ sentAfterBlock' = (sentAfterBlock \/ blocked)
-  /\ spentInWindow' = (spentInWindow \/ failed)
-  /\ UNCHANGED <<cache, blocked, firstOk, failed>>
-\* The connection did not open: the call counts, no request went out, and no failure is kept.
+  /\ spentInWindow' = (spentInWindow \/ hadFailure)
+  /\ UNCHANGED <<cache, blocked, firstOk, failed, hadFailure>>
+\* The connection did not open: the call counts, no request went out, and the failure is kept.
 TakeLockNotSent(c) ==
   /\ pc[c] = "waiting" /\ lock = 0 /\ cache = "cold" /\ ~failed
   /\ ~blocked /\ count + 1 <= Limit
   /\ pc' = [pc EXCEPT ![c] = "notSent"]
-  /\ count' = count + 1
-  /\ spentInWindow' = (spentInWindow \/ failed)
-  /\ UNCHANGED <<lock, cache, blocked, sent, firstOk, sentAfterBlock, failed>>
+  /\ count' = count + 1 /\ failed' = TRUE /\ hadFailure' = TRUE
+  /\ spentInWindow' = (spentInWindow \/ hadFailure)
+  /\ UNCHANGED <<lock, cache, blocked, sent, firstOk, sentAfterBlock>>
 WaitTimesOut(c) ==
   /\ pc[c] = "waiting"
   /\ pc' = [pc EXCEPT ![c] = "timedOut"]
@@ -58,12 +59,12 @@ Answer(c) ==
 Fails(c) ==
   /\ pc[c] = "flight"
   /\ pc' = [pc EXCEPT ![c] = "failed"]
-  /\ lock' = 0 /\ failed' = TRUE
+  /\ lock' = 0 /\ failed' = TRUE /\ hadFailure' = TRUE
   /\ UNCHANGED <<cache, blocked, count, sent, firstOk, sentAfterBlock, spentInWindow>>
 Limit429(c) ==
   /\ pc[c] = "flight"
   /\ pc' = [pc EXCEPT ![c] = "dayBlocked"]
-  /\ lock' = 0 /\ blocked' = TRUE /\ failed' = TRUE
+  /\ lock' = 0 /\ blocked' = TRUE /\ failed' = TRUE /\ hadFailure' = TRUE
   /\ UNCHANGED <<cache, count, sent, firstOk, sentAfterBlock, spentInWindow>>
 
 Done == (\A c \in Callers: pc[c] \in Ends) /\ UNCHANGED vars
@@ -87,6 +88,6 @@ CountNeverBelowRequestsSent == count >= sent
 NeverPastTheLimit == sent <= Limit
 \* After the daily limit answer, no caller sends again on that day.
 NoSendAfterTheLimitAnswer == ~sentAfterBlock
-\* A repeat of a failed request inside the window spends nothing.
+\* A repeat of a failed request inside the window spends nothing, also after a connection failure.
 RepeatInWindowSpendsNothing == ~spentInWindow
 ====

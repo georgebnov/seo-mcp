@@ -8,9 +8,19 @@ import httpx2
 import pytest
 
 from seo_mcp import core, net, quota, shared
-from seo_mcp.providers import clarity
-from test_query_api import HOST
-from test_quota import DASHBOARD, INSIGHTS, RECORDINGS, metered_requests, replies, run, set_ledger
+from seo_mcp.providers import clarity, gsc
+from test_query_api import HOST, SITE
+from test_quota import (
+    DASHBOARD,
+    INSIGHTS,
+    INSPECT,
+    RECORDINGS,
+    metered_requests,
+    replies,
+    run,
+    sent,
+    set_ledger,
+)
 
 
 def count():
@@ -29,6 +39,14 @@ def mark_file():
 def clarity_fails(fake_net, status=500):
     def reply(request):
         return httpx2.Response(status) if "clarity" in request.url.host else None
+
+    return fake_net(replies(reply))
+
+
+def connection_fails(fake_net, host):
+    def reply(request):
+        if host in request.url.host:
+            raise httpx2.ConnectError("no route")
 
     return fake_net(replies(reply))
 
@@ -64,7 +82,13 @@ async def two_callers(first_reply):
 
 
 @pytest.mark.parametrize(
-    "first", [httpx2.Response(500), httpx2.Response(429), httpx2.ReadTimeout("slow")]
+    "first",
+    [
+        httpx2.Response(500),
+        httpx2.Response(429),
+        httpx2.ReadTimeout("slow"),
+        httpx2.ConnectError("no route"),
+    ],
 )
 async def test_a_waiter_shares_the_failure_and_spends_nothing(live, first):
     one, two, gate = await two_callers(first)
@@ -77,14 +101,66 @@ async def test_a_waiter_shares_the_failure_and_spends_nothing(live, first):
     assert second["calls_used_today"] == 1
 
 
-async def test_a_connection_that_did_not_open_allows_a_retry(live):
-    one, two, gate = await two_callers(httpx2.ConnectError("no route"))
-    assert (await one)["status"] == "error"
-    again = await asyncio.wait_for(gate.entered.get(), 5)
-    again.set_result(httpx2.Response(200, json={"data": []}))
-    assert (await two)["status"] == "ok"
+@pytest.mark.parametrize("call", [INSIGHTS, RECORDINGS, DASHBOARD])
+async def test_a_repeat_of_a_connection_failure_spends_nothing(live, fake_net, call):
+    calls = connection_fails(fake_net, "clarity")
+    first = await run("clarity", call)
+    second = await run("clarity", call)
+    assert first["reason"].startswith("The connection failed.")
+    assert "did not send it again" not in first["reason"]
+    assert second["reason"].startswith("The connection failed.")
+    assert "did not send it again" in second["reason"]
+    assert len(metered_requests(calls)) == 1
+    assert count() == second["calls_used_today"] == 1
+
+
+async def test_a_repeat_of_a_failed_url_inspection_spends_nothing(live, fake_net):
+    calls = connection_fails(fake_net, "searchconsole")
+    await run("search_console", INSPECT)
+    second = await run("search_console", INSPECT)
+    assert "did not send it again" in second["reason"]
+    assert len(sent(calls)) == 1
+    assert quota.view(gsc.LEDGER, SITE["gsc_property"])["calls_used_today"] == 1
+
+
+async def test_a_repeat_of_a_failed_batch_spends_nothing(live, fake_net):
+    def reply(request):
+        if request.url.path.endswith("index:inspect"):
+            raise httpx2.ConnectError("no route")
+
+    calls = fake_net(replies(reply))
+    first = (await core.get_seo_data(HOST, ["index_status"]))["sources"]["index_status"]
+    tries = len(sent(calls))
+    second = (await core.get_seo_data(HOST, ["index_status"]))["sources"]["index_status"]
+    assert first["calls_used_today"] > 1
+    assert "did not send it again" in second["reason"]
+    assert second["calls_used_today"] == first["calls_used_today"]
+    assert len(sent(calls)) == tries
+
+
+async def test_a_connection_failure_counts_again_only_after_the_window(live, fake_net):
+    calls = connection_fails(fake_net, "clarity")
+    await run("clarity", DASHBOARD)
+    age_failure(shared.FAILURE_WINDOW_SECONDS)
+    await run("clarity", DASHBOARD)
+    assert len(metered_requests(calls)) == 2
     assert count() == 2
-    assert not mark_file().exists()
+
+
+async def test_another_request_is_not_stopped_by_a_connection_failure(live, fake_net):
+    calls = connection_fails(fake_net, "clarity")
+    await run("clarity", DASHBOARD)
+    await run("clarity", ("dashboard_query", {"query": "another question"}))
+    assert len(metered_requests(calls)) == 2
+    assert count() == 2
+
+
+async def test_a_read_with_no_ledger_retries_a_connection_failure_at_once(live, fake_net):
+    calls = connection_fails(fake_net, "googleapis.com")
+    await core.get_seo_data(HOST, ["page_speed"])
+    second = (await core.get_seo_data(HOST, ["page_speed"]))["sources"]["page_speed"]
+    assert second["reason"] == "The connection failed."
+    assert len(calls) == 2
 
 
 @pytest.mark.parametrize("call", [INSIGHTS, RECORDINGS, DASHBOARD])
