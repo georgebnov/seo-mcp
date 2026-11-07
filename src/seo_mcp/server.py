@@ -87,15 +87,20 @@ async def get_seo_data(
 
 QUERY_API = f"""Send 1 official read query of 1 API, for a question that get_seo_data cannot ask.
 
+The APIs are:
+{core.describe_apis()}
+
+Call it with api and no method to list the fields, the valid values, the docs, and what the API
+does not give. For GA4, the method metadata lists the live dimensions and metrics of the
+property.
+
 To find how to get a thing, call it with only task, for example task="dead clicks". The result
 gives the exact calls to make for each provider, with real dates, how to read the answer, and
 what the answer means. It makes no network call and sends no query. Fill each mark in angle
 brackets, then make the calls. The tasks are:
 {tasks.describe()}
 
-Call it with no api to list the APIs and methods. Call it with api and no method to list the
-fields, the valid values, the docs, and what the API does not give. For GA4, the method
-metadata lists the live dimensions and metrics of the property.
+Call it with no api to list the methods and the quota of each API.
 request is the official JSON of the method. The server fills the site, the property, and the
 key: do not send them. A field that the method does not have is an error, never dropped.
 A row limit is at most 1000: read more rows with startRow or offset. more_rows is yes, no, or

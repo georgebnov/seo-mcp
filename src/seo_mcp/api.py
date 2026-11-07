@@ -31,6 +31,7 @@ class Quota(NamedTuple):
 
 class Api(NamedTuple):
     title: str
+    summary: str
     docs: str
     methods: dict[str, Method]
     options: dict[str, Any]

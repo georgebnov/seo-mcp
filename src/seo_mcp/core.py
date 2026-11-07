@@ -170,6 +170,11 @@ def describe_sources() -> str:
     return "\n".join(lines)
 
 
+def describe_apis() -> str:
+    """Build the list for the tool description from APIS, so that it cannot drift."""
+    return "\n".join(f"- {name}: {entry.summary}" for name, entry in providers.APIS.items())
+
+
 def _connected(entry: full_api.Api, site: Site) -> bool:
     return entry.quota.needs <= set(site.fields) | set(site.secrets)
 

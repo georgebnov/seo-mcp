@@ -207,6 +207,7 @@ CRUX_FIELDS = frozenset({"origin", "url", "formFactor", "metrics"})
 APIS = {
     "pagespeed": Api(
         title="PageSpeed Insights",
+        summary="A live Lighthouse lab test of 1 page, on mobile or desktop.",
         docs="https://developers.google.com/speed/docs/insights/rest/v5/pagespeedapi/runpagespeed",
         quota=Quota(
             "https://developers.google.com/speed/docs/insights/v5/get-started",
@@ -231,6 +232,7 @@ APIS = {
     ),
     "crux": Api(
         title="Chrome UX Report",
+        summary="Speed that real Chrome users see, for a page or a site, with history.",
         docs="https://developer.chrome.com/docs/crux/api",
         quota=Quota(
             "https://developer.chrome.com/docs/crux/api",

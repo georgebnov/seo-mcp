@@ -113,6 +113,7 @@ def _reader(name: str) -> Run:
 APIS = {
     "bing": Api(
         title="Bing Webmaster Tools",
+        summary="Bing search traffic, inbound links, and crawl data.",
         docs="https://learn.microsoft.com/en-us/dotnet/api/microsoft.bing.webmaster.api.interfaces.iwebmasterapi",
         quota=Quota(
             "https://learn.microsoft.com/en-us/bingwebmaster/getting-access",

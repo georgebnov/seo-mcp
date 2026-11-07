@@ -323,6 +323,7 @@ def now(site: Site) -> dict[str, Any]:
 APIS = {
     "ga4": Api(
         title="Google Analytics 4 Data API",
+        summary="Visits, events, and conversions on the site, also in real time.",
         docs="https://developers.google.com/analytics/devguides/reporting/data/v1/rest",
         quota=Quota(
             "https://developers.google.com/analytics/devguides/reporting/data/v1/quotas",
