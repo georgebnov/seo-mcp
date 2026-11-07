@@ -265,7 +265,8 @@ async def test_a_repeat_of_a_ga4_report_does_not_count_its_tokens_twice(live, fa
     def reply(request):
         if request.url.path.endswith(":runReport"):
             usage = {"tokensPerDay": {"consumed": 12, "remaining": 100}}
-            return httpx2.Response(200, json={"rows": [], "propertyQuota": usage})
+            body = {"rows": [], "propertyQuota": usage, "kind": "analyticsData#runReport"}
+            return httpx2.Response(200, json=body)
         return None
 
     fake_net(replies(reply))

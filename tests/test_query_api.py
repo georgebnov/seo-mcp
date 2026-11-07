@@ -39,6 +39,11 @@ def report(extra=None):
     }
 
 
+def ga4_kind(request):
+    """The docs: kind is always analyticsData# and the name of the method."""
+    return {"kind": f"analyticsData#{request.url.path.rsplit(':', 1)[-1]}"}
+
+
 def answer(request):
     host, path = request.url.host, request.url.path
     if host == "oauth2.googleapis.com":
@@ -63,7 +68,7 @@ def answer(request):
             },
         )
     if path.endswith(("runReport", "runPivotReport", "runRealtimeReport")):
-        return httpx2.Response(200, json=report())
+        return httpx2.Response(200, json=report(ga4_kind(request)))
     if path.endswith("runPagespeed"):
         audits = {"lcp": {"title": "LCP", "score": 0.9, "numericValue": 1, "details": {"x": 1}}}
         lighthouse = {"categories": {"seo": {"score": 1}}, "audits": audits, "fetchTime": "t"}

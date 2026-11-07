@@ -199,8 +199,16 @@ def _crux_reader(endpoint: str, periods: str) -> Run:
             whole("collectionPeriodCount", request["collectionPeriodCount"], 1, MAX_PERIODS)
         headers = _key_header(site.secret("google_api_key"))
         try:
+            # The docs: each successful reply of both methods holds a record object.
             reply = await shared.request(
-                site, ENDPOINTS, "POST", endpoint, json=body, headers=headers, explain=True
+                site,
+                ENDPOINTS,
+                "POST",
+                endpoint,
+                json=body,
+                headers=headers,
+                explain=True,
+                good=shared.holds("record"),
             )
         except net.ApiError as exc:
             if exc.status == 404:

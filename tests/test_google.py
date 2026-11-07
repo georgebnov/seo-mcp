@@ -151,6 +151,9 @@ async def test_index_status_all_failed_is_an_error(write_config, fake_net, accou
     assert (await get("index_status"))["status"] == "error"
 
 
+KIND = {"kind": "analyticsData#runReport"}
+
+
 def report(body):
     dimension = body["dimensions"][0]["name"]
     assert body["dimensionFilter"]["filter"]["stringFilter"]["value"] == "Organic Search"
@@ -168,6 +171,7 @@ def report(body):
                 for value in values
             ],
             "totals": [{"metricValues": [{"value": "300"}, {"value": "12"}]}],
+            "kind": "analyticsData#runReport",
         },
     )
 
@@ -191,7 +195,11 @@ async def test_ga4_landing_pages(write_config, fake_net, account):
 async def test_ga4_empty_report_is_thin(write_config, fake_net, account):
     write_config(SITE, account)
     fake_net(
-        api(ga4=lambda _: httpx2.Response(200, json={"metricHeaders": [{"name": "sessions"}]}))
+        api(
+            ga4=lambda _: httpx2.Response(
+                200, json={"metricHeaders": [{"name": "sessions"}], **KIND}
+            )
+        )
     )
     result = await get("ga4_organic")
     assert result["status"] == "ok"

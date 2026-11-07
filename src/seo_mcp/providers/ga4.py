@@ -56,6 +56,11 @@ COUNTED = (
     "of this machine, through this cache folder."
 )
 NO_READING = "The server has no reading since the last reset: the next GA4 report gives one."
+# The docs: kind "is always the fixed string" of the method. A real empty report has no rows,
+# so only kind tells it from a reply such as {"message": "try later"}.
+REPORT = shared.holds("kind")
+# The docs list these fields of the Metadata resource and do not say that 1 is always there.
+METADATA = shared.documented("name", "dimensions", "metrics", "comparisons")
 
 
 def reading_path(prop: str, pool: str) -> Path:
@@ -156,7 +161,7 @@ async def _post(
 
     keep = shared.REALTIME_SECONDS if pool == "realtime" else shared.ANSWER_SECONDS
     path = shared.entry(site, "POST", url, body, explain)
-    return await shared.once(path, send, until=shared.after(keep))
+    return await shared.once(path, send, good=REPORT, until=shared.after(keep))
 
 
 def _day(text: Any) -> date | None:
@@ -532,7 +537,9 @@ async def _metadata(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     token = await _google.token(site, _google.GA4_SCOPE)
     url = f"https://{HOST}/v1beta/properties/{prop}/metadata"
     headers = {"Authorization": f"Bearer {token}"}
-    reply = await shared.request(site, ENDPOINTS, "GET", url, headers=headers, explain=True)
+    reply = await shared.request(
+        site, ENDPOINTS, "GET", url, headers=headers, explain=True, good=METADATA
+    )
 
     def brief(kind: str, item: dict[str, Any]) -> dict[str, Any]:
         row = {"kind": kind, "apiName": item.get("apiName")}
