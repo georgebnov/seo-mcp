@@ -26,11 +26,13 @@ MORNING = datetime(2026, 3, 18, 1, 0, tzinfo=PACIFIC)
 NIGHT = datetime(2026, 3, 18, 23, 0, tzinfo=PACIFIC)
 # Each 3rd hour of 2 UTC days: each zone of the world crosses its midnight in this time.
 HOURS = [datetime(2026, 3, 17, tzinfo=UTC) + timedelta(hours=hour) for hour in range(0, 48, 3)]
-# The UTC date of MORNING is 2026-03-18. A Search Console day ends 3 days later in PST, and the
-# estimate takes 1 more day, because a PST day can be 1 day behind the UTC date.
+# The UTC date of MORNING is 2026-03-18. A Search Console day ends 3 days later in PT, and the
+# estimate takes 1 more day, because a PT day can be 1 day behind the UTC date.
 ESTIMATE = "2026-03-14"
 FIXED_END = "2026-03-15"
 QUERY = "/searchAnalytics/query"
+# The docs give a Search Console date "in PT time (UTC - 7:00/8:00)".
+PACIFIC_TIMES = [timezone(timedelta(hours=-7)), timezone(timedelta(hours=-8))]
 
 
 def freeze(monkeypatch, moment):
@@ -224,12 +226,12 @@ async def test_the_search_console_estimate_is_complete_in_pst_at_each_hour(
     live, fake_net, monkeypatch
 ):
     search_console(fake_net)
-    pst = timezone(timedelta(hours=-8))
     for moment in HOURS:
         freeze(monkeypatch, moment)
         coverage = (await source("search_queries"))["coverage"]
-        newest_complete = moment.astimezone(pst).date() - timedelta(days=gsc.LAG_DAYS)
-        assert date.fromisoformat(coverage["last_complete_day"]) <= newest_complete, moment
+        for pacific in PACIFIC_TIMES:
+            newest_complete = moment.astimezone(pacific).date() - timedelta(days=gsc.LAG_DAYS)
+            assert date.fromisoformat(coverage["last_complete_day"]) <= newest_complete, moment
 
 
 async def test_a_saved_search_console_report_keeps_its_estimate_across_midnight(
@@ -410,19 +412,20 @@ async def test_a_search_console_end_past_today_moves_to_today(live, fake_net, mo
 
 
 def test_a_valid_search_console_day_never_moves_at_any_hour(monkeypatch):
-    pst = timezone(timedelta(hours=-8))
     for moment in HOURS:
         freeze(monkeypatch, moment)
-        today = moment.astimezone(pst).date()
-        for start in (today - timedelta(days=5), today):
-            for end in (today - timedelta(days=1), today, today + timedelta(days=2)):
-                if start > end:
-                    continue
-                sent = gsc._newest_end("start_date", start, end)
-                assert sent >= min(end, today), (moment, start, end, sent)
-                assert sent >= start, (moment, start, end, sent)
-                if end <= today:
-                    assert sent == end, (moment, start, end, sent)
+        for pacific in PACIFIC_TIMES:
+            today = moment.astimezone(pacific).date()
+            for start in (today - timedelta(days=5), today):
+                for end in (today - timedelta(days=1), today, today + timedelta(days=2)):
+                    if start > end:
+                        continue
+                    sent = gsc._newest_end("start_date", start, end)
+                    case = (moment, pacific, start, end, sent)
+                    assert sent >= min(end, today), case
+                    assert sent >= start, case
+                    if end <= today:
+                        assert sent == end, case
 
 
 async def test_an_end_inside_the_source_days_does_not_move(live, fake_net, monkeypatch):

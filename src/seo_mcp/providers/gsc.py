@@ -42,9 +42,9 @@ WINDOW_DAYS = 28
 # The docs say that data is typically available after 2-3 days. A default range ends on the
 # last complete day that the API gives, and on this estimate only when the API gives none.
 LAG_DAYS = 3
-# The docs give the dates of a request "in PST (UTC - 8:00)". The server reads no zone: a PST
-# day is never after the UTC date, so the UTC date is the newest day that can have data.
-ZONE = "PST (UTC-8)"
+# The docs give the dates of a request "in PT time (UTC - 7:00/8:00)". The server reads no zone:
+# a PT day is never after the UTC date, so the UTC date is the newest day that can have data.
+ZONE = "PT (UTC-7 or UTC-8)"
 # The docs: a query grouped by date for the past 10 days finds the newest data.
 COVERAGE_DAYS = 10
 API_HOW = "metadata.firstIncompleteDate of Search Console, minus 1 day."
@@ -91,7 +91,7 @@ def _estimate(day: date) -> Known:
 def _newest_end(name: str, start: date, end: date) -> date:
     """The UTC date is the newest day: dataState all gives it, and it is partial.
 
-    In PST it can still be the day before. That day then has no data, and it is marked partial:
+    In PT it can still be the day before. That day then has no data, and it is marked partial:
     a valid day never moves.
     """
     latest = today()

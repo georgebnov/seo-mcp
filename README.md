@@ -66,7 +66,7 @@ A range that you name goes out as you name it, up to the newest day of the sourc
 | `query_api` `search_analytics` | What you send (no `dataState` means `final`) | `metadata.firstIncompleteDate` minus 1 day if the reply has it, else an estimate |
 | `get_seo_data` GA4, `query_api` GA4 reports | GA4 has none | An estimate: `3daysAgo`, which GA4 reads in the property zone |
 
-The docs give `firstIncompleteDate` only with `dataState` `all` and a grouping by `date`, so a report of `get_seo_data` cannot carry it. The server sends 1 extra read for this first: the past 10 days up to the UTC date, grouped by date. It has no filter, so all sources and agents of a site share it for 5 minutes. If it fails, the report stays good: a default range then ends on the estimate, 4 days before the UTC date (3 days of lag, and 1 day because a PST day can be 1 day before the UTC date), and `last_complete_day_source` is `estimate`. `query_api` stays at 1 query: send `dataState` `all` with the dimension `date` for the value of the API.
+The docs give `firstIncompleteDate` only with `dataState` `all` and a grouping by `date`, so a report of `get_seo_data` cannot carry it. The server sends 1 extra read for this first: the past 10 days up to the UTC date, grouped by date. It has no filter, so all sources and agents of a site share it for 5 minutes. If it fails, the report stays good: a default range then ends on the estimate, 4 days before the UTC date (3 days of lag, and 1 day because a PT day can be 1 day before the UTC date), and `last_complete_day_source` is `estimate`. `query_api` stays at 1 query: send `dataState` `all` with the dimension `date` for the value of the API.
 
 GA4 has no such field. Its help page says that processing can take 24-48 hours, so the estimate is 3 days. Late events can still arrive after this. With a relative end, `partial_days` is exact in GA4 terms, such as `2daysAgo` to `today`. With a YYYY-MM-DD end, the server cannot know the property day, so `partial_days` starts 3 days before the UTC date: such a day can be partial in some zone. `query_api` shows 1 `coverage` for each of `dateRanges`.
 
@@ -78,7 +78,7 @@ Each source has its own newest day, so the server moves an end date for each sou
 
 | Source | Newest day | Moved end |
 | --- | --- | --- |
-| Search Console | Today in PST (UTC-8), which is never after the UTC date | The UTC date. In PST it can still be the day before: that day has no data yet, and it is partial. |
+| Search Console | Today in PT (UTC-7 or UTC-8, as the docs give a request date), which is never after the UTC date | The UTC date. In PT it can still be the day before: that day has no data yet, and it is partial. |
 | GA4 | Today in the property zone: the UTC date, the day before, or the day after | `today`, which GA4 reads in the property zone. |
 | Clarity `recordings` | Today in UTC | The end of that day, so that a repeat is the same request and spends nothing. |
 
