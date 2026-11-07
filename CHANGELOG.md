@@ -29,3 +29,4 @@
 - Give the used count, the limit, and the reset time in each refusal of a call ledger.
 - Extend the failure window of 60 seconds to a connection failure of a counted call: a network outage no longer spends the Clarity count of the day with immediate retries.
 - Fix a bad HTTP 200 answer of URL Inspection in `index_status`: the source failed with `AttributeError`, and a repeat spent the URLs again. Now the URL fails with a clear reason, the batch waits for its other URLs, and a repeat inside 60 seconds spends nothing.
+- Fix a false success of `index_status`: a URL Inspection reply with no `inspectionResult`, such as `{"message": "try later"}`, is now a failure of a wrong shape. It is not saved, and the same request waits 60 seconds. `canonical_match` is `null` when neither side names a canonical. It was `true` before.
