@@ -238,14 +238,8 @@ async def test_no_inspection_result_is_a_failure_on_each_path(live, fake_net, na
 
 
 READERS = ("shared.request", "shared.once")
-# index_status builds its own answer. The others have no check of the reply yet.
-NO_SHAPE_CHECK = {
-    ("ga4.py", "_metadata"),
-    ("ga4.py", "_post"),
-    ("gsc.py", "_sitemap_get"),
-    ("gsc.py", "index_status"),
-    ("pagespeed.py", "run"),
-}
+# index_status builds its own answer and checks each URL in _index_status.
+NO_SHAPE_CHECK = {("gsc.py", "index_status")}
 
 
 def unchecked_reads():
@@ -378,3 +372,76 @@ def test_only_the_named_reads_have_no_shape_check():
     assert not wrong, f"{fix} {wrong}"
     stale = sorted(NO_SHAPE_CHECK - unchecked_reads())
     assert not stale, f"Remove these reads from NO_SHAPE_CHECK in {__file__}: {stale}"
+
+
+def query(api, name, request=None):
+    return lambda: core.query_api(HOST, api, name, request)
+
+
+FEED = f"https://{HOST}/sitemap.xml"
+# Each read that PR #21 left with no check. The match finds the request of the read.
+OTHER_READS = [
+    ("ga4_organic", source("ga4_organic"), ":runReport"),
+    ("ga4_landing_pages", source("ga4_landing_pages"), ":runReport"),
+    ("run_report", query("ga4", "run_report", {"metrics": [{"name": "sessions"}]}), ":runReport"),
+    ("pivot_report", query("ga4", "pivot_report", {}), ":runPivotReport"),
+    ("realtime_report", query("ga4", "realtime_report", {}), ":runRealtimeReport"),
+    ("metadata", query("ga4", "metadata"), "/metadata"),
+    ("crux record", query("crux", "record", {}), ":queryRecord"),
+    ("crux history", query("crux", "history", {}), ":queryHistoryRecord"),
+    ("sitemap", query("search_console", "sitemap", {"feedpath": FEED}), "sitemap.xml"),
+]
+OTHER_IDS = [read[0] for read in OTHER_READS]
+
+
+@pytest.mark.parametrize(("name", "call", "ending"), OTHER_READS, ids=OTHER_IDS)
+async def test_a_reply_of_no_documented_field_is_a_failure(live, fake_net, name, call, ending):
+    calls = search_console_says(fake_net, ending, {"message": "try later"})
+    result = result_of(await call(), name)
+    fix = "Pass good= with the documented fields of the reply."
+    assert result["status"] == "error", f"{name} showed a failed read as ok. {fix}"
+    assert "shape" in result["reason"]
+    assert result["rows"] == []
+    first = len(sent(calls, ending))
+    repeat = result_of(await call(), name)
+    assert "did not send it again" in repeat["reason"]
+    assert len(sent(calls, ending)) == first
+
+
+# Saved real empty reports of GA4 held only these fields: no rows, and kind as the docs say.
+GA4_EMPTY = {
+    "dimensionHeaders": [{"name": "date"}],
+    "metricHeaders": [{"name": "sessions", "type": "TYPE_INTEGER"}],
+    "totals": [{}],
+    "metadata": {"currencyCode": "USD", "timeZone": "Etc/GMT"},
+    "kind": "analyticsData#runReport",
+}
+
+
+@pytest.mark.parametrize("body", [{}, {"metadata": {"timeZone": "Etc/GMT"}}], ids=json.dumps)
+async def test_a_ga4_report_with_no_kind_is_not_read_as_no_sessions(live, fake_net, body):
+    search_console_says(fake_net, ":runReport", body)
+    result = (await core.get_seo_data(HOST, ["ga4_organic"]))["sources"]["ga4_organic"]
+    assert result["status"] == "error", "A reply with no kind showed no organic sessions."
+    assert "shape" in result["reason"]
+
+
+async def test_a_real_empty_ga4_report_stays_ok(live, fake_net):
+    search_console_says(fake_net, ":runReport", GA4_EMPTY)
+    result = (await core.get_seo_data(HOST, ["ga4_organic"]))["sources"]["ga4_organic"]
+    assert result["status"] == "ok"
+    assert result["reason"] == "GA4 reports no organic sessions in the window."
+    repeat = (await core.get_seo_data(HOST, ["ga4_organic"]))["sources"]["ga4_organic"]
+    assert repeat["from_cache"] is True
+
+
+@pytest.mark.parametrize(
+    ("name", "call", "ending"),
+    [read for read in OTHER_READS if read[0] in {"metadata", "sitemap"}],
+    ids=["metadata", "sitemap"],
+)
+async def test_an_empty_reply_of_a_resource_with_no_required_field_stays_ok(
+    live, fake_net, name, call, ending
+):
+    search_console_says(fake_net, ending, {})
+    assert (await call())["status"] == "ok"

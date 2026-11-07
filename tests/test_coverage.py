@@ -10,7 +10,7 @@ import pytest
 
 from seo_mcp import core, providers, server
 from seo_mcp.providers import _google, clarity, ga4, gsc
-from test_query_api import HOST
+from test_query_api import HOST, ga4_kind
 from test_quota import metered_requests, replies
 
 SOURCE = Path(__file__).parent.parent / "src" / "seo_mcp"
@@ -64,7 +64,8 @@ def analytics(fake_net, zone="America/New_York"):
     def reply(request):
         if request.url.host != ga4.HOST:
             return None
-        return httpx2.Response(200, json={"metadata": {"timeZone": zone}, "rowCount": 0})
+        body = {"metadata": {"timeZone": zone}, "rowCount": 0, **ga4_kind(request)}
+        return httpx2.Response(200, json=body)
 
     return fake_net(replies(reply))
 

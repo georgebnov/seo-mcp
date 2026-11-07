@@ -114,7 +114,7 @@ async def test_a_stuck_ledger_after_a_429_keeps_the_429_reason(live, fake_net, s
 async def test_a_stuck_reading_file_does_not_lose_a_paid_ga4_answer(live, fake_net, short_wait):
     def reply(request):
         if request.url.path.endswith(":runReport"):
-            body = {"rows": [], "propertyQuota": GA4_QUOTA}
+            body = {"rows": [], "propertyQuota": GA4_QUOTA, "kind": "analyticsData#runReport"}
             return httpx2.Response(200, json=body)
         return None
 

@@ -12,7 +12,7 @@ import pytest
 
 from seo_mcp import core, net, providers, quota
 from seo_mcp.providers import clarity, ga4, gsc
-from test_query_api import DAY, HOST, SITE, answer
+from test_query_api import DAY, HOST, SITE, answer, ga4_kind
 
 INSIGHTS = ("live_insights", {"numOfDays": 1})
 RECORDINGS = ("recordings", {"filters": {"date": DAY}})
@@ -329,7 +329,8 @@ async def test_a_receipt_opens_only_the_calls_that_it_paid_for(fake_net):
 # GA4 gives the real value, so the server prefers it over a local count.
 def ga4_reply(request):
     if request.url.host == ga4.HOST:
-        return httpx2.Response(200, json={"rows": [], "propertyQuota": GA4_QUOTA})
+        body = {"rows": [], "propertyQuota": GA4_QUOTA, **ga4_kind(request)}
+        return httpx2.Response(200, json=body)
     return None
 
 
@@ -366,7 +367,7 @@ async def test_the_server_does_not_infer_the_ga4_tier(live, fake_net):
 
     def reply(request):
         if request.url.host == ga4.HOST:
-            return httpx2.Response(200, json={"propertyQuota": low})
+            return httpx2.Response(200, json={"propertyQuota": low, **ga4_kind(request)})
         return None
 
     fake_net(replies(reply))
@@ -413,7 +414,7 @@ async def test_few_ga4_tokens_give_a_warning(live, fake_net):
 
     def reply(request):
         if request.url.host == ga4.HOST:
-            return httpx2.Response(200, json={"propertyQuota": low})
+            return httpx2.Response(200, json={"propertyQuota": low, **ga4_kind(request)})
         return None
 
     fake_net(replies(reply))

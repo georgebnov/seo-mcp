@@ -63,6 +63,17 @@ MISS_REASON = (
 # A live read of a date range with no data gave only responseAggregationType, with no rows.
 REPORT = shared.documented("rows", "responseAggregationType", "metadata")
 SITEMAP_LIST = shared.documented("sitemap")
+SITEMAP = shared.documented(
+    "path",
+    "lastSubmitted",
+    "isPending",
+    "isSitemapsIndex",
+    "type",
+    "lastDownloaded",
+    "warnings",
+    "errors",
+    "contents",
+)
 
 
 def _today() -> date:
@@ -496,7 +507,9 @@ async def _sitemap_get(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     feed = page_url(site.host, request["feedpath"], "feedpath")
     url = f"{SITES_API}/{prop}/sitemaps/{quote(feed, safe='')}"
     headers = await _headers(site)
-    reply = await shared.request(site, ENDPOINTS, "GET", url, headers=headers, explain=True)
+    reply = await shared.request(
+        site, ENDPOINTS, "GET", url, headers=headers, explain=True, good=SITEMAP
+    )
     return answer([reply], more_rows="no", applied={"feedpath": feed})
 
 

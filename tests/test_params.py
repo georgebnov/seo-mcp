@@ -85,6 +85,7 @@ def answer(request: httpx2.Request) -> httpx2.Response:
                     }
                 ],
                 "totals": [{"metricValues": [{"value": "150"}]}],
+                "kind": "analyticsData#runReport",
             },
         )
     if path.endswith("runPagespeed"):
@@ -355,7 +356,12 @@ async def test_ga4_long_range_flags_the_daily_row_cap(write_config, fake_net, ac
         sent.append(limit)
         day = {"dimensionValues": [{"value": "20260101"}], "metricValues": [{"value": "1"}]}
         return httpx2.Response(
-            200, json={"metricHeaders": [{"name": "sessions"}], "rows": [day] * limit}
+            200,
+            json={
+                "metricHeaders": [{"name": "sessions"}],
+                "rows": [day] * limit,
+                "kind": "analyticsData#runReport",
+            },
         )
 
     fake_net(many)
