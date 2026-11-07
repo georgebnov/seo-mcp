@@ -47,7 +47,7 @@ query_api(site?, api?, method?, request?, task?)
 
 The tool text names each API with 1 line, built from `APIS`, so an agent goes to step 1 with no discovery call. A call with no `api` lists the methods, the quota, and the tasks.
 
-1. Call it with `api` and no `method`: it lists the fields, the valid values, the docs, and what the API does not give. For GA4, the method `metadata` lists the live dimensions and metrics of the property, with custom ones.
+1. Call it with `api` and no `method`: it lists the fields, the valid values, the docs, and what the API does not give. For GA4, the options hold the standard dimensions and metrics of the [API schema](https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema), with the date of the list, so a standard name needs no API request. The method `metadata` is a real API request: use it only for custom names or for a name that the list does not hold.
 2. Call it with `api`, `method`, and `request`: `request` is the official JSON of that method. The server fills the site, the property, and the key.
 
 | `api` | `method` | Official call |

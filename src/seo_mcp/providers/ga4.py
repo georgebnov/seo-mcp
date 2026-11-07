@@ -244,6 +244,120 @@ HISTORY_FIELDS = SHARED_FIELDS | {
     "comparisons",
 }
 LIST_FIELDS = frozenset({"limit", "metricAggregations", "orderBys"})
+SCHEMA_DOCS = "https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema"
+NAMES_TAKEN_ON = "2026-11-07"
+# The tables of SCHEMA_DOCS, so that an agent needs no metadata call for a standard name. Only
+# query_api(api="ga4") shows them: the tool text loads in each session.
+STANDARD_DIMENSIONS = tuple(
+    """
+    achievementId adFormat adSourceName adUnitName appVersion audienceId audienceName
+    audienceResourceName brandingInterest browser browserVersion campaignId campaignName character
+    city cityId cm360AccountId cm360AccountName cm360AdvertiserId cm360AdvertiserName
+    cm360CampaignId cm360CampaignName cm360CreativeFormat cm360CreativeId cm360CreativeName
+    cm360CreativeType cm360CreativeTypeId cm360CreativeVersion cm360Medium
+    cm360PlacementCostStructure cm360PlacementId cm360PlacementName cm360RenderingId cm360SiteId
+    cm360SiteName cm360Source cm360SourceMedium cohort cohortNthDay cohortNthMonth cohortNthWeek
+    contentGroup contentId contentType continent continentId country countryId currencyCode date
+    dateHour dateHourMinute day dayOfWeek dayOfWeekName defaultChannelGroup deviceCategory
+    deviceModel dv360AdvertiserId dv360AdvertiserName dv360CampaignId dv360CampaignName
+    dv360CreativeFormat dv360CreativeId dv360CreativeName dv360ExchangeId dv360ExchangeName
+    dv360InsertionOrderId dv360InsertionOrderName dv360LineItemId dv360LineItemName dv360Medium
+    dv360PartnerId dv360PartnerName dv360Source dv360SourceMedium eventName fileExtension fileName
+    firstSessionDate firstUserCampaignId firstUserCampaignName firstUserCm360AccountId
+    firstUserCm360AccountName firstUserCm360AdvertiserId firstUserCm360AdvertiserName
+    firstUserCm360CampaignId firstUserCm360CampaignName firstUserCm360CreativeFormat
+    firstUserCm360CreativeId firstUserCm360CreativeName firstUserCm360CreativeType
+    firstUserCm360CreativeTypeId firstUserCm360CreativeVersion firstUserCm360Medium
+    firstUserCm360PlacementCostStructure firstUserCm360PlacementId firstUserCm360PlacementName
+    firstUserCm360RenderingId firstUserCm360SiteId firstUserCm360SiteName firstUserCm360Source
+    firstUserCm360SourceMedium firstUserDefaultChannelGroup firstUserDv360AdvertiserId
+    firstUserDv360AdvertiserName firstUserDv360CampaignId firstUserDv360CampaignName
+    firstUserDv360CreativeFormat firstUserDv360CreativeId firstUserDv360CreativeName
+    firstUserDv360ExchangeId firstUserDv360ExchangeName firstUserDv360InsertionOrderId
+    firstUserDv360InsertionOrderName firstUserDv360LineItemId firstUserDv360LineItemName
+    firstUserDv360Medium firstUserDv360PartnerId firstUserDv360PartnerName firstUserDv360Source
+    firstUserDv360SourceMedium firstUserGoogleAdsAccountName firstUserGoogleAdsAdGroupId
+    firstUserGoogleAdsAdGroupName firstUserGoogleAdsAdNetworkType firstUserGoogleAdsCampaignId
+    firstUserGoogleAdsCampaignName firstUserGoogleAdsCampaignType firstUserGoogleAdsCreativeId
+    firstUserGoogleAdsCustomerId firstUserGoogleAdsKeyword firstUserGoogleAdsQuery
+    firstUserManualAdContent firstUserManualCampaignId firstUserManualCampaignName
+    firstUserManualCreativeFormat firstUserManualMarketingTactic firstUserManualMedium
+    firstUserManualSource firstUserManualSourceMedium firstUserManualSourcePlatform
+    firstUserManualTerm firstUserMedium firstUserPrimaryChannelGroup firstUserSa360AdGroupId
+    firstUserSa360AdGroupName firstUserSa360CampaignId firstUserSa360CampaignName
+    firstUserSa360CreativeFormat firstUserSa360EngineAccountId firstUserSa360EngineAccountName
+    firstUserSa360EngineAccountType firstUserSa360KeywordText firstUserSa360ManagerAccountId
+    firstUserSa360ManagerAccountName firstUserSa360Medium firstUserSa360Query firstUserSa360Source
+    firstUserSa360SourceMedium firstUserSource firstUserSourceMedium firstUserSourcePlatform
+    fullPageUrl googleAdsAccountName googleAdsAdGroupId googleAdsAdGroupName googleAdsAdNetworkType
+    googleAdsCampaignId googleAdsCampaignName googleAdsCampaignType googleAdsCreativeId
+    googleAdsCustomerId googleAdsKeyword googleAdsQuery groupId hostName hour isKeyEvent isoWeek
+    isoYear isoYearIsoWeek itemAffiliation itemBrand itemCategory itemCategory2 itemCategory3
+    itemCategory4 itemCategory5 itemId itemListId itemListName itemListPosition itemLocationID
+    itemName itemPromotionCreativeName itemPromotionCreativeSlot itemPromotionId itemPromotionName
+    itemVariant landingPage landingPagePlusQueryString language languageCode level linkClasses
+    linkDomain linkId linkText linkUrl manualAdContent manualCampaignId manualCampaignName
+    manualCreativeFormat manualMarketingTactic manualMedium manualSource manualSourceMedium
+    manualSourcePlatform manualTerm medium method minute mobileDeviceBranding
+    mobileDeviceMarketingName mobileDeviceModel month newVsReturning nthDay nthHour nthMinute
+    nthMonth nthWeek nthYear operatingSystem operatingSystemVersion operatingSystemWithVersion
+    orderCoupon outbound pageLocation pagePath pagePathPlusQueryString pageReferrer pageTitle
+    percentScrolled platform platformDeviceCategory primaryChannelGroup region sa360AdGroupId
+    sa360AdGroupName sa360CampaignId sa360CampaignName sa360CreativeFormat sa360EngineAccountId
+    sa360EngineAccountName sa360EngineAccountType sa360KeywordText sa360ManagerAccountId
+    sa360ManagerAccountName sa360Medium sa360Query sa360Source sa360SourceMedium screenResolution
+    searchTerm sessionCampaignId sessionCampaignName sessionCm360AccountId sessionCm360AccountName
+    sessionCm360AdvertiserId sessionCm360AdvertiserName sessionCm360CampaignId
+    sessionCm360CampaignName sessionCm360CreativeFormat sessionCm360CreativeId
+    sessionCm360CreativeName sessionCm360CreativeType sessionCm360CreativeTypeId
+    sessionCm360CreativeVersion sessionCm360Medium sessionCm360PlacementCostStructure
+    sessionCm360PlacementId sessionCm360PlacementName sessionCm360RenderingId sessionCm360SiteId
+    sessionCm360SiteName sessionCm360Source sessionCm360SourceMedium sessionDefaultChannelGroup
+    sessionDv360AdvertiserId sessionDv360AdvertiserName sessionDv360CampaignId
+    sessionDv360CampaignName sessionDv360CreativeFormat sessionDv360CreativeId
+    sessionDv360CreativeName sessionDv360ExchangeId sessionDv360ExchangeName
+    sessionDv360InsertionOrderId sessionDv360InsertionOrderName sessionDv360LineItemId
+    sessionDv360LineItemName sessionDv360Medium sessionDv360PartnerId sessionDv360PartnerName
+    sessionDv360Source sessionDv360SourceMedium sessionGoogleAdsAccountName
+    sessionGoogleAdsAdGroupId sessionGoogleAdsAdGroupName sessionGoogleAdsAdNetworkType
+    sessionGoogleAdsCampaignId sessionGoogleAdsCampaignName sessionGoogleAdsCampaignType
+    sessionGoogleAdsCreativeId sessionGoogleAdsCustomerId sessionGoogleAdsKeyword
+    sessionGoogleAdsQuery sessionManualAdContent sessionManualCampaignId sessionManualCampaignName
+    sessionManualCreativeFormat sessionManualMarketingTactic sessionManualMedium sessionManualSource
+    sessionManualSourceMedium sessionManualSourcePlatform sessionManualTerm sessionMedium
+    sessionPrimaryChannelGroup sessionSa360AdGroupId sessionSa360AdGroupName sessionSa360CampaignId
+    sessionSa360CampaignName sessionSa360CreativeFormat sessionSa360EngineAccountId
+    sessionSa360EngineAccountName sessionSa360EngineAccountType sessionSa360Keyword
+    sessionSa360ManagerAccountId sessionSa360ManagerAccountName sessionSa360Medium sessionSa360Query
+    sessionSa360Source sessionSa360SourceMedium sessionSource sessionSourceMedium
+    sessionSourcePlatform shippingTier signedInWithUserId source sourceMedium sourcePlatform
+    streamId streamName testDataFilterId testDataFilterName transactionId unifiedPagePathScreen
+    unifiedPageScreen unifiedScreenClass unifiedScreenName userAgeBracket userGender videoProvider
+    videoTitle videoUrl virtualCurrencyName visible week year yearMonth yearWeek
+    """.split()
+)
+STANDARD_METRICS = tuple(
+    """
+    active1DayUsers active28DayUsers active7DayUsers activeUsers adUnitExposure addToCarts
+    advertiserAdClicks advertiserAdCost advertiserAdCostPerClick advertiserAdCostPerKeyEvent
+    advertiserAdImpressions averagePurchaseRevenue averagePurchaseRevenuePerPayingUser
+    averagePurchaseRevenuePerUser averageRevenuePerUser averageSessionDuration bounceRate
+    cartToViewRate checkouts cohortActiveUsers cohortTotalUsers crashAffectedUsers
+    crashFreeUsersRate dauPerMau dauPerWau ecommercePurchases engagedSessions engagementRate
+    eventCount eventCountPerUser eventValue eventsPerSession firstTimePurchaserRate
+    firstTimePurchasers firstTimePurchasersPerNewUser grossItemRevenue grossPurchaseRevenue
+    itemDiscountAmount itemListClickEvents itemListClickThroughRate itemListViewEvents
+    itemPromotionClickThroughRate itemRefundAmount itemRevenue itemViewEvents itemsAddedToCart
+    itemsCheckedOut itemsClickedInList itemsClickedInPromotion itemsPurchased itemsViewed
+    itemsViewedInList itemsViewedInPromotion keyEvents newUsers organicGoogleSearchAveragePosition
+    organicGoogleSearchClickThroughRate organicGoogleSearchClicks organicGoogleSearchImpressions
+    promotionClicks promotionViews publisherAdClicks publisherAdImpressions purchaseRevenue
+    purchaseToViewRate purchaserRate refundAmount returnOnAdSpend screenPageViews
+    screenPageViewsPerSession screenPageViewsPerUser scrolledUsers sessionKeyEventRate sessions
+    sessionsPerUser shippingAmount taxAmount totalAdRevenue totalPurchasers totalRevenue totalUsers
+    transactions transactionsPerPurchaser userEngagementDuration userKeyEventRate wauPerMau
+    """.split()
+)
 PASSED_ON = ("metadata", "propertyQuota", "pivotHeaders", "aggregates")
 
 
@@ -362,7 +476,11 @@ APIS = {
             ),
         },
         options={
-            "dimensions_and_metrics": "Call the method metadata: it lists the live names.",
+            "dimensions_and_metrics": f"dimensions and metrics list the standard names of "
+            f"{SCHEMA_DOCS}, as of {NAMES_TAKEN_ON}. Call the method metadata only for custom "
+            "names or for a name that this list does not hold: it is a real API request.",
+            "dimensions": list(STANDARD_DIMENSIONS),
+            "metrics": list(STANDARD_METRICS),
             "filters": "dimensionFilter and metricFilter take a FilterExpression: andGroup, "
             "orGroup, notExpression, or filter. A filter has fieldName and 1 of stringFilter, "
             "inListFilter, numericFilter, betweenFilter, or emptyFilter.",
