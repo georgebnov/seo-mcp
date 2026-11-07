@@ -5,6 +5,7 @@ import json
 import re
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
@@ -12,7 +13,7 @@ from urllib.parse import quote, urlsplit
 from seo_mcp import NAME, net, quota, shared
 from seo_mcp.api import Api, Method, Quota, answer, as_rows, one_of, whole
 from seo_mcp.config import Site
-from seo_mcp.params import BadInput, Params
+from seo_mcp.params import BadInput, Params, moved, moved_note, too_late
 from seo_mcp.results import Refused, Unsupported, ok
 
 API = "https://www.clarity.ms/export-data/api/v1/project-live-insights"
@@ -394,7 +395,11 @@ def _check_date(filters: dict[str, Any]) -> tuple[str, str]:
         raise BadInput(shape)
     if start > end:
         raise BadInput("filters.date start must not be after end.")
-    return start, end
+    # The end of the UTC day, not the time now: a repeat must be the same request, or it spends.
+    latest = f"{datetime.now(UTC).date().isoformat()}T23:59:59.999Z"
+    if start > latest:
+        raise too_late("filters.date start", latest)
+    return start, min(end, latest)
 
 
 def _is_text_list(value: Any) -> bool:
@@ -464,6 +469,9 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     start, end = _check_date(filters)
     for name, value in filters.items():
         _check_filter(name, value)
+    asked = filters["date"]["end"]
+    shift: dict[str, Any] = {"date_moved": moved(asked, end)} if asked != end else {}
+    filters = {**filters, "date": {**filters["date"], "end": end}}
     sort = request.get("sortBy", SORTS[0])
     one_of("sortBy", sort, SORTS)
     count = whole("count", request.get("count", DEFAULT_RECORDINGS), 1, MAX_RECORDINGS)
@@ -482,7 +490,10 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
         )
 
     rows = as_rows(await _cached(site, path, call, _all_objects))
-    return answer(rows, more_rows="possible", sample=SAMPLE_NOTE, applied=body)
+    reason = moved_note(shift["date_moved"]) if shift else None
+    return answer(
+        rows, more_rows="possible", reason=reason, sample=SAMPLE_NOTE, applied=body, **shift
+    )
 
 
 async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any]:
