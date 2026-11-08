@@ -44,7 +44,7 @@ const labels = {
   CountAbove: "a page has a count above 0",
   DashboardFails: "the call fails or the server refuses it",
   StopAtZero: "the agent obeys skip_if",
-  IgnoreStopRule: "the agent ignores skip_if, and the server sends the call",
+  IgnoreStopRule: "the agent ignores skip_if, and the server skips the sample",
   AskSample: "the agent wants the elements",
   CountIsEnough: "the count answers the question",
   SampleAnswer: "the sample comes back",

@@ -1,8 +1,8 @@
 ---- MODULE agent_flow ----
 \* The discovery steps of #20 and #23. The tool text names each API, query_api(api=X)
 \* lists the fields (GA4: the standard dimensions and metrics), and metadata is a real request.
-\* The agent side, from live-data.md and the task recipes. The server cannot see the rules
-\* of the recipe, so the agent has a real choice at the stop rule.
+\* The agent side, from live-data.md and the task recipes. The agent has a real choice at the
+\* stop rule, and the server enforces the rule when the agent ignores it.
 EXTENDS Naturals
 VARIABLES pc, count, spent, sample, netCalls
 vars == <<pc, count, spent, sample, netCalls>>
@@ -46,15 +46,14 @@ AskDashboard ==
   /\ pc = "taskRows" /\ pc' = "dashboard"
   /\ spent' = spent + 1 /\ netCalls' = netCalls + 1
   /\ UNCHANGED <<count, sample>>
+\* count = "zero" is a 0 that the server can match: a 0 it cannot match is CountAbove here.
 CountZero == pc = "dashboard" /\ pc' = "zeroCount" /\ count' = "zero" /\ UNCHANGED <<spent, sample, netCalls>>
 CountAbove == pc = "dashboard" /\ pc' = "someCount" /\ count' = "above" /\ UNCHANGED <<spent, sample, netCalls>>
 DashboardFails == pc = "dashboard" /\ pc' = "gapReported" /\ Keep
 StopAtZero == pc = "zeroCount" /\ pc' = "zeroReported" /\ Keep
-\* query_api has no link between 2 calls, so it sends the sample after a 0 count too.
-IgnoreStopRule ==
-  /\ pc = "zeroCount" /\ pc' = "recordings"
-  /\ spent' = spent + 1 /\ sample' = TRUE /\ netCalls' = netCalls + 1
-  /\ UNCHANGED count
+\* The agent ignores skip_if. clarity._zero_count reads the saved 0 count of the same click and
+\* days, so recordings gives status skipped: no request, no spend, and no sample.
+IgnoreStopRule == pc = "zeroCount" /\ pc' = "zeroReported" /\ Keep
 AskSample ==
   /\ pc = "someCount" /\ pc' = "recordings"
   /\ spent' = spent + 1 /\ sample' = TRUE /\ netCalls' = netCalls + 1

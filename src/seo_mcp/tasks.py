@@ -26,7 +26,9 @@ CLARITY_QUOTA = (
 )
 ZERO_COUNT_STOP = (
     "If the dashboard count is 0 (no page has a count above 0), do not call recordings: it "
-    "spends 1 call on a sample that cannot show such a click. Report the 0 and stop."
+    "spends 1 call on a sample that cannot show such a click. Report the 0 and stop. The "
+    "server enforces this: after a saved 0 count of the same click and days, recordings gives "
+    "status skipped and spends nothing."
 )
 OLD_DATA = (
     "Empty rows do not prove zero activity. Clarity refuses no time frame, and it does not "
@@ -51,6 +53,26 @@ class Step(NamedTuple):
     skip_if: str = ""
 
 
+class Count(NamedTuple):
+    """A dashboard count that the server reads before a sample of the same click."""
+
+    question: str
+    words: str
+
+
+# The recordings flag of each click task. clarity._recordings reads the saved count of its
+# question, so that a sample after a 0 count does not go out.
+COUNTS = {
+    "deadClickPresent": Count("Dead click count per page", "dead click"),
+    "rageClickPresent": Count("Rage click count per page", "rage click"),
+    "quickbackClickPresent": Count("Quickback click count per page", "quickback click"),
+}
+
+
+def count_query(question: str, start: str, end: str) -> str:
+    return f"{question} between {start} and {end}"
+
+
 class Recipe(NamedTuple):
     api: str
     steps: tuple[Step, ...] = ()
@@ -69,7 +91,7 @@ class Task(NamedTuple):
 
 
 def _question(text: str, why: str, read: str) -> Step:
-    request = {"query": f"{text} between {{start_slash}} and {{end_slash}}"}
+    request = {"query": count_query(text, "{start_slash}", "{end_slash}")}
     args = {"api": "clarity", "method": "dashboard_query", "request": request}
     return Step(why, "query_api", args, read)
 
@@ -120,7 +142,7 @@ TASKS: dict[str, Task] = {
         (
             _click_recipe(
                 "deadClickPresent",
-                "Dead click count per page",
+                COUNTS["deadClickPresent"].question,
                 "rows has 1 row for each page: VisitedUrl and TotalDeadClicks.",
                 EVENT_ROWS.format(name='"Dead click"'),
                 "A dead click is a click that made no change on the page. Many on 1 element "
@@ -135,7 +157,7 @@ TASKS: dict[str, Task] = {
         (
             _click_recipe(
                 "rageClickPresent",
-                "Rage click count per page",
+                COUNTS["rageClickPresent"].question,
                 "rows has 1 row for each page. This question is not yet proven on real data: "
                 "read the columns that come back.",
                 EVENT_ROWS.format(name='"Rage clicks"'),
@@ -152,7 +174,7 @@ TASKS: dict[str, Task] = {
                 "clarity",
                 (
                     _question(
-                        "Quickback click count per page",
+                        COUNTS["quickbackClickPresent"].question,
                         "Get the count for each page.",
                         "rows has 1 row for each page. This question is not yet proven on "
                         "real data: read the columns that come back.",

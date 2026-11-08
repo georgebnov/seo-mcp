@@ -120,6 +120,20 @@ def _saved(path: Path, good: Check, until: Until) -> dict[str, Any] | None:
     return {"answer": stored["answer"], "at": at, "expires_at": until(at)} if usable else None
 
 
+def peek(path: Path, good: Check, until: Until) -> dict[str, Any] | None:
+    """Read a saved answer with no lock, no send, and no spend.
+
+    A miss proves nothing: the caller goes on as if it had no answer. Writes replace the file
+    in 1 step, so a read never sees half of an answer.
+    """
+    return _saved(path, good, until)
+
+
+def cite(saved: dict[str, Any]) -> None:
+    """Show the age of a peeked answer that decided the result."""
+    _note(True, saved["at"], saved["expires_at"])
+
+
 def _recent_failure(path: Path) -> net.ApiError | None:
     stored = _read_json(failure_path(path))
     try:

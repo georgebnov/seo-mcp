@@ -116,7 +116,9 @@ key: do not send them. A field that the method does not have is an error, never 
 A row limit is at most 1000: read more rows with startRow or offset. more_rows is yes, no, or
 possible. If the API refuses a Google query, reason holds the message of the API.
 Each live clarity call spends 1 of 10 calls for the project each day. The same request on the
-same UTC day comes from the cache. Each URL inspection spends 1 of 2000 for the site each day.
+same UTC day comes from the cache. After a saved 0 dashboard count of a click task, a clarity
+recordings call for the same click and days gives status skipped and spends nothing.
+Each URL inspection spends 1 of 2000 for the site each day.
 Identical requests share 1 live call: an answer shows from_cache, cached_at, cache_age_seconds,
 and cache_expires_at, and it serves for 5 minutes (30 seconds for a GA4 realtime report). After
 a failed call, the same request does not go out for 60 seconds, and it spends nothing.
