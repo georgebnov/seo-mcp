@@ -191,6 +191,76 @@ async def test_a_day_past_the_last_complete_day_is_partial(live, fake_net, monke
     assert "partial" in result["reason"]
 
 
+def complete_day_has_clicks(fake_net, day, clicks):
+    """Answer firstIncompleteDate 2026-03-16, and give only `day` its clicks."""
+
+    def reply(request):
+        if not request.url.path.endswith(QUERY):
+            return None
+        body = json.loads(request.content)
+        answer = {"responseAggregationType": "byProperty", "rows": []}
+        if is_coverage_read(body):
+            answer["metadata"] = {"firstIncompleteDate": "2026-03-16"}
+        elif body["startDate"] == day:
+            total = {"keys": [], "clicks": clicks, "impressions": 900, "ctr": 0.04, "position": 5}
+            answer["rows"] = [{**total, "keys": ["q" for _ in body.get("dimensions", [])]}]
+        return httpx2.Response(200, json=answer)
+
+    return fake_net(replies(reply))
+
+
+# George's rule: an unfinished day is never a 0.
+
+
+async def test_a_range_of_only_partial_days_with_no_rows_has_unknown_totals(
+    live, fake_net, monkeypatch
+):
+    freeze(monkeypatch, MORNING)
+    search_console(fake_net, "2026-03-16")
+    result = await source("search_queries", start_date="2026-03-17", end_date="2026-03-17")
+    assert result["status"] == "ok"
+    assert result["coverage"]["partial_days"] == {"from": "2026-03-17", "to": "2026-03-17"}
+    assert result["totals"] is None
+    assert "No day of the range is complete, so the total is unknown." in result["reason"]
+
+
+async def test_a_range_of_only_partial_days_gives_no_drop_in_delta(live, fake_net, monkeypatch):
+    freeze(monkeypatch, MORNING)
+    complete_day_has_clicks(fake_net, "2026-03-10", 40)
+    result = await source(
+        "search_queries",
+        start_date="2026-03-17",
+        end_date="2026-03-17",
+        compare_start_date="2026-03-10",
+        compare_end_date="2026-03-10",
+    )
+    assert result["comparison"]["totals"]["clicks"] == 40
+    assert result["totals"] is None
+    assert result["delta"] is None
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [("2026-03-10", "2026-03-10"), ("2026-03-14", "2026-03-17")],
+    ids=["complete", "complete_and_partial"],
+)
+async def test_a_range_with_a_complete_day_and_no_rows_is_a_real_0(
+    live, fake_net, monkeypatch, start, end
+):
+    freeze(monkeypatch, MORNING)
+    complete_day_has_clicks(fake_net, "2026-03-01", 40)
+    result = await source(
+        "search_queries",
+        start_date=start,
+        end_date=end,
+        compare_start_date="2026-03-01",
+        compare_end_date="2026-03-01",
+    )
+    assert result["totals"] == {"clicks": 0, "impressions": 0}
+    assert result["delta"] == {"clicks": -40, "impressions": -900}
+    assert "unknown" not in (result["reason"] or "")
+
+
 async def test_a_default_range_ends_on_the_last_complete_day_of_the_api(
     live, fake_net, monkeypatch
 ):
@@ -738,6 +808,36 @@ async def test_each_covered_source_shows_a_moved_end(live, monkeypatch, name):
     assert moved["asked_end_date"] == "2026-04-01"
     assert moved["sent_end_date"] == result["coverage"]["end_date"]
     assert "moved from" in result["reason"]
+
+
+@pytest.mark.parametrize("name", sorted(COVERED))
+async def test_no_covered_source_shows_a_0_for_only_partial_days(live, fake_net, monkeypatch, name):
+    freeze(monkeypatch, MORNING)
+
+    def no_data(request):
+        if request.url.host == ga4.HOST:
+            body = {"metadata": {"timeZone": "UTC"}, "rowCount": 0, **ga4_kind(request)}
+            return httpx2.Response(200, json=body)
+        if not request.url.path.endswith(QUERY):
+            return None
+        answer: dict = {"responseAggregationType": "byProperty", "rows": []}
+        if is_coverage_read(json.loads(request.content)):
+            answer["metadata"] = {"firstIncompleteDate": "2026-03-16"}
+        return httpx2.Response(200, json=answer)
+
+    fake_net(replies(no_data))
+    result = await source(
+        name,
+        start_date="2026-03-17",
+        end_date="2026-03-17",
+        compare_start_date="2026-03-01",
+        compare_end_date="2026-03-01",
+    )
+    assert result["coverage"]["partial_days"]["from"] <= "2026-03-17"
+    zeros = sorted(key for key, value in (result["totals"] or {}).items() if value == 0)
+    drops = sorted(key for key, value in (result.get("delta") or {}).items() if value < 0)
+    fix = "A range of only partial days has unknown totals (None) and no delta, never a 0:"
+    assert not zeros and not drops, f"{name}: {fix} {zeros} {drops}"
 
 
 @pytest.mark.parametrize("name", sorted(COVERED))

@@ -59,6 +59,7 @@ before the network, and reason gives the reset time. Call list_sites to read thi
 A dated result has coverage: the start_date and end_date that went out, and
 last_complete_day with its source (api or estimate). A day up to last_complete_day with no rows
 is a real 0. A later day is partial: its data can still change, and it is not a drop.
+If each day of a range is partial and no row comes back, totals and delta are null (unknown).
 GA4 dates can be relative, such as 3daysAgo or today: GA4 reads them in the property zone.
 An end date past the newest day of a source moves to that day: date_moved shows the asked and
 the sent date, and reason says so. A start past that day is refused, and nothing goes out.

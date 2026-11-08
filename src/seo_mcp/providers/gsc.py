@@ -65,6 +65,7 @@ MISS_REASON = (
     "No rows match. A page or query filter is an exact, case-sensitive match, and "
     "Search Console hides rare queries."
 )
+UNKNOWN_REASON = "No day of the range is complete, so the total is unknown."
 # A live read of a date range with no data gave only responseAggregationType, with no rows.
 REPORT = shared.documented("rows", "responseAggregationType", "metadata")
 SITEMAP_LIST = shared.documented("sitemap")
@@ -259,14 +260,18 @@ async def _report(
     if known[1] == "estimate":
         # A saved report keeps the estimate of its own call, also after midnight.
         known = _estimate(_google.answer_day())
-    total = totals[0] if totals else {"clicks": 0, "impressions": 0}
-    # Search Console hides rare queries, so the rows can sum to far less than the total.
-    seen = min(total["impressions"], sum(row["impressions"] for row in rows))
-    rows = keep(rows) if keep else sorted(rows, key=_by_traffic, reverse=True)
     coverage = _coverage(window, known, state)
+    # No row on a partial day can mean that Google has not counted it yet, so it is no 0.
+    unknown = not totals and window["start"] > coverage["last_complete_day"]
+    total = None if unknown else totals[0] if totals else {"clicks": 0, "impressions": 0}
+    # Search Console hides rare queries, so the rows can sum to far less than the total.
+    shown = sum(row["impressions"] for row in rows)
+    seen = min(total["impressions"], shown) if total else shown
+    rows = keep(rows) if keep else sorted(rows, key=_by_traffic, reverse=True)
     shift = _shift(params.end, window["end"])
     gaps = _gaps(params) + _partial_note(coverage)
-    notes = gaps + ([MISS_REASON] if not rows and (params.page or params.query) else [])
+    notes = gaps + ([UNKNOWN_REASON] if unknown else [])
+    notes += [MISS_REASON] if not rows and (params.page or params.query) else []
     notes += [moved_note(item) for item in shift.values()]
     return ok(
         rows,

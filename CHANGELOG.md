@@ -38,6 +38,7 @@
 - Add `coverage` to each dated result of Search Console and GA4: the real dates of the request, `last_complete_day` and how the server knows it, and `partial_days`. A day up to `last_complete_day` with no rows is a real 0. A later day is partial, and it is not a drop.
 - Fix a default range that moved with the hour: Search Console read today in UTC, so a query changed its dates late in the Pacific day.
 - Change the default GA4 range to end 3 days before today, so that it ends on a complete day. It ended yesterday. `last_days` keeps its length.
+- Fix a false drop of Search Console: a range of only partial days with no row showed `totals` clicks 0 and impressions 0, and `delta` then showed a drop. Now `totals` and `delta` are `null`, and `reason` says that the total is unknown. A complete day with no row stays a real 0.
 - Send `dataState` `all` for a `get_seo_data` Search Console range that passes the fixed end, so that the partial days keep their data. The server sends 1 extra read for each site, shared for 5 minutes, because the docs give `firstIncompleteDate` no other way.
 - Move an end date past the newest day of a source to that day, for each source, in `get_seo_data` and in the date fields of `query_api`. It was a refusal. `date_moved` shows the asked and the sent date, and `reason` says so. With a comparison, `range_days` reports when a move makes the 2 ranges different in length.
 - Refuse a start date past the newest day of a source, before any request, so that the server never sends an empty or reversed range.
