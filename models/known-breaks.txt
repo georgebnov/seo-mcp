@@ -1,4 +1,2 @@
 # Each line is a rule that the code breaks today: the model, the rule, and the fix.
 # scripts/check_models.py fails when a break is not in this list, or when a listed rule holds.
-get_seo_data_dates NoDocumentedFieldIsNeverOk  Fix: refuse {} in the Search Console report check.
-query_api NoDocumentedFieldIsNeverOk  Fix: refuse {} in the Search Console and GA4 metadata checks.

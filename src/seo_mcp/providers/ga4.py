@@ -81,8 +81,8 @@ NO_READING = "The server has no reading since the last reset: the next GA4 repor
 # The docs: kind "is always the fixed string" of the method. A real empty report has no rows,
 # so only kind tells it from a reply such as {"message": "try later"}.
 REPORT = shared.holds("kind")
-# The docs list these fields of the Metadata resource and do not say that 1 is always there.
-METADATA = shared.documented("name", "dimensions", "metrics", "comparisons")
+# Each property has standard dimensions and metrics, so {} is a failure.
+METADATA = shared.has_any("name", "dimensions", "metrics", "comparisons")
 
 
 def reading_path(prop: str, pool: str) -> Path:

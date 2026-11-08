@@ -336,7 +336,7 @@ async def test_a_real_empty_answer_of_search_analytics_stays_ok(live, fake_net):
     assert repeat["from_cache"] is True
 
 
-@pytest.mark.parametrize("body", [REAL_EMPTY, {"rows": []}, {}], ids=json.dumps)
+@pytest.mark.parametrize("body", [REAL_EMPTY, {"rows": []}], ids=json.dumps)
 async def test_an_empty_report_stays_ok(live, fake_net, body):
     search_console_says(fake_net, "/searchAnalytics/query", body)
     result = (await core.get_seo_data(HOST, ["search_queries"]))["sources"]["search_queries"]
@@ -435,10 +435,64 @@ async def test_a_real_empty_ga4_report_stays_ok(live, fake_net):
     assert repeat["from_cache"] is True
 
 
+# George: a live empty report has responseAggregationType, and each GA4 property has standard
+# fields, so {} of these reads is a failure. Google leaves out an empty sitemap list, so {} of
+# sitemaps.list stays ok.
+EMPTY_IS_A_FAILURE = [
+    ("search_queries", source("search_queries"), "/searchAnalytics/query"),
+    ("search_analytics", search_console("search_analytics", RANGE), "/searchAnalytics/query"),
+    ("metadata", query("ga4", "metadata"), "/metadata"),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "call", "ending"), EMPTY_IS_A_FAILURE, ids=[read[0] for read in EMPTY_IS_A_FAILURE]
+)
+async def test_an_empty_object_is_not_an_empty_answer(live, fake_net, name, call, ending):
+    calls = search_console_says(fake_net, ending, {})
+    result = result_of(await call(), name)
+    assert result["status"] == "error", f"{name} showed {{}} as an ok empty answer."
+    assert "shape" in result["reason"]
+    assert result["rows"] == []
+    first = len(sent(calls, ending))
+    repeat = result_of(await call(), name)
+    assert "did not send it again" in repeat["reason"]
+    assert len(sent(calls, ending)) == first
+
+
+# The only checks that pass {}. George: Google leaves out an empty sitemap list. The docs mark no
+# field of a sitemap as always there.
+EMPTY_IS_OK = {("gsc.py", "SITEMAP_LIST"), ("gsc.py", "SITEMAP")}
+
+
+def checks_that_pass_empty():
+    def owner(tree, call):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and node.value is call:
+                return ast.unparse(node.targets[0])
+        return f"line {call.lineno}"
+
+    found = set()
+    for path in sorted((SOURCE / "providers").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and ast.unparse(node.func) == "shared.documented":
+                found.add((path.name, owner(tree, node)))
+    return found
+
+
+def test_only_the_named_checks_pass_an_empty_object():
+    wrong = sorted(checks_that_pass_empty() - EMPTY_IS_OK)
+    fix = "Use shared.has_any or shared.holds, so that {} is a failure, not an ok empty answer."
+    assert not wrong, f"{fix} {wrong}"
+    stale = sorted(EMPTY_IS_OK - checks_that_pass_empty())
+    assert not stale, f"Remove these checks from EMPTY_IS_OK in {__file__}: {stale}"
+
+
 @pytest.mark.parametrize(
     ("name", "call", "ending"),
-    [read for read in OTHER_READS if read[0] in {"metadata", "sitemap"}],
-    ids=["metadata", "sitemap"],
+    [read for read in OTHER_READS if read[0] == "sitemap"],
+    ids=["sitemap"],
 )
 async def test_an_empty_reply_of_a_resource_with_no_required_field_stays_ok(
     live, fake_net, name, call, ending

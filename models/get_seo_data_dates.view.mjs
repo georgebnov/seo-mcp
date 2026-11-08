@@ -19,7 +19,6 @@ export const state = (v) => {
   }
   if (v.pc === "result") {
     if (v.status === "error") return "Status error: the answer has a wrong shape, nothing saved";
-    if (v.reply === "emptyObject") return "Status ok and 0 rows from {}";
     if (v.shownLast > v.fetchedLast) return "Status ok: a day fetched as partial shows as complete";
     if (v.totals === "zero" && v.start > v.shownLast) return "Status ok: a range of partial days shows totals 0";
     return "Status ok, with coverage and partial_days";
@@ -37,7 +36,7 @@ const labels = {
   SendReport: "the server sends the report",
   SavedReport: "another source read the coverage first, and the API moved its last complete day since",
   BadShape: "the answer has no documented field",
-  Result: "the answer has a documented field, or Search Console answers {}",
+  Result: "the answer has a documented field",
 };
 export const step = (action, from, to) => {
   if (action === "Done") return null;
