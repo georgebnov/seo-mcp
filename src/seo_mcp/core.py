@@ -96,9 +96,14 @@ def _warn_of_unequal_ranges(result: dict[str, Any], other: dict[str, Any]) -> No
     result["reason"] = " ".join(filter(None, [result["reason"], note]))
 
 
-def _delta(result: dict[str, Any], other: dict[str, Any]) -> dict[str, float]:
-    """Give the main value minus the comparison value, in the unit of each total."""
-    first, second = result.get("totals") or {}, other.get("totals") or {}
+def _delta(result: dict[str, Any], other: dict[str, Any]) -> dict[str, float] | None:
+    """Give the main value minus the comparison value, in the unit of each total.
+
+    An unknown side (totals None) gives no delta, so that an unknown total is never a drop.
+    """
+    first, second = result.get("totals"), other.get("totals")
+    if first is None or second is None:
+        return None
     return {
         name: round(value - second[name], 6)
         for name, value in first.items()

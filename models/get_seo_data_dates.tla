@@ -66,13 +66,15 @@ Good(r, p) == r \in {"rows", "noRows"} \/ (r = "emptyObject" /\ p = "gsc")
 BadShape ==
   /\ pc = "answered" /\ ~Good(reply, prov) /\ pc' = "result" /\ status' = "error"
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, totals, partial, sent>>
-\* gsc._report: totals default to clicks 0 and impressions 0 when the totals query has no row.
+\* gsc._report: with no totals row, totals are null when the start is after the shown last
+\* complete day (each day is partial), else clicks 0 and impressions 0.
 \* ga4._report: GA4 leaves out totals with no sessions, and the code shows {}.
 \* _google.coverage: partial_days runs from the day after the last complete day to the end.
 Result ==
   /\ pc = "answered" /\ Good(reply, prov) /\ pc' = "result" /\ status' = "ok"
   /\ shownLast' = IF cov = "api" THEN shownLast ELSE fetchedLast - 1
-  /\ totals' = IF reply = "rows" THEN "value" ELSE IF prov = "gsc" THEN "zero" ELSE "none"
+  /\ totals' = IF reply = "rows" THEN "value"
+               ELSE IF prov = "gsc" /\ start <= shownLast' THEN "zero" ELSE "none"
   /\ partial' = (sentEnd > shownLast')
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, reply, sent>>
 Done == pc \in {"paramError", "tooLate", "result"} /\ UNCHANGED vars

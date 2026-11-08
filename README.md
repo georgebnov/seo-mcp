@@ -20,7 +20,7 @@ get_seo_data(site?, sources?, start_date?, end_date?, last_days?, page?, query?,
 - `start_date` and `end_date` are `YYYY-MM-DD`, inclusive, both or neither. `last_days` is the number of days up to the newest day of the source.
 - `page` is a path such as `/pricing` or a full https URL on the site. A URL on another host is an error.
 - `query` is 1 exact search query. The match is case-sensitive.
-- `compare_start_date` and `compare_end_date` ask for a 2nd period. `compare_page` asks for a 2nd page. A call has 1 comparison. The result adds `comparison` (the same fields) and `delta` (main value minus comparison value, in the unit of each total).
+- `compare_start_date` and `compare_end_date` ask for a 2nd period. `compare_page` asks for a 2nd page. A call has 1 comparison. The result adds `comparison` (the same fields) and `delta` (main value minus comparison value, in the unit of each total, or `null` when the totals of 1 side are `null`).
 
 Each source returns `status` (`ok`, `not_connected`, `error`, or `unsupported`), a `reason`, a `thin_data` flag, and its rows. `thin_data` means that there is too little data to carry a decision. A source that fails does not stop the others. A source that ran with a parameter shows the values that it used in `applied`.
 
@@ -41,7 +41,7 @@ A source that takes `page` also takes `compare_page`. A source that takes dates 
 
 ### Which days are complete
 
-Search Console and GA4 keep updating recent days, so a recent day can hold data that still changes. A dated result of these 2 providers has `coverage`, so that an agent can tell a real 0 from a partial day: a day up to `last_complete_day` with no rows is a real 0, and it counts as a drop. A later day is partial: its data can still change, and it is not a drop. A missing day is normal in Search Console, because the API leaves out a day with no data.
+Search Console and GA4 keep updating recent days, so a recent day can hold data that still changes. A dated result of these 2 providers has `coverage`, so that an agent can tell a real 0 from a partial day: a day up to `last_complete_day` with no rows is a real 0, and it counts as a drop. A later day is partial: its data can still change, and it is not a drop. A missing day is normal in Search Console, because the API leaves out a day with no data. If each day of a Search Console range is partial and the API gives no row, `totals` is `null`, because Google can still add data to these days: the total is unknown, not 0. `reason` says so, and `delta` is `null`, so it shows no drop. A range with 1 complete day or more and no row keeps `totals` 0.
 
 | Field | Meaning |
 | --- | --- |
