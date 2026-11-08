@@ -59,13 +59,19 @@ def holds(name: str) -> Check:
     return lambda reply: is_object(reply) and name in reply
 
 
+def has_any(*names: str) -> Check:
+    """Each good answer of this read has at least 1 of the fields, so {} is a failure."""
+    return lambda reply: is_object(reply) and any(name in reply for name in names)
+
+
 def documented(*names: str) -> Check:
-    """The docs list all fields of the answer, and they do not say what an empty answer holds.
+    """The docs list all fields of the answer, and {} can be a real answer.
 
     {} and any 1 of the fields pass, so a real empty answer stays ok. Other text, such as
     {"message": "try later"}, is a failure: it must not read as "no data".
     """
-    return lambda reply: is_object(reply) and (not reply or any(name in reply for name in names))
+    some = has_any(*names)
+    return lambda reply: reply == {} or some(reply)
 
 
 def entry(site: Site, *parts: Any) -> Path:

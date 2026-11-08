@@ -64,16 +64,16 @@ SavedReport ==
 Answer ==
   /\ pc = "flight" /\ pc' = "answered" /\ reply' \in {"rows", "noRows", "emptyObject", "otherText"}
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, status, totals, partial, sent>>
-\* gsc.REPORT = shared.documented passes {}. ga4.REPORT = shared.holds("kind") does not.
-Good(r, p) == r \in {"rows", "noRows"} \/ (r = "emptyObject" /\ p = "gsc")
+\* gsc.REPORT = shared.has_any and ga4.REPORT = shared.holds("kind") refuse {}.
+Good(r) == r \in {"rows", "noRows"}
 BadShape ==
-  /\ pc = "answered" /\ ~Good(reply, prov) /\ pc' = "result" /\ status' = "error"
+  /\ pc = "answered" /\ ~Good(reply) /\ pc' = "result" /\ status' = "error"
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, totals, partial, sent>>
 \* gsc._report, ga4._report: with no totals row, totals are null ("none") when the start is
 \* after the shown last complete day (each day is partial), else 0 for each metric.
 \* _google.coverage: partial_days runs from the day after the last complete day to the end.
 Result ==
-  /\ pc = "answered" /\ Good(reply, prov) /\ pc' = "result" /\ status' = "ok"
+  /\ pc = "answered" /\ Good(reply) /\ pc' = "result" /\ status' = "ok"
   /\ shownLast' = IF cov = "api" THEN shownLast ELSE fetchedLast - 1
   /\ totals' = IF reply = "rows" THEN "value"
                ELSE IF start <= shownLast' THEN "zero" ELSE "none"

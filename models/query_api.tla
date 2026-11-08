@@ -72,12 +72,13 @@ ReadQuery ==
 Rows ==
   /\ pc = "flight" /\ pc' = "rows" /\ scrubbed' = TRUE /\ reply' \in {"data", "noData"}
   /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved>>
-\* shared.documented passes {}: Search Console search_analytics, sitemaps, sitemap, GA4 metadata.
-EmptyObjectPasses ==
-  /\ pc = "flight" /\ api \in Google /\ pc' = "rows" /\ scrubbed' = TRUE /\ reply' = "emptyObject"
+\* Search Console sitemaps and sitemap (shared.documented) pass {}: Google leaves out an empty
+\* sitemap list, and the docs mark no field of a sitemap as always there. {} is their documented empty.
+EmptySitemapIsNoData ==
+  /\ pc = "flight" /\ api = "gsc" /\ pc' = "rows" /\ scrubbed' = TRUE /\ reply' = "noData"
   /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved>>
-\* shared.holds, the GA4 report check (kind), and the url_inspection check (inspectionResult) refuse {}:
-\* net.BAD_SHAPE, and the window starts.
+\* shared.holds and shared.has_any refuse {}: Search Console search_analytics and url_inspection,
+\* GA4 reports and metadata. net.BAD_SHAPE, and the window starts.
 EmptyObjectFails ==
   /\ pc = "flight" /\ pc' = "fixedError" /\ scrubbed' = TRUE /\ reply' = "emptyObject"
   /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved>>
@@ -101,7 +102,7 @@ Next ==
   \/ TaskMatches \/ TaskNoMatch \/ NoMethod \/ MethodNamed \/ MethodUnknown
   \/ FieldWrong \/ FieldsGood \/ SiteBad \/ ValueWrong \/ DatesRefused \/ DatesPass
   \/ LocalRefusal \/ SavedAnswer \/ SharedFailure \/ ReadQuery
-  \/ Rows \/ EmptyObjectPasses \/ EmptyObjectFails \/ OtherTextFails
+  \/ Rows \/ EmptySitemapIsNoData \/ EmptyObjectFails \/ OtherTextFails
   \/ Google400 \/ Other400 \/ OtherFailure \/ Done
 
 Spec == Init /\ [][Next]_vars

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix an HTTP 200 answer of `{}` from a Search Console report or GA4 `metadata`: it showed status `ok` with 0 rows. Now it is a wrong shape: status `error`, not saved, and the same request does not go out for 60 seconds. `{}` of the Search Console sitemap list stays `ok`, because Google leaves out an empty list.
 - Enforce the 0 count rule of the Clarity click tasks in the server: after a saved dashboard count of 0 for the same click and days, `recordings` gives status `skipped`, sends nothing, and spends no call.
 - Fix a GA4 drop to 0 traffic that showed no 0: a range with a complete day and no sessions gave `totals` `{}`, so `delta` showed no drop. Now `totals` holds 0 for each metric. A range of only partial days with no row has `totals` and `delta` `null`, and `reason` says that the total is unknown, the same as Search Console.
 - Fix a saved Search Console report after Google moves `firstIncompleteDate`: it showed a day as complete with the partial rows of that day. The report now goes out again.

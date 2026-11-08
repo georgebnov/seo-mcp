@@ -65,9 +65,12 @@ MISS_REASON = (
     "No rows match. A page or query filter is an exact, case-sensitive match, and "
     "Search Console hides rare queries."
 )
-# A live read of a date range with no data gave only responseAggregationType, with no rows.
-REPORT = shared.documented("rows", "responseAggregationType", "metadata")
+# A live read of a date range with no data gave only responseAggregationType, with no rows, so
+# {} is a failure.
+REPORT = shared.has_any("rows", "responseAggregationType", "metadata")
+# Google leaves out an empty sitemap list, so {} is a site with no sitemap.
 SITEMAP_LIST = shared.documented("sitemap")
+# The docs mark no field of the Sitemaps resource as always there.
 SITEMAP = shared.documented(
     "path",
     "lastSubmitted",

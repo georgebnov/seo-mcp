@@ -20,7 +20,6 @@ const backwards = (v) => v.dates === "startAfterEndRelative";
 export const state = (v) => {
   if (v.pc === "datesSet" && backwards(v)) return "The dates pass, but the start is after the end";
   if (v.pc === "flight" && backwards(v)) return "A query with the start after the end is on the network";
-  if (v.pc === "rows" && v.reply === "emptyObject") return "The agent gets status ok and 0 rows from {}";
   return names[v.pc];
 };
 const labels = {
@@ -45,7 +44,7 @@ const labels = {
   SharedFailure: "the same request failed inside the window",
   ReadQuery: "the server fills the site and the key and sends 1 listed read request",
   Rows: "the API answers with a documented field",
-  EmptyObjectPasses: "Search Console or GA4 metadata answers {}",
+  EmptySitemapIsNoData: "Search Console answers {} for a sitemap read: no sitemap",
   EmptyObjectFails: "the API answers HTTP 200 with no documented field",
   OtherTextFails: "the API answers HTTP 200 with no documented field",
   Google400: "a Google API answers HTTP 400 with a message",

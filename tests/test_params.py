@@ -305,7 +305,8 @@ async def test_no_rows_for_a_filter_is_explained(write_config, fake_net, account
     def empty(request):
         if request.url.host == "oauth2.googleapis.com":
             return answer(request)
-        return httpx2.Response(200, json={})
+        # A live read with no rows gave only this field.
+        return httpx2.Response(200, json={"responseAggregationType": "byProperty"})
 
     fake_net(empty)
     data = await ask(["search_queries"], query="Mixed Case")
