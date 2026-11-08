@@ -328,11 +328,19 @@ async def _report(
     ]
     # GA4 leaves out rows and totals when the window has no sessions.
     total_cells = (reply.get("totals") or [{}])[0].get("metricValues", [])
-    totals = {name: float(cell["value"]) for name, cell in zip(names, total_cells, strict=False)}
-    notes = [] if rows else ["GA4 reports no organic sessions in the window."]
-    thin = totals.get("sessions", 0) < THIN_SESSIONS
-    extra: dict[str, Any] = {"page_match": PAGE_MATCH} if params.page else {}
+    totals: dict[str, float] | None = {
+        name: float(cell["value"]) for name, cell in zip(names, total_cells, strict=False)
+    }
     coverage = _coverage(reply, window)
+    partial = coverage["partial_days"] if coverage else None
+    notes = [] if rows else ["GA4 reports no organic sessions in the window."]
+    if not rows and not totals:
+        # No row on a partial day can mean that GA4 has not processed it yet, so it is no 0.
+        unknown = partial is not None and partial["from"] == window["startDate"]
+        totals = None if unknown else dict.fromkeys(METRICS, 0.0)
+        notes += [_google.UNKNOWN_REASON] if unknown else []
+    thin = (totals or {}).get("sessions", 0) < THIN_SESSIONS
+    extra: dict[str, Any] = {"page_match": PAGE_MATCH} if params.page else {}
     if params.end and coverage and window["endDate"] != params.end.isoformat():
         extra["date_moved"] = moved(params.end, coverage["end_date"])
         notes.append(moved_note(extra["date_moved"]))
