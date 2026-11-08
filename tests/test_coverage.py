@@ -318,6 +318,38 @@ async def test_a_saved_search_console_report_keeps_its_estimate_across_midnight(
     assert second["coverage"] == first["coverage"]
 
 
+async def test_a_saved_report_of_a_partial_day_never_shows_it_complete(live, fake_net, monkeypatch):
+    t0 = datetime(2026, 3, 18, 20, 0, tzinfo=UTC)
+    named = {"start_date": "2026-03-10", "end_date": "2026-03-18"}
+    freeze(monkeypatch, t0)
+    search_console(fake_net, "2026-03-17", days=["2026-03-17"])
+    await source("search_pages")
+    freeze(monkeypatch, t0 + timedelta(seconds=200))
+    first = await source("search_queries", **named)
+    assert first["coverage"]["partial_days"]["from"] == "2026-03-17"
+    # Google moves its day: the coverage entry ends at t0+300 s, and the report entry is still good.
+    freeze(monkeypatch, t0 + timedelta(seconds=350))
+    calls = search_console(fake_net, "2026-03-18", days=["2026-03-17"])
+    second = await source("search_queries", **named)
+    assert second["coverage"]["last_complete_day"] == "2026-03-17"
+    assert len(reports(calls)) == 2, "Rows of a partial day must not serve as complete."
+    assert second["from_cache"] is False
+
+
+async def test_a_saved_report_serves_while_the_day_does_not_move(live, fake_net, monkeypatch):
+    t0 = datetime(2026, 3, 18, 20, 0, tzinfo=UTC)
+    named = {"start_date": "2026-03-10", "end_date": "2026-03-18"}
+    freeze(monkeypatch, t0)
+    search_console(fake_net, "2026-03-17", days=["2026-03-17"])
+    first = await source("search_queries", **named)
+    freeze(monkeypatch, t0 + timedelta(seconds=200))
+    calls = search_console(fake_net, "2026-03-17", days=["2026-03-17"])
+    second = await source("search_queries", **named)
+    assert bodies(calls) == []
+    assert second["from_cache"] is True
+    assert second["coverage"] == first["coverage"]
+
+
 async def test_a_failed_coverage_read_keeps_the_report(live, fake_net, monkeypatch):
     freeze(monkeypatch, MORNING)
 

@@ -51,10 +51,13 @@ CoverageEstimate ==
 SendReport ==
   /\ pc = "covered" /\ pc' = "flight" /\ sent' = sent + 1 /\ fetchedLast' = Last
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, shownLast, reply, status, totals, partial>>
-\* shared.once: a saved answer of the same body, from before the API moved its last complete day.
-\* Another source or agent read the coverage first, so the 2 entries end at different times.
+\* shared.once: a saved answer of the same body. Another source or agent read the coverage first,
+\* so the 2 entries end at different times. With an API day, that day is in the key of the report
+\* (gsc._report basis), so a saved answer has the day of the coverage. With an estimate, it can
+\* be from before the API moved its last complete day.
 SavedReport ==
-  /\ pc = "covered" /\ pc' = "answered" /\ fetchedLast' = Last - 1
+  /\ pc = "covered" /\ pc' = "answered"
+  /\ fetchedLast' = IF cov = "api" THEN shownLast ELSE Last - 1
   /\ reply' \in {"rows", "noRows"}
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, shownLast, status, totals, partial, sent>>
 \* An HTTP 200. noRows has a documented field and no row, such as responseAggregationType or kind.

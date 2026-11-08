@@ -2,5 +2,4 @@
 # scripts/check_models.py fails when a break is not in this list, or when a listed rule holds.
 agent_flow NoSampleAfterZeroCount  Fix: refuse a Clarity sample after a 0 dashboard count.
 get_seo_data_dates NoDocumentedFieldIsNeverOk  Fix: refuse {} in the Search Console report check.
-get_seo_data_dates PartialDayNeverShownComplete  Fix: tie a saved report to the coverage that it read.
 query_api NoDocumentedFieldIsNeverOk  Fix: refuse {} in the Search Console and GA4 metadata checks.
