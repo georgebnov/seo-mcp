@@ -1,0 +1,63 @@
+export const title = "An agent answers a question with seo-mcp";
+const names = {
+  question: "The agent has a question",
+  sites: "The agent has the list of sites",
+  noSite: "The agent stops: no site for this folder",
+  quotaRead: "The agent reads calls_left",
+  gapReported: "The agent reports the gap and stops",
+  choosing: "The agent picks a call",
+  simple: "The agent called get_seo_data",
+  specific: "The agent called query_api with a request",
+  taskRows: "The agent asks query_api for a task",
+  fields: "The agent has the fields and names of 1 API, no network",
+  metadata: "The agent asked GA4 metadata, a real request",
+  noTask: "No task matches: status unsupported",
+  dashboard: "The agent asks the dashboard for the count",
+  zeroCount: "The dashboard count is 0",
+  someCount: "The dashboard count is above 0",
+  zeroReported: "The agent reports the 0 and stops",
+  recordings: "The agent asks for a sample of sessions",
+  answerRead: "The agent reads the answer",
+  reported: "The agent reports and stops",
+};
+export const state = (v) => names[v.pc];
+const labels = {
+  ListSites: "the agent calls list_sites, with no network and no spend",
+  NoRow: "no row holds the site",
+  ReadQuota: "a row holds the site",
+  TooFewCalls: "too few calls are left",
+  EnoughCalls: "enough calls are left",
+  PickSimple: "a simple question: 1 source, 1 time frame, 1 page",
+  PickSpecific: "a specific question and the agent knows the call",
+  PickTask: "the agent knows the thing but not the call",
+  AskFields: "the tool text names the API, and the agent asks query_api(api) for its fields",
+  FieldsEnough: "the list holds each name, and the agent sends the request",
+  CustomName: "the agent needs a custom name",
+  NamesRead: "the agent sends the request with the custom name",
+  NoTaskMatch: "no task matches the words",
+  AnotherWay: "the agent tries another call",
+  SimpleAnswer: "the sources answer",
+  SimpleUnsupported: "a source says unsupported",
+  SpecificAnswer: "the API answers",
+  AskDashboard: "the task gives the steps, and the agent makes step 1",
+  CountZero: "no page has a count above 0",
+  CountAbove: "a page has a count above 0",
+  DashboardFails: "the call fails or the server refuses it",
+  StopAtZero: "the agent obeys skip_if",
+  IgnoreStopRule: "the agent ignores skip_if, and the server sends the call",
+  AskSample: "the agent wants the elements",
+  CountIsEnough: "the count answers the question",
+  SampleAnswer: "the sample comes back",
+  Report: "the agent writes the report with the limits",
+};
+export const step = (action) => (action === "Done" ? null : labels[action]);
+const phases = {
+  question: "Read, no spend", sites: "Read, no spend", quotaRead: "Read, no spend",
+  choosing: "Choose, no spend", taskRows: "Choose, no spend", noTask: "Choose, no spend",
+  fields: "Choose, no spend", metadata: "Call",
+  simple: "Call", specific: "Call", dashboard: "Call", recordings: "Call",
+  zeroCount: "Read the answer", someCount: "Read the answer", answerRead: "Read the answer",
+  noSite: "Stop", gapReported: "Stop", zeroReported: "Stop", reported: "Stop",
+};
+export const group = (v) => phases[v.pc];
+export const colors = { "Read, no spend": "blue", "Choose, no spend": "teal", Call: "orange", "Read the answer": "yellow", Stop: "purple" };
