@@ -303,14 +303,62 @@ async def test_a_ga4_range_with_a_complete_day_and_no_rows_is_a_real_0(
         compare_start_date="2026-03-01",
         compare_end_date="2026-03-01",
     )
-    assert result["totals"] == {"sessions": 0, "totalUsers": 0, "engagementRate": 0, "keyEvents": 0}
+    # engagementRate is engagedSessions / sessions: with 0 sessions it is 0/0, so no rate.
+    assert result["totals"] == {
+        "sessions": 0,
+        "totalUsers": 0,
+        "engagementRate": None,
+        "keyEvents": 0,
+    }
     assert result["delta"] == {
         "sessions": -40,
         "totalUsers": -30,
-        "engagementRate": -0.5,
+        "engagementRate": None,
         "keyEvents": -2,
     }
     assert "unknown" not in (result["reason"] or "")
+
+
+async def test_ga4_totals_from_the_api_stay_as_ga4_sends_them(live, fake_net, monkeypatch):
+    freeze(monkeypatch, MORNING)
+    ga4_day_has_sessions(fake_net, "2026-03-10", 0)
+    result = await source("ga4_organic", start_date="2026-03-10", end_date="2026-03-10")
+    assert result["totals"] == {
+        "sessions": 0,
+        "totalUsers": 30,
+        "engagementRate": 0.5,
+        "keyEvents": 2,
+    }
+    assert result["rows"][0]["engagementRate"] == 0.5
+
+
+# A rate or an average divides by a count. With no rows the count is 0, so the value is 0/0.
+RATIO_WORDS = ("Rate", "average", "Per")
+
+
+def test_each_ga4_metric_has_an_empty_total_that_is_no_false_0():
+    wrong = sorted(
+        name
+        for name, empty in ga4.EMPTY_TOTALS.items()
+        if empty is not None and any(word in name for word in RATIO_WORDS)
+    )
+    fix = (
+        "In ga4.EMPTY_TOTALS, give a rate or an average None: with no sessions it is 0/0, "
+        "and a 0 shows a false drop in delta."
+    )
+    assert not wrong, f"{fix} {wrong}"
+    missing = sorted(set(ga4.METRICS) ^ set(ga4.EMPTY_TOTALS))
+    assert not missing, f"Give each GA4 metric its empty total in ga4.EMPTY_TOTALS: {missing}"
+
+
+async def test_a_metric_that_is_null_on_1_side_has_a_null_delta(live, fake_net):
+    page = f"https://{HOST}/a"
+    traffic = {"metricName": "Traffic", "information": [{"totalSessionCount": "110", "Url": page}]}
+    fake_net(lambda _: httpx2.Response(200, json=[traffic]))
+    result = await source("clarity", page="/a", compare_page="/c")
+    assert result["totals"] == {"sessions": 110}
+    assert result["comparison"]["totals"] == {"sessions": None}
+    assert result["delta"] == {"sessions": None}
 
 
 async def test_a_ga4_range_of_only_partial_days_with_no_rows_has_unknown_totals(
@@ -956,8 +1004,13 @@ async def test_each_covered_source_shows_a_drop_to_a_real_0(live, fake_net, monk
         compare_end_date="2026-03-01",
     )
     totals, delta = result["totals"] or {}, result.get("delta") or {}
-    fix = "A complete range with no rows has totals 0 for each metric, and delta shows the drop:"
-    shown = bool(totals) and not any(totals.values()) and any(value < 0 for value in delta.values())
+    fix = (
+        "A complete range with no rows has totals 0 for each count and null for each rate, "
+        "and delta shows the drop of the counts:"
+    )
+    counts = [value for value in totals.values() if value is not None]
+    drops = [value for value in delta.values() if value is not None and value < 0]
+    shown = bool(counts) and not any(counts) and bool(drops)
     assert shown, f"{name}: {fix} totals {result['totals']}, delta {result.get('delta')}"
 
 

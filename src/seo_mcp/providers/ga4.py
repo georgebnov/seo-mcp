@@ -49,7 +49,15 @@ NO_ZONE = "The property zone: the reply names none."
 THIN_SESSIONS = 100
 MAX_DAILY_ROWS = 100
 PAGE_MATCH = "Sessions that start on this exact path, on every host of the property."
-METRICS = ("sessions", "totalUsers", "engagementRate", "keyEvents")
+# The totals of a range with no rows. GA4 leaves them out at 0 sessions. A count is a real 0,
+# but engagementRate is engagedSessions / sessions, so with 0 sessions it is 0/0: no rate.
+EMPTY_TOTALS: dict[str, float | None] = {
+    "sessions": 0.0,
+    "totalUsers": 0.0,
+    "engagementRate": None,
+    "keyEvents": 0.0,
+}
+METRICS = tuple(EMPTY_TOTALS)
 ORGANIC = {
     "filter": {
         "fieldName": "sessionDefaultChannelGroup",
@@ -328,7 +336,7 @@ async def _report(
     ]
     # GA4 leaves out rows and totals when the window has no sessions.
     total_cells = (reply.get("totals") or [{}])[0].get("metricValues", [])
-    totals: dict[str, float] | None = {
+    totals: dict[str, float | None] | None = {
         name: float(cell["value"]) for name, cell in zip(names, total_cells, strict=False)
     }
     coverage = _coverage(reply, window)
@@ -337,9 +345,9 @@ async def _report(
     if not rows and not totals:
         # No row on a partial day can mean that GA4 has not processed it yet, so it is no 0.
         unknown = partial is not None and partial["from"] == window["startDate"]
-        totals = None if unknown else dict.fromkeys(METRICS, 0.0)
+        totals = None if unknown else dict(EMPTY_TOTALS)
         notes += [_google.UNKNOWN_REASON] if unknown else []
-    thin = (totals or {}).get("sessions", 0) < THIN_SESSIONS
+    thin = ((totals or {}).get("sessions") or 0) < THIN_SESSIONS
     extra: dict[str, Any] = {"page_match": PAGE_MATCH} if params.page else {}
     if params.end and coverage and window["endDate"] != params.end.isoformat():
         extra["date_moved"] = moved(params.end, coverage["end_date"])
