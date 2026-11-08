@@ -31,10 +31,11 @@ DatesInOrder == pc = "named" /\ start <= end /\ pc' = "checked" /\ Same
 \* gsc._newest_end, ga4._newest_end: a start past the newest day raises too_late before the token.
 StartTooLate == pc = "checked" /\ start > Newest /\ pc' = "tooLate" /\ Same
 \* An end past the newest day goes out as the newest day, and the result gets date_moved.
-\* ga4._newest_end sends an end on the newest day as today, so that end also gets date_moved.
+\* ga4._newest_end sends an end on the newest day as today when the start is before the UTC date
+\* (Newest - 1), so that end also gets date_moved.
 EndSet ==
   /\ pc = "checked" /\ start <= Newest /\ pc' = "endSet"
-  /\ sentEnd' = Min(end, Newest) /\ moved' = (end > Newest \/ (prov = "ga4" /\ end = Newest))
+  /\ sentEnd' = Min(end, Newest) /\ moved' = (end > Newest \/ (prov = "ga4" /\ end = Newest /\ start + 1 < Newest))
   /\ UNCHANGED <<prov, start, end, cov, fetchedLast, shownLast, reply, status, totals, partial, sent>>
 \* gsc._last_complete: the coverage read (its own saved entry, 5 minutes) gives
 \* firstIncompleteDate minus 1. It is the value of the API now.

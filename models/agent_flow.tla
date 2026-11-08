@@ -81,5 +81,8 @@ NoSampleAfterZeroCount == ~(count = "zero" /\ sample)
 \* The recipe asks the dashboard first.
 DashboardComesFirst == sample => count # "unknown"
 \* Discovery makes no network call.
-DiscoverySpendsNothing == (pc \in Discovery /\ netCalls = 0) => spent = 0
+\* A step rule: a loop back to the choice comes after real calls, so a state rule cannot tell
+\* a discovery call from an earlier call.
+DiscoverySpendsNothing ==
+  [][(pc \in Discovery /\ pc' \in Discovery) => UNCHANGED <<spent, netCalls>>]_vars
 ====
