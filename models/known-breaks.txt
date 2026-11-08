@@ -5,4 +5,3 @@ get_seo_data_dates NoDocumentedFieldIsNeverOk  Fix: refuse {} in the Search Cons
 get_seo_data_dates PartialDayNeverShownComplete  Fix: tie a saved report to the coverage that it read.
 get_seo_data_dates UnfinishedDayIsNeverZero  Fix: show no 0 totals for a range of only partial days.
 query_api NoDocumentedFieldIsNeverOk  Fix: refuse {} in the Search Console and GA4 metadata checks.
-query_api StartAfterEndSendsNothing  Fix: check the order of GA4 relative dates before the request.

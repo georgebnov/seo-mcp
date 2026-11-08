@@ -43,16 +43,17 @@ SiteBad == pc = "methodKnown" /\ pc' = "inputError" /\ Keep
 ValueWrong == pc = "siteKnown" /\ pc' = "inputError" /\ Keep
 \* params.period, gsc._newest_end, ga4._newest_end, clarity._check_date: 2 YYYY-MM-DD dates in the
 \* wrong order, or a start past the newest day, raise BadInput before the token and the request.
+\* ga4._check_order: a GA4 start that is after the end in every zone, with a relative date, too.
 DatesRefused ==
-  /\ pc = "siteKnown" /\ dates' \in {"startPastNewest", "startAfterEndIso"}
+  /\ pc = "siteKnown" /\ dates' \in StartAfterEnd
+  /\ (dates' = "startAfterEndRelative" => api = "ga4")
   /\ pc' = "inputError"
   /\ UNCHANGED <<api, sent, wrote, scrubbed, saved, fromCache, moved, reply>>
-\* ga4._newest_end compares only 2 YYYY-MM-DD dates: a relative date passes with no check.
-\* A future end goes out as the newest day, and the result has date_moved.
+\* A range that is valid in some zone goes out. A future end goes out as the newest day, and the
+\* result has date_moved.
 DatesPass ==
   /\ pc = "siteKnown"
-  /\ dates' \in {"none", "inRange", "futureEnd", "startAfterEndRelative"}
-  /\ (dates' = "startAfterEndRelative" => api = "ga4")
+  /\ dates' \in {"none", "inRange", "futureEnd"}
   /\ pc' = "datesSet" /\ moved' = (dates' = "futureEnd")
   /\ UNCHANGED <<api, sent, wrote, scrubbed, saved, fromCache, reply>>
 LocalRefusal == pc = "datesSet" /\ pc' = "inputError" /\ Keep

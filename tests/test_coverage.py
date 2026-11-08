@@ -665,6 +665,56 @@ async def test_a_ga4_start_after_the_end_in_query_api_is_refused(live, fake_net)
     sent_nothing(calls)
 
 
+# GA4 reads a relative date in the property zone, and the server knows only the UTC date U
+# (2026-03-18 at MORNING). The property day is U-1, U, or U+1.
+@pytest.mark.parametrize(
+    ("start", "end", "why"),
+    [
+        ("yesterday", "3daysAgo", "fewer days ago"),
+        ("today", "yesterday", "fewer days ago"),
+        ("2daysAgo", "5daysAgo", "fewer days ago"),
+        # yesterday is U at the latest, so a start of U+1 is after it in every zone.
+        ("2026-03-19", "yesterday", "every time zone"),
+        # today is U-1 at the earliest, so it is after an end of U-2 in every zone.
+        ("today", "2026-03-16", "every time zone"),
+    ],
+)
+async def test_a_ga4_relative_start_after_the_end_sends_nothing(
+    live, fake_net, monkeypatch, start, end, why
+):
+    freeze(monkeypatch, MORNING)
+    calls = fake_net(replies(lambda _: None))
+    request = {"dateRanges": [{"startDate": start, "endDate": end}]}
+    data = await core.query_api(HOST, "ga4", "run_report", request)
+    assert data["status"] == "error"
+    assert "dateRanges startDate must not be after the end date" in data["reason"]
+    assert why in data["reason"]
+    assert "sent nothing" in data["reason"]
+    sent_nothing(calls)
+
+
+# Each of these is a valid range in some property zone, so it goes out as asked.
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("3daysAgo", "3daysAgo"),
+        ("7daysAgo", "yesterday"),
+        # In a zone on U+1, yesterday is U.
+        ("2026-03-18", "yesterday"),
+        # In a zone on U-1, today is U-1.
+        ("today", "2026-03-17"),
+    ],
+)
+async def test_a_ga4_range_that_can_be_valid_goes_out(live, fake_net, monkeypatch, start, end):
+    freeze(monkeypatch, MORNING)
+    calls = analytics(fake_net)
+    request = {"dateRanges": [{"startDate": start, "endDate": end}]}
+    data = await core.query_api(HOST, "ga4", "run_report", request)
+    assert data["status"] == "ok", data["reason"]
+    sent = [json.loads(call.content) for call in calls if call.url.host == ga4.HOST]
+    assert [body["dateRanges"] for body in sent] == [[{"startDate": start, "endDate": end}]]
+
+
 # Rules that hold for each source.
 
 COVERED = {"search_queries", "search_pages", "quick_wins", "ga4_organic", "ga4_landing_pages"}
