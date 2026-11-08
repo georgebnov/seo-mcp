@@ -191,7 +191,7 @@ async def test_a_day_past_the_last_complete_day_is_partial(live, fake_net, monke
     assert "partial" in result["reason"]
 
 
-def complete_day_has_clicks(fake_net, day, clicks):
+def clicks_on(day, clicks):
     """Answer firstIncompleteDate 2026-03-16, and give only `day` its clicks."""
 
     def reply(request):
@@ -206,7 +206,11 @@ def complete_day_has_clicks(fake_net, day, clicks):
             answer["rows"] = [{**total, "keys": ["q" for _ in body.get("dimensions", [])]}]
         return httpx2.Response(200, json=answer)
 
-    return fake_net(replies(reply))
+    return reply
+
+
+def complete_day_has_clicks(fake_net, day, clicks):
+    return fake_net(replies(clicks_on(day, clicks)))
 
 
 # George's rule: an unfinished day is never a 0.
@@ -259,6 +263,73 @@ async def test_a_range_with_a_complete_day_and_no_rows_is_a_real_0(
     assert result["totals"] == {"clicks": 0, "impressions": 0}
     assert result["delta"] == {"clicks": -40, "impressions": -900}
     assert "unknown" not in (result["reason"] or "")
+
+
+def sessions_on(day, sessions):
+    """Answer each GA4 report with no rows and no totals, as GA4 does, except for `day`."""
+
+    def reply(request):
+        if request.url.host != ga4.HOST:
+            return None
+        body: dict = {"metadata": {"timeZone": "UTC"}, **ga4_kind(request)}
+        if json.loads(request.content)["dateRanges"][0]["startDate"] == day:
+            values = [{"value": str(sessions)}, {"value": "30"}, {"value": "0.5"}, {"value": "2"}]
+            body["metricHeaders"] = [{"name": name} for name in ga4.METRICS]
+            body["rows"] = [{"dimensionValues": [{"value": "20260301"}], "metricValues": values}]
+            body["totals"] = [{"metricValues": values}]
+        return httpx2.Response(200, json=body)
+
+    return reply
+
+
+def ga4_day_has_sessions(fake_net, day, sessions):
+    return fake_net(replies(sessions_on(day, sessions)))
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [("2026-03-10", "2026-03-10"), ("2026-03-14", "2026-03-17")],
+    ids=["complete", "complete_and_partial"],
+)
+async def test_a_ga4_range_with_a_complete_day_and_no_rows_is_a_real_0(
+    live, fake_net, monkeypatch, start, end
+):
+    freeze(monkeypatch, MORNING)
+    ga4_day_has_sessions(fake_net, "2026-03-01", 40)
+    result = await source(
+        "ga4_organic",
+        start_date=start,
+        end_date=end,
+        compare_start_date="2026-03-01",
+        compare_end_date="2026-03-01",
+    )
+    assert result["totals"] == {"sessions": 0, "totalUsers": 0, "engagementRate": 0, "keyEvents": 0}
+    assert result["delta"] == {
+        "sessions": -40,
+        "totalUsers": -30,
+        "engagementRate": -0.5,
+        "keyEvents": -2,
+    }
+    assert "unknown" not in (result["reason"] or "")
+
+
+async def test_a_ga4_range_of_only_partial_days_with_no_rows_has_unknown_totals(
+    live, fake_net, monkeypatch
+):
+    freeze(monkeypatch, MORNING)
+    ga4_day_has_sessions(fake_net, "2026-03-01", 40)
+    result = await source(
+        "ga4_organic",
+        start_date="2026-03-17",
+        end_date="2026-03-17",
+        compare_start_date="2026-03-01",
+        compare_end_date="2026-03-01",
+    )
+    assert result["coverage"]["partial_days"] == {"from": "2026-03-17", "to": "2026-03-17"}
+    assert result["comparison"]["totals"]["sessions"] == 40
+    assert result["totals"] is None
+    assert result["delta"] is None
+    assert "No day of the range is complete, so the total is unknown." in result["reason"]
 
 
 async def test_a_default_range_ends_on_the_last_complete_day_of_the_api(
@@ -870,6 +941,24 @@ async def test_no_covered_source_shows_a_0_for_only_partial_days(live, fake_net,
     drops = sorted(key for key, value in (result.get("delta") or {}).items() if value < 0)
     fix = "A range of only partial days has unknown totals (None) and no delta, never a 0:"
     assert not zeros and not drops, f"{name}: {fix} {zeros} {drops}"
+
+
+@pytest.mark.parametrize("name", sorted(COVERED))
+async def test_each_covered_source_shows_a_drop_to_a_real_0(live, fake_net, monkeypatch, name):
+    freeze(monkeypatch, MORNING)
+    ga4_reply, gsc_reply = sessions_on("2026-03-01", 40), clicks_on("2026-03-01", 40)
+    fake_net(replies(lambda request: ga4_reply(request) or gsc_reply(request)))
+    result = await source(
+        name,
+        start_date="2026-03-10",
+        end_date="2026-03-10",
+        compare_start_date="2026-03-01",
+        compare_end_date="2026-03-01",
+    )
+    totals, delta = result["totals"] or {}, result.get("delta") or {}
+    fix = "A complete range with no rows has totals 0 for each metric, and delta shows the drop:"
+    shown = bool(totals) and not any(totals.values()) and any(value < 0 for value in delta.values())
+    assert shown, f"{name}: {fix} totals {result['totals']}, delta {result.get('delta')}"
 
 
 @pytest.mark.parametrize("name", sorted(COVERED))

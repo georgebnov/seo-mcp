@@ -69,15 +69,14 @@ Good(r, p) == r \in {"rows", "noRows"} \/ (r = "emptyObject" /\ p = "gsc")
 BadShape ==
   /\ pc = "answered" /\ ~Good(reply, prov) /\ pc' = "result" /\ status' = "error"
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, totals, partial, sent>>
-\* gsc._report: with no totals row, totals are null when the start is after the shown last
-\* complete day (each day is partial), else clicks 0 and impressions 0.
-\* ga4._report: GA4 leaves out totals with no sessions, and the code shows {}.
+\* gsc._report, ga4._report: with no totals row, totals are null ("none") when the start is
+\* after the shown last complete day (each day is partial), else 0 for each metric.
 \* _google.coverage: partial_days runs from the day after the last complete day to the end.
 Result ==
   /\ pc = "answered" /\ Good(reply, prov) /\ pc' = "result" /\ status' = "ok"
   /\ shownLast' = IF cov = "api" THEN shownLast ELSE fetchedLast - 1
   /\ totals' = IF reply = "rows" THEN "value"
-               ELSE IF prov = "gsc" /\ start <= shownLast' THEN "zero" ELSE "none"
+               ELSE IF start <= shownLast' THEN "zero" ELSE "none"
   /\ partial' = (sentEnd > shownLast')
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, reply, sent>>
 Done == pc \in {"paramError", "tooLate", "result"} /\ UNCHANGED vars
@@ -101,4 +100,6 @@ PartialDaysAreMarked == (Ok /\ sentEnd > shownLast) => partial
 NoDocumentedFieldIsNeverOk == (pc = "result" /\ reply \in {"emptyObject", "otherText"}) => status # "ok"
 \* George: an unfinished day is never a 0.
 UnfinishedDayIsNeverZero == (Ok /\ start > shownLast) => totals # "zero"
+\* George: a range with a complete day and no rows is a real 0, so a drop shows in delta.
+CompleteDayWithNoRowsIsZero == (Ok /\ reply = "noRows" /\ start <= shownLast) => totals = "zero"
 ====

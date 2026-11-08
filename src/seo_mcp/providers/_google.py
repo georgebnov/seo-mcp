@@ -21,6 +21,7 @@ ACCEPTS: dict[str, frozenset[str]] = {}
 APIS: dict[str, Any] = {}
 TOKEN_SECONDS = 3600
 REFRESH_MARGIN_SECONDS = 60
+UNKNOWN_REASON = "No day of the range is complete, so the total is unknown."
 
 _tokens: dict[tuple[str, str], tuple[str, float]] = {}
 
