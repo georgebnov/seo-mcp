@@ -70,7 +70,8 @@ BadShape ==
   /\ pc = "answered" /\ ~Good(reply, prov) /\ pc' = "result" /\ status' = "error"
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, totals, partial, sent>>
 \* gsc._report, ga4._report: with no totals row, totals are null ("none") when the start is
-\* after the shown last complete day (each day is partial), else 0 for each metric.
+\* after the shown last complete day (each day is partial), else "zero": 0 for each count.
+\* A GA4 rate is null in "zero", because 0 sessions give 0/0 (ga4.EMPTY_TOTALS).
 \* _google.coverage: partial_days runs from the day after the last complete day to the end.
 Result ==
   /\ pc = "answered" /\ Good(reply, prov) /\ pc' = "result" /\ status' = "ok"

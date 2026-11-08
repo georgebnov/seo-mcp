@@ -60,7 +60,8 @@ A dated result has coverage: the start_date and end_date that went out, and
 last_complete_day with its source (api or estimate). A day up to last_complete_day with no rows
 is a real 0. A later day is partial: its data can still change, and it is not a drop.
 If each day of a range is partial and no row comes back, totals and delta are null (unknown).
-With 1 complete day or more and no row, each total is 0, so delta shows the drop.
+With 1 complete day or more and no row, each count is 0, so delta shows the drop. A GA4
+rate such as engagementRate is null then: with 0 sessions it is 0/0, and its delta is null.
 GA4 dates can be relative, such as 3daysAgo or today: GA4 reads them in the property zone.
 An end date past the newest day of a source moves to that day: date_moved shows the asked and
 the sent date, and reason says so. A start past that day is refused, and nothing goes out.
