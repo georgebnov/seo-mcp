@@ -96,19 +96,25 @@ def _warn_of_unequal_ranges(result: dict[str, Any], other: dict[str, Any]) -> No
     result["reason"] = " ".join(filter(None, [result["reason"], note]))
 
 
-def _delta(result: dict[str, Any], other: dict[str, Any]) -> dict[str, float] | None:
+def _delta(result: dict[str, Any], other: dict[str, Any]) -> dict[str, float | None] | None:
     """Give the main value minus the comparison value, in the unit of each total.
 
-    An unknown side (totals None) gives no delta, so that an unknown total is never a drop.
+    An unknown side (totals None) gives no delta, so that an unknown total is never a drop. A
+    metric that is null on 1 side, such as a GA4 rate of 0 sessions, has a null delta.
     """
     first, second = result.get("totals"), other.get("totals")
     if first is None or second is None:
         return None
-    return {
-        name: round(value - second[name], 6)
-        for name, value in first.items()
-        if isinstance(value, int | float) and isinstance(second.get(name), int | float)
-    }
+    delta: dict[str, float | None] = {}
+    for name, value in first.items():
+        if name not in second:
+            continue
+        paired = second[name]
+        if value is None or paired is None:
+            delta[name] = None
+        elif isinstance(value, int | float) and isinstance(paired, int | float):
+            delta[name] = round(value - paired, 6)
+    return delta
 
 
 async def _asked(

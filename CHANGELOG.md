@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix a false drop of the GA4 `engagementRate` in a range with a complete day and no sessions: `totals` showed 0, so `delta` showed a drop of the rate. With 0 sessions the rate is 0/0, so `engagementRate` and its `delta` are now `null`. The counts stay 0, and their `delta` shows the drop. In each `delta`, a metric that is `null` on 1 side is now `null`, also for a Clarity page that is not found.
 - Enforce the 0 count rule of the Clarity click tasks in the server: after a saved dashboard count of 0 for the same click and days, `recordings` gives status `skipped`, sends nothing, and spends no call.
 - Fix a GA4 drop to 0 traffic that showed no 0: a range with a complete day and no sessions gave `totals` `{}`, so `delta` showed no drop. Now `totals` holds 0 for each metric. A range of only partial days with no row has `totals` and `delta` `null`, and `reason` says that the total is unknown, the same as Search Console.
 - Fix a saved Search Console report after Google moves `firstIncompleteDate`: it showed a day as complete with the partial rows of that day. The report now goes out again.
