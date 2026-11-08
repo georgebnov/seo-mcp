@@ -178,6 +178,28 @@ async def _post(
     return await shared.once(path, send, good=REPORT, until=shared.after(keep))
 
 
+def _check_order(name: str, start_text: Any, end_text: Any, utc_day: date) -> None:
+    """Refuse a range with a relative date only when its start is after its end in every zone.
+
+    GA4 reads 2 relative dates in 1 zone, so their N values give the order. With 1 YYYY-MM-DD
+    date, the property day can be U-1, U, or U+1: a range that is valid in 1 of them goes out.
+    """
+    first, last = days_ago(start_text), days_ago(end_text)
+    if first is not None and last is not None:
+        if first < last:
+            raise BadInput(
+                f"{name} must not be after the end date: the start is fewer days ago than "
+                "the end. The server sent nothing."
+            )
+        return
+    begin, finish = bounds(start_text, utc_day), bounds(end_text, utc_day)
+    if begin and finish and begin[0] > finish[1]:
+        raise BadInput(
+            f"{name} must not be after the end date: the start is after the end in every time "
+            "zone of the property. The server sent nothing."
+        )
+
+
 def _newest_end(name: str, start_text: Any, end_text: Any) -> Any:
     """Give the end to send. The server reads no zone, and the day of the property is P.
 
@@ -190,6 +212,7 @@ def _newest_end(name: str, start_text: Any, end_text: Any) -> Any:
     if start and end and start > end:
         raise BadInput(f"{name} must not be after the end date.")
     utc_day = today()
+    _check_order(name, start_text, end_text, utc_day)
     furthest = utc_day + timedelta(days=SLACK_DAYS)
     if start and start > furthest:
         raise too_late(name, furthest)
