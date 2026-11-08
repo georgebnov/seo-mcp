@@ -4,6 +4,7 @@ import json
 from datetime import date, timedelta
 from pathlib import Path
 
+import httpx2
 import pytest
 
 from seo_mcp import core, providers, server, tasks
@@ -249,3 +250,169 @@ async def test_a_count_of_0_stops_the_sample_step():
 
 def test_the_readme_states_the_rule_of_a_count_of_0():
     assert "do not call `recordings`" in README.read_text()
+
+
+# The column and the words of each click count, as a real dashboard answer names them.
+COUNTS = {
+    "dead_clicks": ("TotalDeadClicks", "dead click"),
+    "rage_clicks": ("TotalRageClicks", "rage click"),
+    "quickback_clicks": ("TotalQuickbackClicks", "quickback click"),
+}
+
+
+def rewritten(name, window, start=None, end=None):
+    """The question as Clarity rewrites it, from a real answer."""
+    first = (start or window["start"]).replace("-", "/")
+    last = (end or window["end"]).replace("-", "/")
+    words = COUNTS[name][1]
+    return (
+        f"Total {words} counts per visited page for non-bot users between "
+        f"'{first} 00:00:00' and '{last} 23:59:59', showing top 10 pages by {words}s."
+    )
+
+
+def dashboard(fake_net, rows, question):
+    def reply(request):
+        if request.url.path.endswith("/mcp/dashboard/query"):
+            return httpx2.Response(200, json={"data": rows, "query": question})
+        if request.url.path.endswith("/mcp/recordings/sample"):
+            return httpx2.Response(200, json=[])
+        return answer(request)
+
+    return fake_net(reply)
+
+
+def clarity_paths(calls):
+    return [call.url.path for call in calls if "clarity" in call.url.host]
+
+
+async def run_recipe(name, fake_net, rows=None, question=None):
+    """Run the 2 steps of the task as an agent that ignores skip_if."""
+    data = await core.query_api(HOST, "clarity", "", None, name)
+    column = COUNTS[name][0]
+    window = data["rows"][0]["window"]
+    rows = [{"VisitedUrl": f"https://{HOST}/a", column: 0}] if rows is None else rows
+    calls = dashboard(fake_net, rows, question or rewritten(name, window))
+    first, second = data["rows"][0]["steps"]
+    count = await core.query_api(**first["args"])
+    sample = await core.query_api(**second["args"])
+    return count, sample, calls
+
+
+@pytest.mark.parametrize("name", sorted(COUNTS))
+async def test_a_0_count_makes_the_server_skip_the_sample(live, fake_net, name):
+    count, sample, calls = await run_recipe(name, fake_net)
+    assert count["status"] == "ok"
+    assert count["calls_used_today"] == 1
+    assert sample["status"] == "skipped", (
+        f"{name}: the server sent the sample after a 0 count. In src/seo_mcp/tasks.py, build "
+        "the dashboard question of the recipe from COUNTS, so that clarity._zero_count finds it."
+    )
+    assert "0" in sample["reason"]
+    assert clarity_paths(calls) == ["/mcp/dashboard/query"]
+    assert sample["calls_used_today"] == 1
+    assert sample["rows"] == []
+
+
+def test_each_click_task_has_a_count_that_the_server_reads():
+    """A new click task must name its count, so that the server can enforce skip_if."""
+    assert {name for name, _ in sampled_recipes()} == set(COUNTS), (
+        "Each click task needs a row in tasks.COUNTS and in COUNTS of tests/test_tasks.py."
+    )
+
+
+async def test_a_count_above_0_sends_the_sample(live, fake_net):
+    rows = [
+        {"VisitedUrl": f"https://{HOST}/a", "TotalDeadClicks": 3},
+        {"VisitedUrl": f"https://{HOST}/b", "TotalDeadClicks": 0},
+    ]
+    _, sample, calls = await run_recipe("dead_clicks", fake_net, rows)
+    assert sample["status"] == "ok"
+    assert clarity_paths(calls) == ["/mcp/dashboard/query", "/mcp/recordings/sample"]
+    assert sample["calls_used_today"] == 2
+
+
+async def test_no_saved_count_sends_the_sample(live, fake_net):
+    data = await core.query_api(HOST, "clarity", "", None, "dead_clicks")
+    calls = dashboard(fake_net, [], "")
+    sample = await core.query_api(**data["rows"][0]["steps"][1]["args"])
+    assert sample["status"] == "ok"
+    assert clarity_paths(calls) == ["/mcp/recordings/sample"]
+    assert sample["calls_used_today"] == 1
+
+
+ZERO = [{"VisitedUrl": f"https://{HOST}/a", "TotalDeadClicks": 0}]
+
+
+@pytest.mark.parametrize(
+    ("rows", "question"),
+    [
+        pytest.param([], None, id="no-rows"),
+        pytest.param([{"VisitedUrl": "/a", "PageViews": 0}], None, id="no-count-column"),
+        pytest.param([{"VisitedUrl": "/a", "TotalDeadClicks": None}], None, id="null-count"),
+        pytest.param([{"VisitedUrl": "/a", "TotalDeadClicks": "1e-400"}], None, id="tiny-text"),
+        pytest.param([{"VisitedUrl": "/a", "TotalDeadClicks": 0.0}], None, id="float"),
+        pytest.param([{"VisitedUrl": "/a", "TotalDeadClicks": False}], None, id="bool"),
+        pytest.param([{"TotalDeadClicks": 0, "DeadClickSessions": 0}], None, id="2-count-columns"),
+        pytest.param(ZERO, "Total dead click counts per visited page", id="no-dates"),
+        pytest.param(
+            ZERO,
+            "Total rage click counts between '{start} 00:00:00' and '{end} 23:59:59'",
+            id="other-signal",
+        ),
+        pytest.param(
+            ZERO,
+            "Total dead click counts between '2026/01/01 00:00:00' and '{end} 23:59:59'",
+            id="other-start",
+        ),
+        pytest.param(
+            ZERO,
+            "Total dead click counts between '{start} 00:00:00' and "
+            "'{end} 23:59:59', showing top 10 pages by sessions.",
+            id="top-by-other",
+        ),
+    ],
+)
+async def test_an_uncertain_0_still_sends_the_sample(live, fake_net, rows, question):
+    """A wrong skip hides data, so each doubt sends the sample as before."""
+    data = await core.query_api(HOST, "clarity", "", None, "dead_clicks")
+    start, end = (data["rows"][0]["window"][key].replace("-", "/") for key in ("start", "end"))
+    asked = question.format(start=start, end=end) if question else None
+    _, sample, calls = await run_recipe("dead_clicks", fake_net, rows, asked)
+    assert sample["status"] == "ok"
+    assert clarity_paths(calls)[-1] == "/mcp/recordings/sample"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param({"visitedUrls": [{"url": "/a", "operator": "contains"}]}, id="extra-filter"),
+        pytest.param({"deadClickPresent": False}, id="flag-false"),
+        pytest.param({"rageClickPresent": True}, id="other-flag"),
+    ],
+)
+async def test_a_sample_of_another_question_still_goes_out(live, fake_net, change):
+    data = await core.query_api(HOST, "clarity", "", None, "dead_clicks")
+    calls = dashboard(fake_net, ZERO, rewritten("dead_clicks", data["rows"][0]["window"]))
+    first, second = data["rows"][0]["steps"]
+    await core.query_api(**first["args"])
+    args = json.loads(json.dumps(second["args"]))
+    filters = args["request"]["filters"]
+    filters.pop("deadClickPresent")
+    filters |= change
+    sample = await core.query_api(**args)
+    assert sample["status"] == "ok"
+    assert clarity_paths(calls)[-1] == "/mcp/recordings/sample"
+
+
+async def test_a_partial_day_window_still_sends_the_sample(live, fake_net):
+    data = await core.query_api(HOST, "clarity", "", None, "dead_clicks")
+    calls = dashboard(fake_net, ZERO, rewritten("dead_clicks", data["rows"][0]["window"]))
+    first, second = data["rows"][0]["steps"]
+    await core.query_api(**first["args"])
+    args = json.loads(json.dumps(second["args"]))
+    span = args["request"]["filters"]["date"]
+    span["end"] = span["end"].replace("23:59:59.999Z", "12:00:00.000Z")
+    sample = await core.query_api(**args)
+    assert sample["status"] == "ok"
+    assert clarity_paths(calls)[-1] == "/mcp/recordings/sample"

@@ -125,7 +125,14 @@ Each row of the result is 1 provider. `steps` holds the exact calls in order, wi
 | `queries_of_page` | Search Console, Bing; not GA4 |
 | `core_web_vitals` | Chrome UX Report, PageSpeed |
 
-The Clarity click tasks ask `dashboard_query` for the count first, then `recordings` for the elements. They look back 90 days, because a short window often holds no such click. When the dashboard count is 0, do not call `recordings`: it spends 1 call on a sample that cannot show such a click. The step shows this rule in `skip_if`, for `dead_clicks`, `rage_clicks`, and `quickback_clicks`.
+The Clarity click tasks ask `dashboard_query` for the count first, then `recordings` for the elements. They look back 90 days, because a short window often holds no such click. When the dashboard count is 0, do not call `recordings`: it spends 1 call on a sample that cannot show such a click. The step shows this rule in `skip_if`, for `dead_clicks`, `rage_clicks`, and `quickback_clicks`. The server enforces the rule. Before a `recordings` call spends, it looks for the saved `dashboard_query` answer of the recipe question with the same click and the same days. If that answer shows 0 for each page, `recordings` gives status `skipped`, `reason` and `dashboard_question` name the 0 count, and the server sends nothing and spends nothing. It skips only when the match is certain, because a wrong skip hides data:
+
+- The sample has the date and 1 click flag of the recipe (`deadClickPresent`, `rageClickPresent`, or `quickbackClickPresent`) set to `true`, and no other filter. `sortBy` and `count` can change.
+- The days are whole UTC days, from `T00:00:00.000Z` to `T23:59:59.999Z`, and the dashboard question has the same days in UTC.
+- The saved answer is of this UTC day. The question that Clarity answered names the same click and the same days, and a top list in it is sorted by that click.
+- Each row has 1 column that names the click, such as `TotalDeadClicks`, and it holds exactly 0.
+
+In all other cases, such as no saved answer, an empty answer, or a count above 0, the sample goes out as before. A dashboard answer saved after the check does not stop a sample that already started.
 
 `tests/test_tasks.py` runs each step through the real tools, so a task cannot name a method, a field, or a filter that does not exist. It cannot prove what Clarity answers: each `read` text says when a question is not yet proven on real data.
 

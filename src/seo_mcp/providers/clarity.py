@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-from seo_mcp import NAME, net, quota, shared
+from seo_mcp import NAME, net, quota, shared, tasks
 from seo_mcp.api import Api, Method, Quota, answer, as_rows, one_of, whole
 from seo_mcp.config import Site
 from seo_mcp.params import BadInput, Params, moved, moved_note, today, too_late
@@ -359,6 +359,13 @@ SAMPLE_NOTE = (
     "The API gives a sample of sessions, not all of them, so do not use these rows as a total. "
     "Use dashboard_query for a count."
 )
+SKIP_REASON = (
+    'The saved dashboard answer of this UTC day gives a count of 0 for "{question}", so a '
+    "sample of these days cannot show such a click. The server did not send it and spent no "
+    "call."
+)
+ZERO = re.compile(r"0+")
+TOP = re.compile(r"\btop\b")
 MAX_RECORDINGS = 250
 DEFAULT_RECORDINGS = 100
 INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
@@ -399,6 +406,60 @@ def _check_date(filters: dict[str, Any]) -> tuple[str, str]:
     if start > latest:
         raise too_late("filters.date start", latest)
     return start, min(end, latest)
+
+
+def _slash(day: str) -> str:
+    return day.replace("-", "/")
+
+
+def _no_click(row: dict[str, Any], token: str) -> bool:
+    """1 column names the click, and it holds exactly 0. Any doubt is not a 0."""
+    cells = [value for key, value in row.items() if token in re.sub(r"[^a-z]", "", key.lower())]
+    if len(cells) != 1:
+        return False
+    cell = cells[0]
+    return (type(cell) is int and cell == 0) or (
+        isinstance(cell, str) and bool(ZERO.fullmatch(cell))
+    )
+
+
+def _is_zero(reply: dict[str, Any], count: tasks.Count, first: str, last: str) -> bool:
+    """Clarity rewrites the question, so its words must name the same click and the same days."""
+    data, answered = reply.get("data"), reply.get("query")
+    if reply.get("dataErrorType") or not data or not isinstance(answered, str):
+        return False
+    text = answered.lower()
+    span = f"between '{_slash(first)} 00:00:00' and '{_slash(last)} 23:59:59'"
+    if count.words not in text or span not in text:
+        return False
+    # A top list sorted by another column can leave out a page with clicks.
+    if TOP.search(text) and f"by {count.words}" not in text:
+        return False
+    token = count.words.replace(" ", "")
+    return all(_no_click(row, token) for row in data)
+
+
+def _zero_count(site: Site, filters: dict[str, Any], start: str, end: str) -> str | None:
+    """Give the dashboard question of a saved 0 count for exactly this sample, or None.
+
+    Only the request of a task recipe matches: 1 click flag and whole UTC days. A wrong skip
+    hides data, so each doubt sends the sample as before.
+    """
+    flags = [name for name in filters if name != "date"]
+    count = tasks.COUNTS.get(flags[0]) if len(flags) == 1 else None
+    if count is None or filters[flags[0]] is not True:
+        return None
+    if not (start.endswith("T00:00:00.000Z") and end.endswith("T23:59:59.999Z")):
+        return None
+    first, last = start[:10], end[:10]
+    question = tasks.count_query(count.question, _slash(first), _slash(last))
+    body = {"query": question, "timezone": "UTC"}
+    path = _body_path(project(site), "dashboard", body)
+    saved = shared.peek(path, _good_dashboard, shared.end_of_utc_day)
+    if saved is None or not _is_zero(saved["answer"], count, first, last):
+        return None
+    shared.cite(saved)
+    return question
 
 
 def _is_text_list(value: Any) -> bool:
@@ -481,6 +542,11 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
         "filters": filters,
         "count": count,
     }
+    zero = _zero_count(site, filters, start, end)
+    if zero:
+        quota.show(lambda: quota.view(LEDGER, project(site)))
+        result = answer([], more_rows="no", reason=SKIP_REASON.format(question=zero), **shift)
+        return {**result, "status": "skipped", "dashboard_question": zero, "applied": body}
     path = _body_path(project(site), "recordings", body)
 
     async def call(headers: dict[str, str], spent: net.Receipt) -> Any:
@@ -548,7 +614,9 @@ APIS = {
             ),
             "recordings": Method(
                 _recordings,
-                "A list of session recordings with links. filters.date is required.",
+                "A list of session recordings with links. filters.date is required. After a "
+                "saved 0 dashboard count of the same click and whole days, the server skips "
+                "it: status skipped, and no call is spent.",
                 frozenset({"filters", "sortBy", "count"}),
                 frozenset({"filters"}),
             ),
