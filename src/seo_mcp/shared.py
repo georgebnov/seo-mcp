@@ -233,15 +233,18 @@ async def request(
     good: Check = is_object,
     keep: int = ANSWER_SECONDS,
     explain: bool = False,
+    basis: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """Send 1 read that has no ledger. good tells a good answer from a failed HTTP 200.
 
     The headers stay out of the key, because a token changes each hour. The URL and the body
-    name the property, so a saved answer ends at the latest after keep seconds.
+    name the property, so a saved answer ends at the latest after keep seconds. basis goes only
+    into the key: a fact that the answer is read with, so that a changed fact asks again.
     """
     net.check(allowed, method, url)
-    path = entry(site, method, url, kwargs.get("params"), kwargs.get("json"), explain, keep)
+    sent = (kwargs.get("params"), kwargs.get("json"))
+    path = entry(site, method, url, *sent, explain, keep, *([basis] if basis else []))
 
     async def send(_: None) -> Any:
         return await net.request(allowed, method, url, explain=explain, **kwargs)

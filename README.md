@@ -66,7 +66,7 @@ A range that you name goes out as you name it, up to the newest day of the sourc
 | `query_api` `search_analytics` | What you send (no `dataState` means `final`) | `metadata.firstIncompleteDate` minus 1 day if the reply has it, else an estimate |
 | `get_seo_data` GA4, `query_api` GA4 reports | GA4 has none | An estimate: `3daysAgo`, which GA4 reads in the property zone |
 
-The docs give `firstIncompleteDate` only with `dataState` `all` and a grouping by `date`, so a report of `get_seo_data` cannot carry it. The server sends 1 extra read for this first: the past 10 days up to the UTC date, grouped by date. It has no filter, so all sources and agents of a site share it for 5 minutes. If it fails, the report stays good: a default range then ends on the estimate, 4 days before the UTC date (3 days of lag, and 1 day because a PT day can be 1 day before the UTC date), and `last_complete_day_source` is `estimate`. `query_api` stays at 1 query: send `dataState` `all` with the dimension `date` for the value of the API.
+The docs give `firstIncompleteDate` only with `dataState` `all` and a grouping by `date`, so a report of `get_seo_data` cannot carry it. The server sends 1 extra read for this first: the past 10 days up to the UTC date, grouped by date. It has no filter, so all sources and agents of a site share it for 5 minutes. A saved report of `get_seo_data` serves only under the same `last_complete_day` of the API: after Google moves `firstIncompleteDate`, the report goes out again, so that a day that was partial in the saved rows never shows as complete. This adds 1 report only in the 5 minutes after Google moves its day. If it fails, the report stays good: a default range then ends on the estimate, 4 days before the UTC date (3 days of lag, and 1 day because a PT day can be 1 day before the UTC date), and `last_complete_day_source` is `estimate`. `query_api` stays at 1 query: send `dataState` `all` with the dimension `date` for the value of the API.
 
 GA4 has no such field. Its help page says that processing can take 24-48 hours, so the estimate is 3 days. Late events can still arrive after this. With a relative end, `partial_days` is exact in GA4 terms, such as `2daysAgo` to `today`. With a YYYY-MM-DD end, the server cannot know the property day, so `partial_days` starts 3 days before the UTC date: such a day can be partial in some zone. `query_api` shows 1 `coverage` for each of `dateRanges`.
 
@@ -131,7 +131,7 @@ The Clarity click tasks ask `dashboard_query` for the count first, then `recordi
 
 ### Saved answers
 
-18 agents can ask the same thing in 1 audit, so identical requests share 1 live call, also between server processes. The key is the site, the HTTP method, the URL, the query, the body, and whether the call asks for the API's error text. Another page, date, or field is another request, and 2 sources that send the same request share it.
+18 agents can ask the same thing in 1 audit, so identical requests share 1 live call, also between server processes. The key is the site, the HTTP method, the URL, the query, the body, and whether the call asks for the API's error text. A Search Console report of `get_seo_data` also has the `last_complete_day` of the API in its key. Another page, date, or field is another request, and 2 sources that send the same request share it.
 
 | Request | A saved answer serves for |
 | --- | --- |

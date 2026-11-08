@@ -154,6 +154,7 @@ async def _rows(
     window: dict[str, str],
     params: Params,
     state: str,
+    basis: str | None = None,
 ) -> list[dict[str, Any]]:
     body = {
         "startDate": window["start"],
@@ -163,7 +164,7 @@ async def _rows(
         **_filters(params),
         **({"dataState": "all"} if state == "all" else {}),
     }
-    return _flat(body, await _analytics(site, body, headers))
+    return _flat(body, await _analytics(site, body, headers, basis=basis))
 
 
 def _state(window: dict[str, str], last: date) -> str:
@@ -172,12 +173,25 @@ def _state(window: dict[str, str], last: date) -> str:
 
 
 async def _analytics(
-    site: Site, body: dict[str, Any], headers: dict[str, str], *, explain: bool = False
+    site: Site,
+    body: dict[str, Any],
+    headers: dict[str, str],
+    *,
+    explain: bool = False,
+    basis: str | None = None,
 ) -> Any:
     prop = quote(site.field("gsc_property"), safe="")
     url = f"{SITES_API}/{prop}/searchAnalytics/query"
     return await shared.request(
-        site, ENDPOINTS, "POST", url, json=body, headers=headers, explain=explain, good=REPORT
+        site,
+        ENDPOINTS,
+        "POST",
+        url,
+        json=body,
+        headers=headers,
+        explain=explain,
+        good=REPORT,
+        basis=basis,
     )
 
 
@@ -253,9 +267,13 @@ async def _report(
     known = await _last_complete(site, headers)
     window = named or _default(params, known[0])
     state = _state(window, known[0])
+    # A saved report serves only under the API day that it was fetched with: else a day that
+    # was partial in its rows can show as complete. An estimate is taken again from the day of
+    # the answer below, so it needs no day in the key.
+    basis = known[0].isoformat() if known[1] == "api" else "estimate"
     rows, totals = await asyncio.gather(
-        _rows(site, dimensions, headers, window, params, state),
-        _rows(site, [], headers, window, params, state),
+        _rows(site, dimensions, headers, window, params, state, basis),
+        _rows(site, [], headers, window, params, state, basis),
     )
     if known[1] == "estimate":
         # A saved report keeps the estimate of its own call, also after midnight.

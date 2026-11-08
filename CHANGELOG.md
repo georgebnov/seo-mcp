@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix a saved Search Console report after Google moves `firstIncompleteDate`: it showed a day as complete with the partial rows of that day. The report now goes out again.
 - Add a time frame, 1 page, 1 query, and a comparison of 2 periods or 2 pages to `get_seo_data`.
 - A source that cannot apply a parameter now reports status `unsupported` and does not run.
 - Add the `query_api` tool: 1 official read query for Search Console, GA4, PageSpeed, the Chrome UX Report, Bing, and Clarity, with a list of valid fields and values.
