@@ -75,7 +75,7 @@ Rows ==
 EmptyObjectPasses ==
   /\ pc = "flight" /\ api \in Google /\ pc' = "rows" /\ scrubbed' = TRUE /\ reply' = "emptyObject"
   /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved>>
-\* shared.holds, the GA4 report check (kind), and gsc._index_status (url_inspection) refuse {}:
+\* shared.holds, the GA4 report check (kind), and the url_inspection check (inspectionResult) refuse {}:
 \* net.BAD_SHAPE, and the window starts.
 EmptyObjectFails ==
   /\ pc = "flight" /\ pc' = "fixedError" /\ scrubbed' = TRUE /\ reply' = "emptyObject"
