@@ -145,6 +145,29 @@ def _written(target: ast.AST, where: _File) -> str | None:
     return None
 
 
+def _changed(func: ast.AST, where: _File) -> str | None:
+    """Say which module table a mutating call changes, or give None.
+
+    The table is an attribute of an imported module (providers.SOURCES.update) or an imported
+    name (SOURCES.update). A reset of RESETS can only clear the table.
+    """
+    if not isinstance(func, ast.Attribute) or func.attr not in MUTATORS:
+        return None
+    table = func.value
+    if isinstance(table, ast.Name):
+        if table.id not in where.imported:
+            return None
+        # An imported name has no module part, so no exception on a list matches it.
+        key = ("", where.imported[table.id])
+    elif isinstance(table, ast.Attribute) and where.module_root(table):
+        key = (where.owner(_dotted(table.value)), table.attr)
+    else:
+        return None
+    if key in IMPORTS or (key in RESETS and func.attr == "clear"):
+        return None
+    return _dotted(table)
+
+
 def fakes(source: str, name: str = "<test>") -> list[str]:
     """Each fake in 1 test file that is not net.transport or an input on ALLOWED."""
     tree = ast.parse(source)
@@ -169,15 +192,8 @@ def fakes(source: str, name: str = "<test>") -> list[str]:
             func = node.func
             if (what := _replaced(node, where)) is not None:
                 add(node, f"fakes {what}")
-            elif (
-                isinstance(func, ast.Attribute)
-                and func.attr in MUTATORS
-                and isinstance(func.value, ast.Attribute)
-                and where.module_root(func.value)
-                and (where.owner(_dotted(func.value.value)), func.value.attr)
-                not in RESETS | IMPORTS
-            ):
-                add(node, f"changes {_dotted(func.value)}")
+            elif (what := _changed(func, where)) is not None:
+                add(node, f"changes {what}")
         elif isinstance(node, ast.Assign | ast.AugAssign | ast.AnnAssign | ast.Delete):
             if isinstance(node, ast.Assign | ast.Delete):
                 targets = node.targets
@@ -204,6 +220,7 @@ import unittest
 from unittest import mock
 from seo_mcp import net, providers
 from seo_mcp import providers as transport_alias
+from seo_mcp.providers import SOURCES, _google
 def test_x(monkeypatch, mocker):
     monkeypatch.setattr(providers, 'SOURCES', {})
     monkeypatch.setattr(net.httpx2.AsyncClient, 'request', None)
@@ -220,13 +237,15 @@ def test_x(monkeypatch, mocker):
     monkeypatch.setattr(providers, 'datetime', None)
     monkeypatch.syspath_prepend('fakes')
     del providers.SOURCES['x']
+    SOURCES.update({})
+    _google._tokens.update({})
 """
 
 
 def test_the_scan_finds_each_kind_of_fake():
     found = fakes(BAD)
     lines = sorted({int(fake.split(" ", 1)[0].split(":")[1]) for fake in found})
-    assert lines == [3, 6, *range(7, 13), *range(14, 22)]
+    assert lines == [3, 7, *range(8, 14), *range(15, 25)]
     assert all(fake.endswith(FIX) for fake in found)
 
 
