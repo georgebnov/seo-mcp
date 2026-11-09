@@ -914,6 +914,25 @@ async def test_a_call_waits_for_another_process_that_fetches_the_same_answer(liv
     assert not clarity.ledger_path(HOST).exists()
 
 
+# George: an agent read a lower position, or a position delta, as good or bad. The average
+# moves when new queries appear, so each tool that returns position says what it means.
+POSITION_MEANS = (
+    "The average highest place of your link across all queries with impressions. A lower "
+    "number is not always better, and it moves when new queries appear."
+)
+POSITION_CHANGE = (
+    "A position change alone is not good or bad. Judge the change by clicks first, then by "
+    "the click rate and impressions of the same rows."
+)
+
+
+@pytest.mark.parametrize("name", ["get_seo_data", "query_api"])
+async def test_each_tool_that_returns_position_says_what_it_means(name):
+    tools = {tool.name: tool for tool in await server.server.list_tools()}
+    flat = " ".join(tools[name].description.split())
+    assert f"Search Console position: {POSITION_MEANS} {POSITION_CHANGE}" in flat
+
+
 def test_tool_description_asks_for_named_sources():
     assert "Name the sources that you need" in server.GET_SEO_DATA
     assert "Leave it out" not in server.GET_SEO_DATA
