@@ -182,7 +182,189 @@ QUOTA: tuple[Mutant, ...] = (
     ),
 )
 
-AREAS: dict[str, tuple[Mutant, ...]] = {"quota": QUOTA}
+DATES_MODEL = "get_seo_data_dates"
+DATES: tuple[Mutant, ...] = (
+    Model(
+        "StartAfterEndSendsNothing",
+        DATES_MODEL,
+        (('DatesInOrder == pc = "named" /\\ start <= end', 'DatesInOrder == pc = "named"'),),
+        "a start after the end goes on to the source",
+    ),
+    Code(
+        "StartAfterEndSendsNothing",
+        "src/seo_mcp/params.py",
+        (("    if start > end:\n", "    if False:\n"),),
+        ("tests/test_coverage.py::test_a_start_after_the_end_is_still_refused",),
+        "params.period lets a start after the end through",
+    ),
+    Model(
+        "StartAfterEndSendsNothing",
+        DATES_MODEL,
+        (('pc = "checked" /\\ start <= Newest /\\ pc\'', 'pc = "checked" /\\ pc\''),),
+        "a start past the newest day goes out",
+    ),
+    Code(
+        "StartAfterEndSendsNothing",
+        "src/seo_mcp/providers/gsc.py",
+        (("    if start > latest:\n", "    if False:\n"),),
+        ("tests/test_coverage.py::test_a_start_past_the_newest_day_is_refused",),
+        "gsc._newest_end sends a start past the UTC date",
+    ),
+    Model(
+        "FutureEndMovesAndSaysSo",
+        DATES_MODEL,
+        (("sentEnd' = Min(end, Newest)", "sentEnd' = end"),),
+        "an end past the newest day goes out as it is",
+    ),
+    Code(
+        "FutureEndMovesAndSaysSo",
+        "src/seo_mcp/providers/gsc.py",
+        (("    return min(end, latest)\n", "    return end\n"),),
+        ("tests/test_coverage.py::test_a_search_console_end_past_today_moves_to_today",),
+        "gsc._newest_end sends an end past the UTC date",
+    ),
+    Model(
+        "AppliedShowsTheSentEnd",
+        DATES_MODEL,
+        (("appliedEnd' = IF moved THEN sentEnd ELSE end", "appliedEnd' = end"),),
+        "applied shows the asked end after a move",
+    ),
+    Code(
+        "AppliedShowsTheSentEnd",
+        "src/seo_mcp/core.py",
+        (
+            (
+                'done["applied"]["end_date"] = done["date_moved"]["sent_end_date"]',
+                'done["applied"]["end_date"] = done["applied"]["end_date"]',
+            ),
+        ),
+        ("tests/test_coverage.py::test_applied_shows_the_end_date_that_went_out",),
+        "core._asked keeps the asked end in applied",
+    ),
+    Model(
+        "UnfinishedDayIsNeverZero",
+        DATES_MODEL,
+        (('ELSE IF start <= shownLast\' THEN "zero" ELSE "none"', 'ELSE "zero"'),),
+        "no rows on only partial days give 0 totals",
+    ),
+    Code(
+        "UnfinishedDayIsNeverZero",
+        "src/seo_mcp/providers/gsc.py",
+        (('    unknown = not totals and window["start"] > ', "    unknown = False and "),),
+        (
+            "tests/test_coverage.py::test_a_range_of_only_partial_days_with_no_rows_has_unknown_totals",
+        ),
+        "gsc._report gives 0 totals for only partial days",
+    ),
+    Model(
+        "CompleteDayWithNoRowsIsZero",
+        DATES_MODEL,
+        (('ELSE IF start <= shownLast\' THEN "zero" ELSE "none"', 'ELSE "none"'),),
+        "no rows on complete days give unknown totals",
+    ),
+    Code(
+        "CompleteDayWithNoRowsIsZero",
+        "src/seo_mcp/providers/gsc.py",
+        (('    unknown = not totals and window["start"] > ', "    unknown = not totals or "),),
+        ("tests/test_coverage.py::test_each_covered_source_shows_a_drop_to_a_real_0",),
+        "gsc._report gives unknown totals for a real 0",
+    ),
+    Model(
+        "PartialDaysAreMarked",
+        DATES_MODEL,
+        (("partial' = (sentEnd > shownLast')", "partial' = FALSE"),),
+        "the days after the last complete day are not marked partial",
+    ),
+    Code(
+        "PartialDaysAreMarked",
+        "src/seo_mcp/providers/_google.py",
+        (("    partial = {", "    partial = None and {"),),
+        ("tests/test_coverage.py::test_a_day_past_the_last_complete_day_is_partial",),
+        "_google.coverage marks no partial day",
+    ),
+    Model(
+        "PartialDayNeverShownComplete",
+        DATES_MODEL,
+        (
+            (
+                'fetchedLast\' = IF cov = "api" THEN shownLast ELSE Last - 1',
+                "fetchedLast' = Last - 1",
+            ),
+        ),
+        "a saved report of an older API day serves under a newer day",
+    ),
+    Code(
+        "PartialDayNeverShownComplete",
+        "src/seo_mcp/providers/gsc.py",
+        (
+            (
+                '    return known[0].isoformat() if known[1] == "api" else "estimate"',
+                '    return "estimate"',
+            ),
+        ),
+        ("tests/test_coverage.py::test_a_saved_report_of_a_partial_day_never_shows_it_complete",),
+        "gsc._basis leaves the API day out of the report key",
+    ),
+    Model(
+        "NoDocumentedFieldIsNeverOk",
+        DATES_MODEL,
+        (('Good(r) == r \\in {"rows", "noRows"}', "Good(r) == TRUE"),),
+        "{} or other text is an ok answer",
+    ),
+    Code(
+        "NoDocumentedFieldIsNeverOk",
+        "src/seo_mcp/providers/gsc.py",
+        (
+            (
+                'REPORT = shared.has_any("rows", "responseAggregationType", "metadata")',
+                "REPORT = shared.is_object",
+            ),
+        ),
+        (
+            "tests/test_bad_answer.py::test_a_search_console_reply_of_no_known_field_is_a_failure",
+            "tests/test_bad_answer.py::test_an_empty_object_is_not_an_empty_answer",
+        ),
+        "gsc.REPORT passes any object",
+    ),
+    Model(
+        "DeltaNeverComparesNoData",
+        DATES_MODEL,
+        (
+            (
+                'delta\' = IF read\' = "found" /\\ first <= start THEN Shown ELSE "null"',
+                "delta' = Shown",
+            ),
+        ),
+        "a range that starts before the first day of data keeps its delta",
+    ),
+    Code(
+        "DeltaNeverComparesNoData",
+        "src/seo_mcp/core.py",
+        (
+            (
+                '    result["delta"] = None\n    first = _found_day(sides)',
+                "    first = _found_day(sides)",
+            ),
+        ),
+        ("tests/test_collected.py::test_the_live_case_gives_no_delta_and_names_the_first_day",),
+        "core._gate_delta keeps the delta of a range with no data",
+    ),
+    Model(
+        "ExtraReadOnlyForAGap",
+        DATES_MODEL,
+        (('NeedsRead == prov = "gsc" \\/ ~startRow', "NeedsRead == TRUE"),),
+        "a GA4 day report with a row on its first day reads the first day again",
+    ),
+    Code(
+        "ExtraReadOnlyForAGap",
+        "src/seo_mcp/providers/ga4.py",
+        (('    return dimension != "date" or params.start', "    return True or params.start"),),
+        ("tests/test_collected.py::test_a_normal_comparison_sends_no_extra_read",),
+        "ga4._gap_at_start asks for the first event each time",
+    ),
+)
+
+AREAS: dict[str, tuple[Mutant, ...]] = {"quota": QUOTA, "dates": DATES}
 
 
 def _edit(path: Path, edits: tuple[tuple[str, str], ...]) -> None:
