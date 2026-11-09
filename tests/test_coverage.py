@@ -54,6 +54,11 @@ def is_coverage_read(body):
     return body.get("dataState") == "all" and body.get("dimensions") == ["date"]
 
 
+def is_first_data_read(body):
+    """gsc._first_data: the whole kept history by day. The coverage read sends no rowLimit."""
+    return is_coverage_read(body) and "rowLimit" in body
+
+
 def search_console(fake_net, first_incomplete=None, days=()):
     """Answer the coverage read with the documented field, and each report with 1 row a day."""
 
@@ -199,7 +204,10 @@ def clicks_on(day, clicks):
             return None
         body = json.loads(request.content)
         answer = {"responseAggregationType": "byProperty", "rows": []}
-        if is_coverage_read(body):
+        if is_first_data_read(body):
+            # The property collects from 2026-01-01, so a later day with no rows is a real 0.
+            answer["rows"] = [row("2026-01-01", ["date"])]
+        elif is_coverage_read(body):
             answer["metadata"] = {"firstIncompleteDate": "2026-03-16"}
         elif body["startDate"] == day:
             total = {"keys": [], "clicks": clicks, "impressions": 900, "ctr": 0.04, "position": 5}
@@ -272,7 +280,12 @@ def sessions_on(day, sessions):
         if request.url.host != ga4.HOST:
             return None
         body: dict = {"metadata": {"timeZone": "UTC"}, **ga4_kind(request)}
-        if json.loads(request.content)["dateRanges"][0]["startDate"] == day:
+        sent = json.loads(request.content)
+        if sent["metrics"] == [{"name": "eventCount"}]:
+            # The property collects from 2026-01-01, so a later day with no rows is a real 0.
+            first = {"dimensionValues": [{"value": "20260101"}], "metricValues": [{"value": "9"}]}
+            return httpx2.Response(200, json={**body, "rows": [first]})
+        if sent["dateRanges"][0]["startDate"] == day:
             values = [{"value": str(sessions)}, {"value": "30"}, {"value": "0.5"}, {"value": "2"}]
             body["metricHeaders"] = [{"name": name} for name in ga4.METRICS]
             body["rows"] = [{"dimensionValues": [{"value": "20260301"}], "metricValues": values}]
