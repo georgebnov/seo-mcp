@@ -31,7 +31,7 @@ It has 3 parts:
 | NoTokenReadsNoAnswer | metered_call | A saved answer or a failure serves only with the token that the cache path names. | A missing or new token reads an old answer. |
 | TwoCallersSpendOneCall, FirstAnswerIsShared | parallel_callers | 2 parallel callers of 1 key and 1 request spend 1 call. | 18 agents of 1 audit spend 18 calls. |
 | NoAnswerOfAnotherKey | parallel_callers | A saved answer or a failure serves only the key that made it. | A new key gets the answer of the old key. |
-| NoSendAfterTheLimitAnswer | parallel_callers | After the daily limit answer, no caller sends again on that day. | 1 more request goes out and gets a 429. Known break, see "Findings". |
+| NoSpendAfterTheLimitAnswer | parallel_callers | After the daily limit answer, the ledger refuses each new spend on that UTC day. A call that spent before the answer still goes out and gets the API error. | Each new call spends and gets its own 429. |
 
 ## Coverage
 
@@ -50,11 +50,11 @@ Each model action names its code in a comment above it. The main map:
 
 Atomic steps: 1 model step holds the path lock, the check of the saved answer and the failure, and the spend. That is sound because the cache of a path changes only under its lock, and `quota.spend` reads and writes the ledger under the ledger lock with no await inside. The send is its own step: `net.request` awaits the connection after the spend, and another task or process can block the day in between.
 
-Sync commit: `47ec7aa`. The models and mutants describe `src/` as of this commit. Move it forward only after you confirm that each model step still matches its code at the new commit.
+Sync commit: `61bbe1b`. The models and mutants describe `src/` as of this commit. Move it forward only after you confirm that each model step still matches its code at the new commit.
 
 ## Steps
 
-1. **Does the change touch the covered code?** Run `git diff 47ec7aa -- src/seo_mcp/shared.py src/seo_mcp/quota.py src/seo_mcp/net.py src/seo_mcp/providers/clarity.py src/seo_mcp/providers/gsc.py`. Name each touched function from "Coverage", or none. If none, stop.
+1. **Does the change touch the covered code?** Run `git diff 61bbe1b -- src/seo_mcp/shared.py src/seo_mcp/quota.py src/seo_mcp/net.py src/seo_mcp/providers/clarity.py src/seo_mcp/providers/gsc.py`. Name each touched function from "Coverage", or none. If none, stop.
 2. **Run the models.** Run `just models <scratch folder>`. Done when it prints "Each break is in the known list, and each other rule holds."
 3. **Read each result** with the `statechart` skill. For a break, read the shortest path in `<scratch folder>/<model>/report.md`. Show `<scratch folder>/parallel_callers/chart.mmd` as a `mermaid` block when George asks how parallel calls move. `metered_call` has more than 500 states, so it has no chart: read its report.
 4. **Run the mutants.** Run `uv run python scripts/verify_mutants.py quota` (about 1 minute). Done when it prints "Each mutant is caught." Read each other line by its first word:
@@ -71,11 +71,11 @@ Sync commit: `47ec7aa`. The models and mutants describe `src/` as of this commit
 ## Scope
 
 - `Limit` is 1 in `metered_call` and 2 in `parallel_callers`. The models have 1 UTC day, 2 callers, and 2 keys. 2 different requests of 1 key act as 2 keys: 2 paths, 1 ledger.
-- Each rule has a model mutant and a code mutant, with 2 exceptions. NoSendAfterTheLimitAnswer has none: it breaks today. NoTokenReadsNoAnswer has a model mutant only: the order of `clarity.credential` and `shared.once` has no 1-line break.
+- Each rule has a model mutant and a code mutant, with 1 exception. NoTokenReadsNoAnswer has a model mutant only: the order of `clarity.credential` and `shared.once` has no 1-line break.
 - `metered_call` spends 1 call. `gsc.index_status` spends 1 call for each URL in 1 spend: the model does not cover the batch size.
 - `parallel_callers` has no busy ledger lock and no failed `quota.block`. `metered_call` has both.
 - Not covered: the midnight edge between `spend` and `block` (only tests cover `receipt.day`), the prune of old entries, the salt file, GA4 token readings (`ga4._record` only records what GA4 says, it gates no call), and Bing and PageSpeed, which have no ledger.
 
-## Findings
+## Accepted behavior
 
-- NoSendAfterTheLimitAnswer breaks (in `models/known-breaks.txt`). 2 requests of 1 Clarity project, A and B, are in flight. A spends, B spends, A gets the Data Export 429, and `quota.block` writes the flag. Then the request of B goes out: it spent before the block, and `net.request` sends it after. B gets its own 429. B was counted, so the ledger stays correct, and Clarity gets 1 extra request. A fix checks the flag again just before the send; George decides between that fix and the rule "no spend after the limit answer".
+- 2 requests of 1 Clarity project, A and B, both spend before the Data Export 429. A gets the 429, and `quota.block` writes the flag. B still goes out and gets the API error. B was counted, so the ledger stays correct. The code does not check the flag again before the send, by design. NoSpendAfterTheLimitAnswer holds: a call that comes after the flag spends nothing. `tests/test_failure_window.py::test_after_the_429_no_new_call_spends` replays this path.

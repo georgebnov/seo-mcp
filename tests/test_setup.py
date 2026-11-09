@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from seo_mcp import config, providers, server, setup
+from seo_mcp import config, core, providers, server, setup
 
 SOURCE = Path(__file__).parent.parent / "src" / "seo_mcp" / "providers"
 VALUE = "secret-value-that-must-not-print-1234"
@@ -191,7 +191,7 @@ NAMED = re.compile(r"site\.(field|secret|optional_secret)\(\"(\w+)\"\)")
     "module", [m for m in providers.MODULES if m.APIS], ids=lambda m: m.__name__
 )
 def test_status_knows_each_name_that_a_provider_reads(module):
-    """A provider that reads a new field or secret must add it to setup.NEEDS, or status lies."""
+    """A provider that reads a new field or secret adds it to connection.NEEDS, or status lies."""
     text = Path(module.__file__).read_text()
     if "_google." in text:
         text += (SOURCE / "_google.py").read_text()
@@ -199,9 +199,51 @@ def test_status_knows_each_name_that_a_provider_reads(module):
     known = set().union(*(setup.NEEDS[api].names() for api in module.APIS))
     assert used == known, (
         f"{Path(module.__file__).name} reads {sorted(used)}, but setup.NEEDS for "
-        f"{sorted(module.APIS)} names {sorted(known)}. Fix setup.NEEDS in src/seo_mcp/setup.py."
+        f"{sorted(module.APIS)} names {sorted(known)}. Fix NEEDS in src/seo_mcp/connection.py."
     )
 
 
 def test_status_has_1_entry_for_each_api():
     assert set(setup.NEEDS) == set(providers.APIS)
+
+
+PARITY = {
+    "all ready": ({**FULL}, None),
+    "no fields": ({}, None),
+    "env not set": ({**FULL}, {"google_api_key": {"env": "SETUP_NO_SUCH_ENV"}}),
+    "file missing": ({**FULL}, {"google_service_account": {"file": "/no/such/account.json"}}),
+    "keychain missing": ({**FULL}, {"bing_api_key": {"keychain": "missing-item"}}),
+    "no keychain tool": ({**FULL}, "no tool"),
+    "no clarity token": ({**FULL}, {"clarity_token": None}),
+}
+
+
+@pytest.mark.parametrize("case", sorted(PARITY))
+def test_status_and_list_sites_never_disagree(ready, write_config, keychain, monkeypatch, case):
+    """The guard: setup status and the server read 1 function, so a ready provider is used."""
+    fields, change = PARITY[case]
+    path = config.path()
+    body = json.loads(path.read_text())
+    entry = next(iter(body["sites"].values()))
+    for name in FULL:
+        entry.pop(name, None)
+    entry.update(fields)
+    if change == "no tool":
+        monkeypatch.setenv("PATH", "/nonexistent")
+    elif case == "keychain missing":
+        keychain(44)
+        body["secrets"].update(change)
+    elif change:
+        for name, source in change.items():
+            if source is None:
+                entry["secrets"].pop(name)
+            else:
+                body["secrets"][name] = source
+    path.write_text(json.dumps(body))
+    (status_row,) = setup.status()["sites"]
+    ready_now = {row["provider"]: row["state"] == "ready" for row in status_row["providers"]}
+    (row,) = core.list_sites()["rows"]
+    assert row["connected"] == ready_now, (
+        f"{case}: setup status says {ready_now}, list_sites says {row['connected']}. Both must "
+        "call connection.state in src/seo_mcp/connection.py."
+    )

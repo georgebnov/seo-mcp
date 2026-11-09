@@ -154,6 +154,19 @@ QUOTA: tuple[Mutant, ...] = (
         "shared.once does not read the failure window under the lock",
     ),
     Model(
+        "NoSpendAfterTheLimitAnswer",
+        "parallel_callers",
+        (("/\\ ~blocked /\\ count + 1 <= Limit", "/\\ count + 1 <= Limit"),),
+        "a caller spends after the 429 of another path blocked the day",
+    ),
+    Code(
+        "NoSpendAfterTheLimitAnswer",
+        "src/seo_mcp/quota.py",
+        (("if blocked or used + count > ledger.limit:", "if used + count > ledger.limit:"),),
+        ("tests/test_failure_window.py::test_after_the_429_no_new_call_spends",),
+        "quota.spend lets a new call spend after a 429 in flight",
+    ),
+    Model(
         "NoAnswerOfAnotherKey",
         "parallel_callers",
         (("Slot(c) == key[c]", 'Slot(c) == "A"'),),

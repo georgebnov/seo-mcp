@@ -6,7 +6,6 @@ import re
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, date, datetime
-from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -75,10 +74,6 @@ def credential(site: Site) -> tuple[str, shared.Identity]:
     """Read the token 1 time, so that the headers and the cache key name the same token."""
     token = site.secret("clarity_token")
     return token, shared.identity("clarity_token", token)
-
-
-def ledger_path(project_id: str) -> Path:
-    return quota.path(LEDGER, project_id)
 
 
 def _all_objects(items: Any) -> bool:
@@ -227,6 +222,7 @@ async def clarity(site: Site, params: Params) -> dict[str, Any]:
 
 SOURCES = {"clarity": clarity}
 ACCEPTS = {"clarity": frozenset({"last_days", "page"})}
+PROVIDER_OF = {"clarity": "clarity"}
 
 DIMENSIONS = (
     "Browser",
@@ -736,7 +732,6 @@ APIS = {
                 "The /mcp endpoints have no reference page, so the docs do not say if they "
                 f"share the {DAILY_CALLS}. The server counts them in the same {DAILY_CALLS}.",
             ),
-            frozenset({"clarity_token"}),
             now,
         ),
         methods={

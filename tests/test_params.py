@@ -6,9 +6,14 @@ from datetime import timedelta
 import httpx2
 import pytest
 
-from seo_mcp import core, params, providers, shared
+from seo_mcp import core, params, providers, quota, shared
 from seo_mcp.providers import clarity
 from test_query_api import clarity_auth
+
+
+def ledger_path(project_id):
+    return quota.path(clarity.LEDGER, project_id)
+
 
 SITE = {
     "gsc_property": "sc-domain:example.com",
@@ -430,8 +435,11 @@ async def test_all_sources_refused_gives_a_top_status_of_unsupported(live):
 async def test_refused_and_not_connected_gives_not_connected(write_config, fake_net):
     write_config()
     fake_net(answer)
-    data = await ask(["sitemaps", "search_pages"], query="shoes", last_days=7)
-    assert data["sources"]["sitemaps"]["status"] == "unsupported"
+    # PageSpeed needs no field and no key, so it is connected and refuses the query. Search
+    # Console is not connected, and that comes before its parameters.
+    data = await ask(["page_speed", "search_pages"], query="shoes", last_days=7)
+    assert data["sources"]["page_speed"]["status"] == "unsupported"
+    assert data["sources"]["search_pages"]["status"] == "not_connected"
     assert data["status"] == "not_connected"
 
 
@@ -625,8 +633,8 @@ async def test_clarity_project_field_keys_the_ledger(write_config, fake_net, mon
     write_config({**SITE, "clarity_project": "shared-project"})
     fake_net(lambda _: httpx2.Response(200, json=[TRAFFIC]))
     await ask(["clarity"])
-    assert clarity.ledger_path("shared-project").exists()
-    assert not clarity.ledger_path("www.example.com").exists()
+    assert ledger_path("shared-project").exists()
+    assert not ledger_path("www.example.com").exists()
 
 
 async def test_clarity_stops_at_the_daily_budget(write_config, fake_net, monkeypatch):
@@ -648,19 +656,19 @@ async def test_clarity_stops_at_the_daily_budget(write_config, fake_net, monkeyp
 async def test_clarity_cache_hit_spends_no_budget(live):
     await ask(["clarity"])
     await ask(["clarity"])
-    stored = json.loads(clarity.ledger_path("www.example.com").read_text())
+    stored = json.loads(ledger_path("www.example.com").read_text())
     assert stored["used"] == 1
 
 
 async def test_clarity_ledger_of_an_older_day_starts_again(live):
-    path = clarity.ledger_path("www.example.com")
+    path = ledger_path("www.example.com")
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"day": "2020-01-01", "used": 10}))
     assert (await ask(["clarity"]))["sources"]["clarity"]["status"] == "ok"
 
 
 async def test_broken_clarity_ledger_fails_closed(live):
-    path = clarity.ledger_path("www.example.com")
+    path = ledger_path("www.example.com")
     path.parent.mkdir(parents=True)
     path.write_text("not json")
     result = (await ask(["clarity"]))["sources"]["clarity"]
@@ -671,7 +679,7 @@ async def test_broken_clarity_ledger_fails_closed(live):
 
 async def test_parallel_clarity_runs_spend_one_call(live):
     await ask(["clarity"], page="/a", compare_page="/b")
-    assert json.loads(clarity.ledger_path("www.example.com").read_text())["used"] == 1
+    assert json.loads(ledger_path("www.example.com").read_text())["used"] == 1
 
 
 # The guard: a source cannot claim a parameter and ignore it, and the list cannot drift.

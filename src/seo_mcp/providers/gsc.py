@@ -503,6 +503,7 @@ ACCEPTS = {
     "sitemaps": frozenset[str](),
     "index_status": frozenset({"page"}),
 }
+PROVIDER_OF = dict.fromkeys(SOURCES, "search_console")
 
 DIMENSIONS = ("country", "device", "page", "query", "searchAppearance", "date", "hour")
 FILTER_DIMENSIONS = DIMENSIONS[:5]
@@ -661,7 +662,6 @@ APIS = {
                 "The server counts only URL Inspection: a count of the other limits changes "
                 "no decision, and it does not enforce the limit of each minute.",
             ),
-            frozenset({"gsc_property", "google_service_account"}),
             now,
         ),
         methods={

@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from seo_mcp import api as full_api
-from seo_mcp import config, net, providers, quota, shared, tasks
+from seo_mcp import config, connection, net, providers, quota, shared, tasks
 from seo_mcp.config import ConfigError, Site
 from seo_mcp.params import COMPARE_NEEDS, NONE, BadInput, Params, day, one_day, parse
 from seo_mcp.results import NotConnected, Refused, Unsupported, failed, ok, unsupported
@@ -205,6 +205,10 @@ def _gate_delta(result: dict[str, Any], primary: Params, comparison: Params) -> 
 async def _asked(
     name: str, site: Site, primary: Params, comparison: Params | None, asked: set[str]
 ) -> dict[str, Any]:
+    # A provider that the site is not connected to says so first: no parameter can fix it.
+    provider = providers.PROVIDER_OF.get(name)
+    if provider and not await asyncio.to_thread(connection.connected, site, provider):
+        return failed("not_connected", safe_reason(connection.reason(site, provider)))
     accepts = _accepts(name)
     wrong = sorted(asked - set(accepts))
     if wrong:
@@ -339,14 +343,10 @@ def describe_apis() -> str:
     return "\n".join(f"- {name}: {entry.summary}" for name, entry in providers.APIS.items())
 
 
-def _connected(entry: full_api.Api, site: Site) -> bool:
-    return entry.quota.needs <= set(site.fields) | set(site.secrets)
-
-
-def _quota(entry: full_api.Api, site: Site | None) -> dict[str, Any]:
+def _quota(name: str, entry: full_api.Api, site: Site | None) -> dict[str, Any]:
     """Show the published limits, and the count of the site when one resolves. No network."""
     info: dict[str, Any] = {"docs": entry.quota.docs, "limits": list(entry.quota.limits)}
-    if site and entry.quota.now and _connected(entry, site):
+    if site and entry.quota.now and connection.connected(site, name):
         info["now"] = entry.quota.now(site)
     return info
 
@@ -372,7 +372,7 @@ def _catalog(site: str) -> dict[str, Any]:
             "api": name,
             "title": entry.title,
             "methods": sorted(entry.methods),
-            "quota": _quota(entry, target),
+            "quota": _quota(name, entry, target),
         }
         for name, entry in providers.APIS.items()
     ]
@@ -381,6 +381,13 @@ def _catalog(site: str) -> dict[str, Any]:
 
 def _no_task(reason: str) -> dict[str, Any]:
     return unsupported(["task"], safe_reason(reason), sorted(tasks.TASKS))
+
+
+def _reach(api: str, site: Site | None) -> dict[str, Any]:
+    """A task row of a provider that the site is not connected to says so before any call."""
+    if site is None or connection.connected(site, api):
+        return {}
+    return {"status": "not_connected", "reason": safe_reason(connection.reason(site, api))}
 
 
 def _task(site: str, api: str, asked: str, start_date: str) -> dict[str, Any]:
@@ -396,8 +403,9 @@ def _task(site: str, api: str, asked: str, start_date: str) -> dict[str, Any]:
     rows = [
         {
             **row,
+            **_reach(row["api"], target),
             "window": item["window"],
-            "quota": _quota(providers.APIS[row["api"]], target),
+            "quota": _quota(row["api"], providers.APIS[row["api"]], target),
         }
         for item in built.values()
         for row in item["rows"]
@@ -425,7 +433,7 @@ def _options(name: str, entry: full_api.Api, site: str) -> dict[str, Any]:
         docs=entry.docs,
         options=entry.options,
         not_in_the_api=list(entry.gaps),
-        quota=_quota(entry, _target(site)),
+        quota=_quota(name, entry, _target(site)),
     )
 
 
@@ -448,15 +456,18 @@ async def _query_api(
         return failed("error", "A task finds a call and sends none. Omit method and request.")
     if start_date and not task:
         return failed("error", "start_date goes only with task. Omit it, or name a task.")
+    # Discovery can run `security` to check a Keychain name, so it runs off the event loop.
     if not api:
-        return _task(site, "", task, start_date) if task else _catalog(site)
+        if task:
+            return await asyncio.to_thread(_task, site, "", task, start_date)
+        return await asyncio.to_thread(_catalog, site)
     entry = providers.APIS.get(api)
     if entry is None:
         return failed("error", safe_reason(f"Unknown api. Known: {', '.join(providers.APIS)}."))
     if task:
-        return _task(site, api, task, start_date)
+        return await asyncio.to_thread(_task, site, api, task, start_date)
     if not method:
-        return _options(api, entry, site)
+        return await asyncio.to_thread(_options, api, entry, site)
     item = entry.methods.get(method)
     if item is None:
         return failed("error", safe_reason(f"Unknown method. Known: {', '.join(entry.methods)}."))
@@ -484,10 +495,16 @@ def list_sites() -> dict[str, Any]:
             "repo_path": str(site.repo_path),
             "fields": sorted(site.fields),
             "secrets": sorted(site.secrets),
+            "connected": {name: connection.connected(site, name) for name in providers.APIS},
+            "missing": {
+                name: connection.missing(site, name)
+                for name in providers.APIS
+                if not connection.connected(site, name)
+            },
             "quota": {
                 name: _site_quota(entry, site)
                 for name, entry in providers.APIS.items()
-                if _connected(entry, site)
+                if connection.connected(site, name)
             },
         }
         for site in sites

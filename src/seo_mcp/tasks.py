@@ -332,8 +332,10 @@ TASKS: dict[str, Task] = {
                     _search_step(
                         ["ga4_landing_pages"],
                         "Get organic sessions that start on the page in both periods.",
-                        "comparison has the 2nd period. delta is main minus comparison, and it "
-                        "is empty when a period has no sessions.",
+                        "comparison has the 2nd period. delta is main minus comparison. A period "
+                        "with no sessions on its complete days has totals with sessions 0, so "
+                        "delta shows the drop. engagementRate and its delta are null then, "
+                        "because a rate of 0 sessions is 0/0.",
                         compare=True,
                     ),
                 ),

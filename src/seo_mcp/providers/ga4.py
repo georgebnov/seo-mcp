@@ -368,6 +368,7 @@ async def ga4_landing_pages(site: Site, params: Params) -> dict[str, Any]:
 
 SOURCES = {"ga4_organic": ga4_organic, "ga4_landing_pages": ga4_landing_pages}
 ACCEPTS = {name: DATES | {"last_days", "page"} for name in SOURCES}
+PROVIDER_OF = dict.fromkeys(SOURCES, "ga4")
 
 SHARED_FIELDS = frozenset(
     {
@@ -636,7 +637,6 @@ APIS = {
                 "and does not refuse. Most calls cost 10 tokens or fewer.",
                 "The API does not say the tier of a property, so the server shows both limits.",
             ),
-            frozenset({"ga4_property_id", "google_service_account"}),
             now,
         ),
         methods={
