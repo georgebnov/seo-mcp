@@ -340,8 +340,8 @@ def _ask_entry(sites: dict[str, Any], shared: dict[str, Any], host: str) -> dict
     if default and repo_problem(default):
         print("The current folder is the repo path of another site.")
         default = None
-    repo = _ask_until(f"Repo path [{default or 'none'}]: ", repo_problem)
-    repo = default if not repo or repo == REMOVE else repo
+    typed = _ask_until(f"Repo path [{default or 'none'}]: ", repo_problem)
+    repo = default if not typed or typed == REMOVE else typed
     if repo is None:
         return None
     for name, hint in FIELD_HINTS.items():
