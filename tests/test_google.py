@@ -242,3 +242,51 @@ async def test_bad_account_file_is_not_connected_and_silent(write_config, tmp_pa
 
 def test_scope_constants_are_read_only():
     assert _google.GSC_SCOPE.endswith(".readonly")
+
+
+def query_rows(count, clicks=0, impressions=2):
+    return [row([f"query {index}"], clicks, impressions) for index in range(count)]
+
+
+async def queries_of_home():
+    data = await core.get_seo_data("www.example.com", ["search_queries"], page="/")
+    return data["sources"]["search_queries"]
+
+
+async def test_hidden_queries_and_cut_rows_are_each_explained(write_config, fake_net, account):
+    """The live case: 17 clicks in totals, and each of the 59 query rows has 0 clicks."""
+    write_config(SITE, account)
+    fake_net(api({("query",): query_rows(59), (): [row([], 17, 400)]}))
+    result = await queries_of_home()
+    assert result["truncated"] is True
+    reason = result["reason"]
+    assert "25 of 59 query rows are shown" in reason
+    assert "The other 34 rows hold 0 clicks and 68 impressions" in reason
+    assert "startRow" in reason
+    assert "17 clicks and 282 impressions that no query row holds" in reason
+    assert "anonymized queries" in reason
+
+
+async def test_query_rows_that_sum_to_totals_get_no_hint(write_config, fake_net, account):
+    write_config(SITE, account)
+    fake_net(api({("query",): query_rows(10, 1, 20), (): [row([], 10, 200)]}))
+    result = await queries_of_home()
+    assert result["reason"] is None
+
+
+async def test_cut_rows_only_say_how_to_get_the_rest(write_config, fake_net, account):
+    write_config(SITE, account)
+    fake_net(api({("query",): query_rows(30, 1, 20), (): [row([], 30, 600)]}))
+    reason = (await queries_of_home())["reason"]
+    assert "25 of 30 query rows are shown" in reason
+    assert "The other 5 rows hold 5 clicks and 100 impressions" in reason
+    assert "query_api" in reason and "startRow" in reason
+    assert "anonymized" not in reason
+
+
+async def test_hidden_queries_only_give_the_gap(write_config, fake_net, account):
+    write_config(SITE, account)
+    fake_net(api({("query",): query_rows(3, 1, 20), (): [row([], 5, 100)]}))
+    reason = (await queries_of_home())["reason"]
+    assert "2 clicks and 40 impressions that no query row holds" in reason
+    assert "startRow" not in reason
