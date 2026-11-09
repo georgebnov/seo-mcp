@@ -31,6 +31,10 @@ ApiUnknown == pc = "asked" /\ pc' = "inputError" /\ Keep
 TaskOnApi == pc = "apiKnown" /\ pc' = "taskLookup" /\ Keep
 TaskMatches == pc = "taskLookup" /\ pc' = "recipeRows" /\ Keep
 TaskNoMatch == pc = "taskLookup" /\ pc' = "noTask" /\ Keep
+\* core.query_api: a start_date with no task. tasks._length: a start_date after the end of the
+\* task, past the recording retention of a click task, or on a task with no dates.
+StartWithNoTask == pc = "asked" /\ pc' = "inputError" /\ Keep
+TaskStartRefused == pc = "taskLookup" /\ pc' = "inputError" /\ Keep
 NoMethod == pc = "apiKnown" /\ pc' = "fields" /\ Keep
 MethodNamed == pc = "apiKnown" /\ pc' = "methodKnown" /\ Keep
 MethodUnknown == pc = "apiKnown" /\ pc' = "inputError" /\ Keep
@@ -103,7 +107,7 @@ Done == pc \in Ends /\ UNCHANGED vars
 
 Next ==
   TaskWithMethod \/ NoApiNoTask \/ TaskAsked \/ ApiNamed \/ ApiUnknown \/ TaskOnApi
-  \/ TaskMatches \/ TaskNoMatch \/ NoMethod \/ MethodNamed \/ MethodUnknown
+  \/ TaskMatches \/ TaskNoMatch \/ StartWithNoTask \/ TaskStartRefused \/ NoMethod \/ MethodNamed \/ MethodUnknown
   \/ FieldWrong \/ FieldsGood \/ SiteBad \/ ValueWrong \/ DatesRefused \/ DatesPass
   \/ LocalRefusal \/ SavedAnswer \/ SharedFailure \/ ReadQuery
   \/ Rows \/ EmptySitemapIsNoData \/ EmptyObjectFails \/ OtherTextFails

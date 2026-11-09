@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from seo_mcp import NAME, net, quota, shared, tasks
 from seo_mcp.api import Api, Method, Quota, answer, as_rows, one_of, whole
@@ -367,7 +367,26 @@ SKIP_REASON = (
 ZERO = re.compile(r"0+")
 TOP = re.compile(r"\btop\b")
 MAX_RECORDINGS = 250
-DEFAULT_RECORDINGS = 100
+DEFAULT_RECORDINGS = tasks.SAMPLE_SESSIONS
+# A full session row is about 1.8 KB, mostly page speed, titles, and referrers with ad tokens:
+# 41 real rows made 68,321 characters, which the tool output of an agent cut. A row keeps only
+# what shows which element on which page got the click, and when.
+RECORDING_FIELDS: dict[str, Any] = {
+    "timestamp": None,
+    "link": None,
+    "timeline": {"url": None, "timelineEvents": {"eventtype": None, "hash": None, "text": None}},
+}
+KEPT_FIELDS = (
+    "Each row keeps only timestamp, link, and timeline[] with url and timelineEvents[] with "
+    "eventtype, hash, and text. url has no query and no fragment. The server drops the other "
+    "fields of Clarity."
+)
+# About 15,000 tokens: an answer of any count stays under the tool output of an agent.
+ROWS_BUDGET = 40_000
+CUT_REASON = (
+    "The answer shows the first {shown} of {fetched} sessions, so that it fits the tool output "
+    "of an agent. Ask a smaller count or a narrower filter: another request spends 1 call."
+)
 INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 
 
@@ -554,11 +573,64 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
             ENDPOINTS, "POST", RECORDINGS_API, json=body, headers=headers, spent=spent
         )
 
-    rows = as_rows(await _cached(site, path, call, _all_objects))
-    reason = moved_note(shift["date_moved"]) if shift else None
+    # The trim comes after the cache, so that a raw answer saved before is trimmed too.
+    fetched = [
+        _trim(row, RECORDING_FIELDS)
+        for row in as_rows(await _cached(site, path, call, _all_objects))
+    ]
+    rows = _whole_sessions(fetched)
+    notes = [moved_note(shift["date_moved"])] if shift else []
+    if len(rows) < len(fetched):
+        notes.append(CUT_REASON.format(shown=len(rows), fetched=len(fetched)))
+        shift["sessions_fetched"] = len(fetched)
     return answer(
-        rows, more_rows="possible", reason=reason, sample=SAMPLE_NOTE, applied=body, **shift
+        rows,
+        more_rows="possible",
+        reason=" ".join(notes) or None,
+        sample=SAMPLE_NOTE,
+        kept_fields=KEPT_FIELDS,
+        applied=body,
+        **shift,
     )
+
+
+def _bare_url(url: Any) -> Any:
+    """Drop the query, the fragment, and a login: a query can hold an ad token, such as fbclid."""
+    if not isinstance(url, str):
+        return url
+    parts = urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    host = f"{parts.hostname or ''}:{port}" if port else parts.hostname or ""
+    return urlunsplit((parts.scheme, host, parts.path, "", ""))
+
+
+def _trim(row: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
+    """Keep only the listed fields. A field of another shape goes, so no nested data passes."""
+    kept: dict[str, Any] = {}
+    for name, inner in fields.items():
+        if name not in row:
+            continue
+        value = row[name]
+        if inner is None and not isinstance(value, dict | list):
+            kept[name] = _bare_url(value) if name == "url" else value
+        elif inner is not None and _all_objects(value):
+            kept[name] = [_trim(item, inner) for item in value]
+    return kept
+
+
+def _whole_sessions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cut at a whole session, and keep the first one always, so that a sample is never empty."""
+    kept: list[dict[str, Any]] = []
+    used = 0
+    for row in rows:
+        used += len(json.dumps(row, default=str)) + 2
+        if kept and used > ROWS_BUDGET:
+            break
+        kept.append(row)
+    return kept
 
 
 async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any]:
@@ -614,9 +686,11 @@ APIS = {
             ),
             "recordings": Method(
                 _recordings,
-                "A list of session recordings with links. filters.date is required. After a "
-                "saved 0 dashboard count of the same click and whole days, the server skips "
-                "it: status skipped, and no call is spent.",
+                "A list of session recordings with links, newest first. filters.date is "
+                f"required, and count is {DEFAULT_RECORDINGS} by default. Each row keeps only "
+                "the time, the link, and each page with its events. After a saved 0 dashboard "
+                "count of the same click and whole days, the server skips it: status skipped, "
+                "and no call is spent.",
                 frozenset({"filters", "sortBy", "count"}),
                 frozenset({"filters"}),
             ),
@@ -652,8 +726,9 @@ APIS = {
             "and Clarity has no recording download.",
             "live_insights data older than 3 days.",
             "More than 1,000 rows in live_insights: the API has no paging.",
-            "A retention limit: recordings and dashboard_query refuse no time frame, and rows "
-            "of old days are simply absent. Empty rows do not prove zero activity.",
+            "Recordings older than 30 days and dashboard data older than 9 months: Clarity "
+            "deletes them. recordings and dashboard_query refuse no time frame, so rows of old "
+            "days are simply absent. Empty rows do not prove zero activity.",
         ),
     )
 }
