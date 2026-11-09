@@ -26,7 +26,7 @@ from seo_mcp.params import (
     too_late,
 )
 from seo_mcp.providers import _google
-from seo_mcp.results import Refused, ok
+from seo_mcp.results import ROW_LIMIT, Refused, ok
 
 Rows = list[dict[str, Any]]
 
@@ -241,8 +241,8 @@ async def _first_data(site: Site, headers: dict[str, str]) -> dict[str, Any]:
 
     The docs: "Data collection for a property starts as soon anyone adds the property to their
     Search Console account". A day with no impression has no row, so a missing row is no proof:
-    only the first day of the whole property is. The body changes only with the UTC date, so
-    each range and each source of 1 call share 1 saved answer.
+    the first day of the whole property is the best fact. The body changes only with the UTC
+    date, so each range and each source of 1 call share 1 saved answer.
     """
     day = today()
     body = {
@@ -278,6 +278,41 @@ def _shift(asked: date | None, sent: str) -> dict[str, Any]:
 
 def _by_traffic(row: dict[str, Any]) -> tuple[int, int]:
     return row["clicks"], row["impressions"]
+
+
+def _held(rows: Rows) -> tuple[int, int]:
+    return round(sum(row["clicks"] for row in rows)), round(sum(row["impressions"] for row in rows))
+
+
+def _query_gap(rows: Rows, total: dict[str, Any] | None) -> list[str]:
+    """Say why query rows sum to less than the totals: a cut, and the queries that Google hides.
+
+    The docs: "There is no row for anonymized queries in the report table or API", so the sum of
+    all rows is not the chart total, which counts them unless a query filter is applied.
+    """
+    notes = []
+    cut = rows[ROW_LIMIT:]
+    if cut:
+        clicks, impressions = _held(cut)
+        notes.append(
+            f"{ROW_LIMIT} of {len(rows)} query rows are shown. The other {len(cut)} rows hold "
+            f"{clicks} clicks and {impressions} impressions. To get them, use query_api "
+            'search_console search_analytics with dimensions ["query"], the same filters, '
+            "rowLimit, and startRow."
+        )
+    if total:
+        clicks, impressions = _held(rows)
+        hidden = max(round(total["clicks"]) - clicks, 0)
+        unseen = max(round(total["impressions"]) - impressions, 0)
+        if hidden or unseen:
+            notes.append(
+                f"The totals hold {hidden} clicks and {unseen} impressions that no query row "
+                "holds. Google leaves out anonymized queries (queries of few users) to protect "
+                "privacy: the API gives no row for them, but the totals count them."
+            )
+            if len(rows) >= FETCH_ROWS:
+                notes.append(f"The rows past the limit of {FETCH_ROWS} for 1 call are also in it.")
+    return notes
 
 
 async def _report(
@@ -317,6 +352,7 @@ async def _report(
     gaps = _gaps(params) + _partial_note(coverage)
     notes = gaps + ([_google.UNKNOWN_REASON] if unknown else [])
     notes += [MISS_REASON] if not rows and (params.page or params.query) else []
+    notes += _query_gap(rows, total) if dimensions == ["query"] else []
     notes += [moved_note(item) for item in shift.values()]
     return ok(
         rows,

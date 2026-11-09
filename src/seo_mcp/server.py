@@ -44,6 +44,8 @@ In a date comparison, a range can start before the first day of data of the sour
 Search Console collected nothing then): delta is null, first_data_day names that day, and reason
 asks for ranges that start on or after it. The server moves no range.
 If a date move makes the 2 ranges different in length, range_days and reason say so.
+When search_queries rows sum to less than totals, reason gives the cut rows and the
+queries that Google hides (anonymized queries), in clicks and impressions.
 
 Each source accepts only these parameters:
 {core.describe_sources()}
