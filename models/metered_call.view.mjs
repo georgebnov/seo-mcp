@@ -1,10 +1,10 @@
 const names = {
-  start: "An agent makes a metered Clarity call",
+  start: "An agent makes a metered Clarity call, and the server reads the token",
   lock: "The call holds the fetch lock and reads the saved answer",
   hit: "The saved answer goes back, no call spent",
   badAnswer: "The answer has a wrong shape: not saved, and the reason says so",
   repeated: "The same failure goes back, no call spent",
-  token: "No saved answer for today, the server reads the token",
+  token: "The token is there, and the call waits for the fetch lock",
   notConnected: "Not connected, no call spent",
   ledger: "The server reads the ledger under its lock",
   busy: "The ledger is busy: no call sent, no call spent",
@@ -48,7 +48,7 @@ const labels = {
 export const step = (action) => (action === "Done" ? null : labels[action]);
 const phases = {
   start: "Start", lock: "Saved answer", hit: "Saved answer", repeated: "Saved answer",
-  token: "Ledger", ledger: "Ledger", notConnected: "Stop", refused: "Stop", busy: "Stop",
+  token: "Start", ledger: "Ledger", notConnected: "Stop", refused: "Stop", busy: "Stop",
   reserved: "Spend", flight: "Spend",
   stored: "Answer", failed: "Stop", notSent: "Stop", badAnswer: "Stop", dayBlocked: "Stop",
 };

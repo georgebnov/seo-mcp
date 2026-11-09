@@ -1,2 +1,3 @@
 # Each line is a rule that the code breaks today: the model, the rule, and the fix.
 # scripts/check_models.py fails when a break is not in this list, or when a listed rule holds.
+parallel_callers NoSendAfterTheLimitAnswer A call that spent before the 429 of another path still goes out after quota.block. Fix: check the block again under the ledger lock just before the send, or change the rule to "no spend after the limit answer". George decides.

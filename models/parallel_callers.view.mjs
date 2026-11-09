@@ -7,12 +7,16 @@ const any = (record) => record.A || record.B;
 const ended = ["hit", "answered", "refused", "failed", "notSent", "repeated", "dayBlocked", "timedOut"];
 export const state = (v) => {
   const sent = total(v);
-  const calls = sent === 2 ? "2 calls spent" : sent === 1 ? "1 call spent" : "No call spent";
+  const calls = sent === 2 ? "2 requests sent" : sent === 1 ? "1 request sent" : "No request sent";
   const flying = count(v, ["flight"]) >= 1;
   const waiting = count(v, ["waiting"]);
   const done = count(v, ended);
   if (done === 2) return `Both callers have a result, ${keys(v)}. ${calls}`;
-  if (flying && sent === 2) return `The 2nd caller fetches too, ${keys(v)}. 2 calls spent`;
+  if (count(v, ["spent"]) >= 1) {
+    const day = v.blocked ? ", and the day is blocked" : "";
+    return `A caller reserved 1 call and opens the connection${day}. ${calls}`;
+  }
+  if (flying && sent === 2) return `The 2nd caller fetches too, ${keys(v)}. 2 requests sent`;
   if (flying) return `1 caller fetches, the other waits or stopped. ${calls}`;
   if (waiting === 2) return `Both callers wait for the fetch lock, ${keys(v)}`;
   if (v.blocked) return "The day is blocked, 1 caller still waits";
@@ -23,9 +27,10 @@ export const state = (v) => {
 const labels = {
   TakeLockHit: "the waiting caller gets the lock and reads the saved answer",
   TakeLockRefused: "the waiting caller gets the lock and the ledger refuses",
-  TakeLockSend: "a caller gets the lock, reserves 1 call, and sends",
+  TakeLockSpend: "a caller gets the lock and reserves 1 call",
+  Send: "the request of that caller goes out",
   TakeLockRepeat: "the waiting caller gets the lock and shares the failure, with no spend",
-  TakeLockNotSent: "a caller reserves 1 call, the connection does not open, and the failure is kept",
+  NotSent: "the connection does not open: the call stays counted, and the failure is kept",
   WaitTimesOut: "a waiting caller reaches the source timeout",
   Answer: "Clarity answers with data",
   Fails: "the call fails or times out",
@@ -33,9 +38,9 @@ const labels = {
 };
 export const step = (action) => (action === "Done" ? null : labels[action]);
 export const group = (v) => {
-  if (count(v, ended) === 2) return total(v) === 2 ? "2 calls spent" : "End";
-  if (total(v) === 2) return "2 calls spent";
-  if (count(v, ["flight"]) >= 1) return "1 caller fetches";
+  if (count(v, ended) === 2) return total(v) === 2 ? "2 requests sent" : "End";
+  if (total(v) === 2) return "2 requests sent";
+  if (count(v, ["flight", "spent"]) >= 1) return "1 caller fetches";
   return count(v, ["waiting"]) === 2 ? "Start" : "1 caller waits";
 };
-export const colors = { Start: "blue", "1 caller fetches": "orange", "1 caller waits": "yellow", End: "purple", "2 calls spent": "pink" };
+export const colors = { Start: "blue", "1 caller fetches": "orange", "1 caller waits": "yellow", End: "purple", "2 requests sent": "pink" };
