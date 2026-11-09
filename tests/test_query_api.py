@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx2
 import pytest
 
-from seo_mcp import api, core, providers, server, shared
+from seo_mcp import api, core, providers, quota, server, shared
 from seo_mcp.providers import bing, clarity, ga4
 
 SITE = {
@@ -562,7 +562,7 @@ async def test_live_insights_checks_before_it_spends(live, change, named):
     assert data["status"] == "error"
     assert named in data["reason"]
     assert not live
-    assert not clarity.ledger_path(HOST).exists()
+    assert not quota.path(clarity.LEDGER, HOST).exists()
 
 
 DAY = {"start": "2026-01-01T00:00:00.000Z", "end": "2026-01-02T00:00:00.000Z"}
@@ -645,7 +645,7 @@ async def test_dashboard_error_type_is_not_an_empty_success(live, fake_net):
 
 
 async def test_all_clarity_paths_share_1_budget(live, write_config):
-    project = clarity.ledger_path(HOST)
+    project = quota.path(clarity.LEDGER, HOST)
     project.parent.mkdir(parents=True)
     today = datetime.now(UTC).date().isoformat()
     project.write_text(json.dumps({"day": today, "used": clarity.DAILY_CALLS}))
@@ -883,7 +883,7 @@ async def test_a_removed_method_is_unknown_and_spends_nothing(live):
     assert data["status"] == "error"
     assert "Unknown method" in data["reason"]
     assert not live
-    assert not clarity.ledger_path(HOST).exists()
+    assert not quota.path(clarity.LEDGER, HOST).exists()
 
 
 async def test_the_catalog_lists_only_calls_that_work():
@@ -943,7 +943,7 @@ async def test_parallel_calls_on_a_cold_cache_spend_1_call(live):
     results = await asyncio.gather(*(ask("clarity", "recordings", request) for _ in range(5)))
     assert len(sent(live)) == 1
     assert sum(result["from_cache"] is False for result in results) == 1
-    assert json.loads(clarity.ledger_path(HOST).read_text())["used"] == 1
+    assert json.loads(quota.path(clarity.LEDGER, HOST).read_text())["used"] == 1
 
 
 async def test_a_call_waits_for_another_process_that_fetches_the_same_answer(live):
@@ -958,7 +958,7 @@ async def test_a_call_waits_for_another_process_that_fetches_the_same_answer(liv
     data = await waiting
     assert data["sources"]["clarity"]["from_cache"] is True
     assert not sent(live)
-    assert not clarity.ledger_path(HOST).exists()
+    assert not quota.path(clarity.LEDGER, HOST).exists()
 
 
 # George: an agent read a lower position, or a position delta, as good or bad. The average

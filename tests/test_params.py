@@ -6,9 +6,13 @@ from datetime import UTC, datetime, timedelta
 import httpx2
 import pytest
 
-from seo_mcp import core, providers, shared
+from seo_mcp import core, providers, quota, shared
 from seo_mcp.providers import clarity
 from test_query_api import clarity_auth
+
+
+def ledger_path(project_id):
+    return quota.path(clarity.LEDGER, project_id)
 
 SITE = {
     "gsc_property": "sc-domain:example.com",
@@ -624,8 +628,8 @@ async def test_clarity_project_field_keys_the_ledger(write_config, fake_net, mon
     write_config({**SITE, "clarity_project": "shared-project"})
     fake_net(lambda _: httpx2.Response(200, json=[TRAFFIC]))
     await ask(["clarity"])
-    assert clarity.ledger_path("shared-project").exists()
-    assert not clarity.ledger_path("www.example.com").exists()
+    assert ledger_path("shared-project").exists()
+    assert not ledger_path("www.example.com").exists()
 
 
 async def test_clarity_stops_at_the_daily_budget(write_config, fake_net, monkeypatch):
@@ -647,19 +651,19 @@ async def test_clarity_stops_at_the_daily_budget(write_config, fake_net, monkeyp
 async def test_clarity_cache_hit_spends_no_budget(live):
     await ask(["clarity"])
     await ask(["clarity"])
-    stored = json.loads(clarity.ledger_path("www.example.com").read_text())
+    stored = json.loads(ledger_path("www.example.com").read_text())
     assert stored["used"] == 1
 
 
 async def test_clarity_ledger_of_an_older_day_starts_again(live):
-    path = clarity.ledger_path("www.example.com")
+    path = ledger_path("www.example.com")
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"day": "2020-01-01", "used": 10}))
     assert (await ask(["clarity"]))["sources"]["clarity"]["status"] == "ok"
 
 
 async def test_broken_clarity_ledger_fails_closed(live):
-    path = clarity.ledger_path("www.example.com")
+    path = ledger_path("www.example.com")
     path.parent.mkdir(parents=True)
     path.write_text("not json")
     result = (await ask(["clarity"]))["sources"]["clarity"]
@@ -670,7 +674,7 @@ async def test_broken_clarity_ledger_fails_closed(live):
 
 async def test_parallel_clarity_runs_spend_one_call(live):
     await ask(["clarity"], page="/a", compare_page="/b")
-    assert json.loads(clarity.ledger_path("www.example.com").read_text())["used"] == 1
+    assert json.loads(ledger_path("www.example.com").read_text())["used"] == 1
 
 
 # The guard: a source cannot claim a parameter and ignore it, and the list cannot drift.
