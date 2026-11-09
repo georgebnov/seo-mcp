@@ -41,6 +41,10 @@ ESTIMATE_HOW = (
     "says that processing can take 24-48 hours, and the API has no field for this."
 )
 BAD_DATE = "{name} must be YYYY-MM-DD, NdaysAgo, yesterday, or today."
+BAD_COHORTS = (
+    "cohortSpec must be an object with cohorts: a list of objects, each with a dateRange of "
+    "startDate and endDate."
+)
 NO_ZONE = "The property zone: the reply names none."
 THIN_SESSIONS = 100
 MAX_DAILY_ROWS = 100
@@ -202,7 +206,9 @@ def _last_complete() -> date:
     return today() - timedelta(days=LAG_DAYS)
 
 
-def _sent_dates(name: str, start_text: Any, end_text: Any) -> tuple[str, str, bool]:
+def _sent_dates(
+    name: str, start_text: Any, end_text: Any, where: str = "dateRanges"
+) -> tuple[str, str, bool]:
     """Give the plain start and end to send, and whether the end moved to the newest day.
 
     A relative date becomes the plain date of today(), so GA4 never reads one in its own zone.
@@ -210,7 +216,7 @@ def _sent_dates(name: str, start_text: Any, end_text: Any) -> tuple[str, str, bo
     start, end = resolve(start_text), resolve(end_text)
     if start is None or end is None:
         field = "startDate" if start is None else "endDate"
-        raise BadInput(BAD_DATE.format(name=f"dateRanges {field}"))
+        raise BadInput(BAD_DATE.format(name=f"{where} {field}"))
     if start > end:
         raise BadInput(f"{name} must not be after the end date. The server sent nothing.")
     latest = newest()
@@ -526,14 +532,42 @@ def _flat(reply: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, A
     return [_flat_row(row, dimensions, metrics) for row in rows]
 
 
-def _sent_range(item: Any) -> tuple[dict[str, Any], bool]:
+def _sent_range(item: Any, where: str = "dateRanges") -> tuple[dict[str, Any], bool]:
     """Give the range with plain dates, and whether its end moved to the newest day."""
     if not isinstance(item, dict):
-        raise BadInput("Each of dateRanges must be an object with startDate and endDate.")
+        raise BadInput(f"Each of {where} must be an object with startDate and endDate.")
     start, end, cut = _sent_dates(
-        "dateRanges startDate", item.get("startDate"), item.get("endDate")
+        f"{where} startDate", item.get("startDate"), item.get("endDate"), where
     )
     return {**item, "startDate": start, "endDate": end}, cut
+
+
+def _sent_cohorts(spec: Any) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Give cohortSpec with each cohort dateRange as plain dates, and each moved end.
+
+    A cohort range is a date range of the report too, so it takes the rule of dateRanges.
+    """
+    asked = spec.get("cohorts") if isinstance(spec, dict) else None
+    if not isinstance(asked, list) or not all(isinstance(item, dict) for item in asked):
+        raise BadInput(BAD_COHORTS)
+    cohorts, shifts = [], []
+    for index, item in enumerate(asked):
+        field = f"cohortSpec.cohorts[{index}].dateRange"
+        went, cut = _sent_range(item.get("dateRange"), field)
+        cohorts.append({**item, "dateRange": went})
+        if cut:
+            shifts.append({"field": field, **moved(item["dateRange"]["endDate"], went["endDate"])})
+    return {**spec, "cohorts": cohorts}, shifts
+
+
+def _pivots(asked: Any) -> list[dict[str, Any]]:
+    """Give each pivot with the limit that run_report sends: the result stops at MAX_ROWS."""
+    if not isinstance(asked, list) or not all(isinstance(item, dict) for item in asked):
+        raise BadInput("pivots must be a list of objects, each with fieldNames and limit.")
+    return [
+        {**item, "limit": row_limit("Each pivot limit", item.get("limit"), "the pivot offset")}
+        for item in asked
+    ]
 
 
 def _reader(call: str, paging: bool, limits: bool = True) -> Run:
@@ -545,6 +579,11 @@ def _reader(call: str, paging: bool, limits: bool = True) -> Run:
         sent = [_sent_range(item) for item in ranges]
         if ranges:
             body["dateRanges"] = [item for item, _ in sent]
+        cohort_shifts: list[dict[str, str]] = []
+        if "cohortSpec" in request:
+            body["cohortSpec"], cohort_shifts = _sent_cohorts(request["cohortSpec"])
+        if "pivots" in request:
+            body["pivots"] = _pivots(request["pivots"])
         offset = 0
         if limits:
             body["limit"] = row_limit(
@@ -562,7 +601,7 @@ def _reader(call: str, paging: bool, limits: bool = True) -> Run:
         for name in ("totals", "maximums", "minimums"):
             if name in reply:
                 extra[name] = _flat(reply, reply[name])
-        notes: list[str] = []
+        shifts: list[dict[str, str]] = []
         if ranges:
             extra["coverage"] = [_coverage(reply, item) for item in body["dateRanges"]]
             shifts = [
@@ -570,9 +609,10 @@ def _reader(call: str, paging: bool, limits: bool = True) -> Run:
                 for item, (went, cut) in zip(ranges, sent, strict=True)
                 if cut
             ]
-            notes = [moved_note(item) for item in shifts]
-            if shifts:
-                extra["date_moved"] = shifts
+        shifts += cohort_shifts
+        notes = [moved_note(item) for item in shifts]
+        if shifts:
+            extra["date_moved"] = shifts
         return answer(
             rows,
             more_rows=more,
@@ -676,9 +716,10 @@ APIS = {
                 "FULL_REGEXP",
                 "PARTIAL_REGEXP",
             ],
-            "dates": "YYYY-MM-DD, NdaysAgo, yesterday, or today. The server sends each as "
-            "YYYY-MM-DD of its local date, and an end after yesterday goes out as yesterday.",
-            "row_limit": "1 to 1000 for each call here. Read more rows with offset.",
+            "dates": "YYYY-MM-DD, NdaysAgo, yesterday, or today, in dateRanges and in each "
+            "cohort dateRange. The server sends each as YYYY-MM-DD of its local date, and an end "
+            "after yesterday goes out as yesterday.",
+            "row_limit": "1 to 1000 for each call and each pivot here. Read more rows with offset.",
         },
         gaps=(
             "Explorations and funnel reports: the v1beta API has no method for them, and the "

@@ -81,7 +81,7 @@ The other dated sources have no such value here: `clarity`, the Bing traffic met
 
 ### An end date past the newest day
 
-Each source has its own newest day, so the server moves an end date for each source, in `get_seo_data` and in the date fields of `query_api`. The result shows the move: `date_moved` holds `asked_end_date` and `sent_end_date`, `reason` says so, and `applied` of `get_seo_data` and `query_api` shows what went out, such as `2026-11-08` for a GA4 end of `today` on `2026-11-09`. In `query_api` GA4, `date_moved` lists the moved `dateRanges`.
+Each source has its own newest day, so the server moves an end date for each source, in `get_seo_data` and in the date fields of `query_api`. The result shows the move: `date_moved` holds `asked_end_date` and `sent_end_date`, `reason` says so, and `applied` of `get_seo_data` and `query_api` shows what went out, such as `2026-11-08` for a GA4 end of `today` on `2026-11-09`. In `query_api` GA4, each `dateRange` of `cohortSpec.cohorts` takes the same rule as `dateRanges`, and `date_moved` lists the moved `dateRanges` and the moved cohort ranges, with `field` for a cohort range.
 
 | Source | Newest day | Moved end |
 | --- | --- | --- |
@@ -115,7 +115,7 @@ The tool text names each API with 1 line, built from `APIS`, so an agent goes to
 | `bing` | 17 read methods, such as `GetQueryStats`, `GetPageQueryStats`, and `GetUrlLinks` | The method of the same name |
 | `clarity` | `live_insights`, `recordings`, `dashboard_query` | The Data Export API, and 2 read endpoints of the official Clarity MCP server |
 
-A field that the method does not have is an error, never dropped. A row limit is at most 1000: read more rows with `startRow` or `offset`. The server does not check the `limit` of each pivot of `pivot_report`, but the result still stops at 1000 rows. `more_rows` is `yes`, `no`, or `possible`, because Search Console gives no total. A result stops at about 100 KB and then shows `truncated`. If a Google API refuses a query, `reason` holds the message of the API after the server removes secrets.
+A field that the method does not have is an error, never dropped. A row limit is at most 1000: read more rows with `startRow` or `offset`. The `limit` of each pivot of `pivot_report` takes the same check: 1 to 1000, and 1000 when it is not given. `more_rows` is `yes`, `no`, or `possible`, because Search Console gives no total. A result stops at about 100 KB and then shows `truncated`. If a Google API refuses a query, `reason` holds the message of the API after the server removes secrets.
 
 ### Find a call with `task`
 
