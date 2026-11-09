@@ -10,7 +10,7 @@ import pytest
 
 from seo_mcp import core, net, quota, shared
 from seo_mcp.providers import clarity, gsc
-from test_query_api import HOST, SITE
+from test_query_api import HOST, SITE, clarity_auth
 from test_quota import (
     DASHBOARD,
     INSIGHTS,
@@ -92,7 +92,7 @@ async def test_a_repeat_of_a_bad_answer_keeps_the_reason_and_spends_nothing(live
 async def test_the_source_works_again_after_the_window(live, fake_net):
     clarity_says(fake_net, {"message": "try later"})
     await core.get_seo_data(HOST, ["clarity"])
-    mark = shared.failure_path(clarity.cache_path(HOST))
+    mark = shared.failure_path(clarity.cache_path(HOST, clarity_auth()))
     old = datetime.now(UTC) - timedelta(seconds=shared.FAILURE_WINDOW_SECONDS)
     mark.write_text(json.dumps({**json.loads(mark.read_text()), "failed_at": old.isoformat()}))
     clarity_says(fake_net, METRICS)
@@ -103,7 +103,7 @@ async def test_the_source_works_again_after_the_window(live, fake_net):
 
 
 def save_today(body):
-    path = clarity.cache_path(HOST)
+    path = clarity.cache_path(HOST, clarity_auth())
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"cached_at": datetime.now(UTC).isoformat(), "answer": body}))
 

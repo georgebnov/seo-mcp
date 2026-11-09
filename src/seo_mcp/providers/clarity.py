@@ -47,15 +47,26 @@ LEDGER = quota.Ledger("clarity-calls", "Clarity project", DAILY_CALLS)
 
 
 def cache_path(
-    project_id: str, days: int = WINDOW_DAYS, dimensions: tuple[str, ...] = ("URL",)
-) -> Path:
+    project_id: str,
+    auth: shared.Identity,
+    days: int = WINDOW_DAYS,
+    dimensions: tuple[str, ...] = ("URL",),
+) -> shared.Keyed:
     key = "-".join(quote(name, safe="") for name in dimensions)
-    return quota.folder() / f"clarity-{quote(project_id, safe='')}-{days}d-{key}.json"
+    return shared.named(f"clarity-{quote(project_id, safe='')}-{days}d-{key}", auth=auth)
 
 
-def _body_path(project_id: str, kind: str, body: dict[str, Any]) -> Path:
+def _body_path(
+    project_id: str, kind: str, body: dict[str, Any], auth: shared.Identity
+) -> shared.Keyed:
     digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:24]
-    return quota.folder() / f"clarity-{quote(project_id, safe='')}-{kind}-{digest}.json"
+    return shared.named(f"clarity-{quote(project_id, safe='')}-{kind}-{digest}", auth=auth)
+
+
+def credential(site: Site) -> tuple[str, shared.Identity]:
+    """Read the token 1 time, so that the headers and the cache key name the same token."""
+    token = site.secret("clarity_token")
+    return token, shared.identity("clarity_token", token)
 
 
 def ledger_path(project_id: str) -> Path:
@@ -83,9 +94,9 @@ def project(site: Site) -> str:
     return site.fields.get("clarity_project", site.host)
 
 
-def _headers(site: Site) -> dict[str, str]:
+def _headers(token: str) -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {site.secret('clarity_token')}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         "User-Agent": NAME,
     }
@@ -93,17 +104,19 @@ def _headers(site: Site) -> dict[str, str]:
 
 async def _cached(
     site: Site,
-    path: Path,
+    path: shared.Keyed,
     call: Callable[[dict[str, str], net.Receipt], Awaitable[Any]],
     good: Callable[[Any], bool],
     *,
+    token: str,
     daily_429: bool = False,
 ) -> Any:
+    """The ledger key is the project only: a new token reads again, and it spends from 1 count."""
     key = project(site)
     quota.show(lambda: quota.view(LEDGER, key))
 
     async def prepare() -> tuple[dict[str, str], net.Receipt]:
-        headers = _headers(site)
+        headers = _headers(token)
         return headers, await quota.spend(LEDGER, key)
 
     async def send(ready: tuple[dict[str, str], net.Receipt]) -> Any:
@@ -128,8 +141,9 @@ async def _insights(site: Site, days: int, dimensions: tuple[str, ...]) -> Any:
         return await net.request(ENDPOINTS, "GET", API, params=params, headers=headers, spent=spent)
 
     # Only this API documents 429 as the daily limit. The /mcp endpoints have no reference.
-    path = cache_path(project(site), days, dimensions)
-    return await _cached(site, path, call, _good_insights, daily_429=True)
+    token, auth = credential(site)
+    path = cache_path(project(site), auth, days, dimensions)
+    return await _cached(site, path, call, _good_insights, token=token, daily_429=True)
 
 
 def _number(text: Any) -> float:
@@ -482,7 +496,9 @@ def _is_zero(reply: dict[str, Any], count: tasks.Count, first: str, last: str) -
     return all(_no_click(row, token) for row in data)
 
 
-def _zero_count(site: Site, filters: dict[str, Any], start: str, end: str) -> str | None:
+def _zero_count(
+    site: Site, filters: dict[str, Any], start: str, end: str, auth: shared.Identity
+) -> str | None:
     """Give the dashboard question of a saved 0 count for exactly this sample, or None.
 
     Only the request of a task recipe matches: 1 click flag and whole UTC days. A wrong skip
@@ -497,7 +513,7 @@ def _zero_count(site: Site, filters: dict[str, Any], start: str, end: str) -> st
     first, last = start[:10], end[:10]
     question = tasks.count_query(count.question, _slash(first), _slash(last))
     body = {"query": question, "timezone": "UTC"}
-    path = _body_path(project(site), "dashboard", body)
+    path = _body_path(project(site), "dashboard", body, auth)
     saved = shared.peek(path, _good_dashboard, shared.end_of_utc_day)
     if saved is None or not _is_zero(saved["answer"], count, first, last):
         return None
@@ -585,12 +601,13 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
         "filters": filters,
         "count": count,
     }
-    zero = _zero_count(site, filters, start, end)
+    token, auth = credential(site)
+    zero = _zero_count(site, filters, start, end, auth)
     if zero:
         quota.show(lambda: quota.view(LEDGER, project(site)))
         result = answer([], more_rows="no", reason=SKIP_REASON.format(question=zero), **shift)
         return {**result, "status": "skipped", "dashboard_question": zero, "applied": body}
-    path = _body_path(project(site), "recordings", body)
+    path = _body_path(project(site), "recordings", body, auth)
 
     async def call(headers: dict[str, str], spent: net.Receipt) -> Any:
         return await net.request(
@@ -600,7 +617,7 @@ async def _recordings(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     # The trim comes after the cache, so that a raw answer saved before is trimmed too.
     fetched = [
         _trim(row, RECORDING_FIELDS)
-        for row in as_rows(await _cached(site, path, call, _all_objects))
+        for row in as_rows(await _cached(site, path, call, _all_objects, token=token))
     ]
     rows = _whole_sessions(fetched)
     notes = [moved_note(shift["date_moved"])] if shift else []
@@ -663,14 +680,15 @@ async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any
         raise BadInput("query must be text.")
     # Only the outer spaces go: 2 texts with other differences can be 2 questions.
     body = {"query": text.strip(), "timezone": request.get("timezone", "UTC")}
-    path = _body_path(project(site), "dashboard", body)
+    token, auth = credential(site)
+    path = _body_path(project(site), "dashboard", body, auth)
 
     async def call(headers: dict[str, str], spent: net.Receipt) -> Any:
         return await net.request(
             ENDPOINTS, "POST", DASHBOARD_API, json=body, headers=headers, spent=spent
         )
 
-    reply = await _cached(site, path, call, _good_dashboard)
+    reply = await _cached(site, path, call, _good_dashboard, token=token)
     data = reply.get("data") if isinstance(reply, dict) else None
     rows = as_rows(reply if data is None else data)
     code = reply.get("dataErrorType") if isinstance(reply, dict) else None

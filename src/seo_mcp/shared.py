@@ -6,18 +6,23 @@ lock lets 1 caller send. The others wait, then read the answer or the failure th
 
 import asyncio
 import hashlib
+import hmac
 import json
 import math
 import os
+import re
+import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from seo_mcp import net, quota
 from seo_mcp.config import Site
+from seo_mcp.results import Refused
 from seo_mcp.secrets import safe_reason, scrub
 
 ANSWER_SECONDS = 300
@@ -29,7 +34,14 @@ REALTIME_SECONDS = 30
 FAILURE_WINDOW_SECONDS = 60
 PRUNE_SECONDS = 3600
 PRUNE_BATCH = 100
-KEY_FORMAT = 1
+# 2 adds the credential identity. An entry of format 1 has none, so no key reads it.
+KEY_FORMAT = 2
+SALT_FILE = "credential-salt"
+SALT_SHAPE = re.compile(r"[0-9a-f]{64}")
+BAD_SALT = (
+    f"The {SALT_FILE} file in the cache folder is not valid. Remove it: the server makes a new "
+    "one, and no saved answer serves after that."
+)
 
 Until = Callable[[datetime], datetime]
 Check = Callable[[Any], bool]
@@ -74,10 +86,84 @@ def documented(*names: str) -> Check:
     return lambda reply: reply == {} or some(reply)
 
 
-def entry(site: Site, *parts: Any) -> Path:
+@dataclass(frozen=True)
+class Identity:
+    """The credential that reads an answer. digest is a keyed hash: it holds no secret byte."""
+
+    digest: str
+
+
+class Keyed(Path):
+    """A cache path that holds an Identity. Only entry and named make one."""
+
+
+def salt_path() -> Path:
+    return quota.folder() / SALT_FILE
+
+
+def _salt() -> bytes:
+    """The key of each identity digest, 1 for each cache folder.
+
+    The first process links a full file into place, and each other process reads that file,
+    so all processes of 1 cache folder make the same digest and share 1 call.
+    """
+    path = salt_path()
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        handle, name = tempfile.mkstemp(dir=path.parent)
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as file:
+                file.write(os.urandom(32).hex())
+            with suppress(FileExistsError):
+                os.link(name, path)
+        finally:
+            os.unlink(name)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        raise Refused(BAD_SALT) from None
+    if not SALT_SHAPE.fullmatch(text):
+        raise Refused(BAD_SALT)
+    return bytes.fromhex(text)
+
+
+def identity(name: str, value: str | None) -> Identity:
+    """Name the credential of a call. A key change gives a new digest, and a repeat the same.
+
+    value is the secret, or a name that is not secret, such as a service account email. None
+    means a call with no credential.
+    """
+    material = f"none\0{name}" if value is None else f"some\0{name}\0{value}"
+    digest = hmac.new(_salt(), material.encode(), hashlib.sha256).hexdigest()[:32]
+    return Identity(digest)
+
+
+def _checked(auth: Any) -> Identity:
+    if not isinstance(auth, Identity):
+        raise TypeError("auth must come from shared.identity, so that a new key asks again.")
+    return auth
+
+
+def entry(site: Site, *parts: Any, auth: Identity) -> Keyed:
     """The file of a request. Only a digest reaches the disk, also of a key in a query."""
-    text = json.dumps([KEY_FORMAT, site.host, *parts], sort_keys=True, default=str)
-    return folder() / f"{hashlib.sha256(text.encode()).hexdigest()[:32]}.json"
+    text = json.dumps(
+        [KEY_FORMAT, site.host, _checked(auth).digest, *parts], sort_keys=True, default=str
+    )
+    return Keyed(folder() / f"{hashlib.sha256(text.encode()).hexdigest()[:32]}.json")
+
+
+def named(stem: str, *, auth: Identity) -> Keyed:
+    """A file in the cache folder with a readable stem, for an answer that lives past a prune."""
+    return Keyed(quota.folder() / f"{stem}-k{KEY_FORMAT}-{_checked(auth).digest}.json")
+
+
+def _keyed(path: Path) -> Path:
+    if not isinstance(path, Keyed):
+        raise TypeError(
+            "A cache path must come from shared.entry or shared.named with "
+            "auth=shared.identity(...), so that a new key does not read the old answer."
+        )
+    return path
 
 
 def failure_path(path: Path) -> Path:
@@ -126,13 +212,13 @@ def _saved(path: Path, good: Check, until: Until) -> dict[str, Any] | None:
     return {"answer": stored["answer"], "at": at, "expires_at": until(at)} if usable else None
 
 
-def peek(path: Path, good: Check, until: Until) -> dict[str, Any] | None:
+def peek(path: Keyed, good: Check, until: Until) -> dict[str, Any] | None:
     """Read a saved answer with no lock, no send, and no spend.
 
     A miss proves nothing: the caller goes on as if it had no answer. Writes replace the file
     in 1 step, so a read never sees half of an answer.
     """
-    return _saved(path, good, until)
+    return _saved(_keyed(path), good, until)
 
 
 def cite(saved: dict[str, Any]) -> None:
@@ -199,7 +285,7 @@ async def _nothing() -> None:
 
 
 async def once(
-    path: Path,
+    path: Keyed,
     send: Callable[[Any], Awaitable[Any]],
     *,
     prepare: Callable[[], Awaitable[Any]] = _nothing,
@@ -211,8 +297,9 @@ async def once(
     prepare runs before the request, and it is the only step that spends from a ledger: a
     repeat spends nothing, and a saved answer still serves at the limit. send is the only step
     that can have reached the API. Each failure of a spent call starts the failure window.
+    The path holds the credential, so the answer, the failure, and the lock are of 1 key.
     """
-    async with _only_sender(path):
+    async with _only_sender(_keyed(path)):
         saved = _saved(path, good, until)
         if saved:
             _note(True, saved["at"], saved["expires_at"])
@@ -250,6 +337,7 @@ async def request(
     method: str,
     url: str,
     *,
+    auth: Identity,
     good: Check = is_object,
     keep: int = ANSWER_SECONDS,
     explain: bool = False,
@@ -258,13 +346,14 @@ async def request(
 ) -> Any:
     """Send 1 read that has no ledger. good tells a good answer from a failed HTTP 200.
 
-    The headers stay out of the key, because a token changes each hour. The URL and the body
-    name the property, so a saved answer ends at the latest after keep seconds. basis goes only
-    into the key: a fact that the answer is read with, so that a changed fact asks again.
+    The headers stay out of the key, because a token changes each hour. auth names the
+    credential of the headers instead, so a new key asks again. The URL and the body name the
+    property, so a saved answer ends at the latest after keep seconds. basis goes only into the
+    key: a fact that the answer is read with, so that a changed fact asks again.
     """
     net.check(allowed, method, url)
     sent = (kwargs.get("params"), kwargs.get("json"))
-    path = entry(site, method, url, *sent, explain, keep, *([basis] if basis else []))
+    path = entry(site, method, url, *sent, explain, keep, *([basis] if basis else []), auth=auth)
 
     async def send(_: None) -> Any:
         return await net.request(allowed, method, url, explain=explain, **kwargs)
