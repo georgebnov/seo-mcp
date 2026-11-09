@@ -46,7 +46,9 @@ click rate and impressions of the same rows."""
 
 GET_SEO_DATA = f"""Get the SEO data of a site in 1 call.
 
-Each source has status, reason, and thin_data.
+Each source has status, reason, and thin_data. A source of a provider that the site is not
+connected to (connected false in list_sites) does not run: status is not_connected, and reason
+names what is missing. It sends nothing and spends no quota.
 
 site is a host or a repo path. An empty site means the current folder.
 Name the sources that you need in sources. With no sources, the call runs every source.

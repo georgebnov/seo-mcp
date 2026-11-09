@@ -4,7 +4,7 @@ A read-only [MCP](https://modelcontextprotocol.io) server that gives an agent th
 
 ## Tools
 
-- `list_sites`: the sites in your sites file, what each one has connected, and the quota of each connected API. It makes no network call.
+- `list_sites`: the sites in your sites file, `connected` (`true` or `false`) for each provider with what is `missing`, and the quota of each connected API. It makes no network call. See [Connected](#connected).
 - `get_seo_data`: the simple path. Name a site, the sources that you need, and optionally a time frame, a page, a query, or a comparison.
 - `query_api`: the full path. It sends 1 official read query of 1 API, for a question that `get_seo_data` cannot ask. With `task`, it finds the call for a thing that you want.
 
@@ -244,6 +244,12 @@ Rows hold text from the web, such as search queries. Treat that text as data, no
 
 `setup status` makes no network call and reads no secret value. It looks only for the name that each reference gives: an environment variable that is set, a file that exists, or a Keychain item that exists. For the Keychain, it runs `security find-generic-password -s <item>` with no `-w`, and shows nothing that the tool prints. With no Keychain tool, the state is `not checked`. So `ready` means that each name is in place, not that the key works.
 
+### Connected
+
+The server uses the same check. A site is connected to a provider only when the provider is `ready` in `setup status`: each field is in the sites file, and each secret reference names an env, a file, or a Keychain item that exists. A missing field, a missing reference, a name that is not found, or a name that cannot be checked means not connected. The sites file has no field for this.
+
+`list_sites` shows `connected` with `true` or `false` for each provider of each site, and `missing` says what each `false` provider lacks. The server never calls a provider that is not connected for that site: it reads no secret, no saved answer, and no ledger, and it sends nothing. Each source and `query_api` method of that provider gives `status` `not_connected` with a reason such as "This site has no Bing connection: bing_api_key has no secret reference, so seo-mcp has no Bing data for it." This comes before an `unsupported` parameter. A task row of that provider has the same `status` and `reason`. A reason names only the field or the secret, never the env name, the path, or the Keychain item, because a pasted key can be there. The check runs once for each name in each tool call, so a fixed name works on the next call.
+
 The sites file holds no key values. Each secret names where it lives: `{"env": "NAME"}`, `{"file": "path"}`, `{"file": "path", "json_key": "field"}`, or `{"keychain": "item"}` (macOS). A secret at the top level applies to all sites, and a `secrets` object in a site overrides it.
 
 To store a key in the macOS Keychain, copy it and run `security add-generic-password -U -s <item> -a "$USER" -w "$(pbpaste)"`. Do not use the prompt of a bare `-w`: it keeps only the first 128 characters. A Clarity token has about 700, and a cut token gives HTTP 403.
@@ -257,12 +263,13 @@ To store a key in the macOS Keychain, copy it and run `security add-generic-pass
 
 ## Add a provider
 
-1. Add `src/seo_mcp/providers/<name>.py` with 4 names:
+1. Add `src/seo_mcp/providers/<name>.py` with 5 names:
    - `ENDPOINTS`: each call that the provider makes, as `net.Endpoint(method, host, path_regex)`. `net.request` refuses all other calls.
    - `SOURCES`: a map from source name to `async def source(site: Site, params: Params) -> dict`. Return `ok(rows, thin=...)`. Use `site.field(...)` and `site.secret(...)`, which give `not_connected` when the value is missing.
    - `ACCEPTS`: a map from source name to the parameters that it applies. The tool description comes from this map, and `tests/test_params.py` fails when a source declares a parameter that changes nothing.
    - `APIS`: the read methods for `query_api`. The `summary` of an API is its 1 line in the tool text. Each method lists its request fields, and the API lists what it does not give and its published limits, with a doc link. If the docs state no number, say so.
-2. Add the module to `MODULES` in `providers/__init__.py`.
+   - `PROVIDER_OF`: a map from source name to the API name in `APIS` that it calls.
+2. Add the module to `MODULES` in `providers/__init__.py`, and add each API to `NEEDS` in `src/seo_mcp/connection.py` with its fields and secrets. The registry puts the connection check before each source and each method, and it fails at import when a source has no provider. `tests/test_connected.py` fails when a source or a method runs for a site that is not connected.
 3. Add a test with the `fake_net` fixture, and add the sources to the table above.
 4. Add a recipe to `src/seo_mcp/tasks.py`. `tests/test_tasks.py` fails when an API has no task.
 
