@@ -124,7 +124,9 @@ To find how to get a thing, call it with only task, for example task="dead click
 gives the exact calls to make for each provider, with real dates, how to read the answer, and
 what the answer means. It makes no network call and sends no query. Fill each mark in angle
 brackets, then make the calls. start_date (YYYY-MM-DD) goes only with task: each step of the
-task then starts on that day, such as the day of the last change to the site. A click task
+task then starts on that day. Set start_date only when the layout or the elements of the
+studied page changed, such as a moved button or a new form. New content on other pages, such
+as a new blog post, does not reset the window. A click task
 takes at most {tasks.RECORDING_DAYS} days: Clarity keeps recordings for that long. The tasks are:
 {tasks.describe()}
 
