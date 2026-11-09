@@ -76,9 +76,16 @@ def load() -> list[Site]:
     try:
         raw = json.loads(file.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise NotConnected(f"No sites file at {file}. Copy examples/sites.json there.") from None
+        raise NotConnected(
+            f"No sites file at {file}. Run {NAME} setup, or copy examples/sites.json there."
+        ) from None
     except (OSError, ValueError):
         raise ConfigError(f"{file} is not readable JSON.") from None
+    return parse(raw, file)
+
+
+def parse(raw: Any, file: Path) -> list[Site]:
+    """Check the JSON of a sites file. `seo-mcp setup` checks a new file with it before a write."""
     if not isinstance(raw, dict) or not isinstance(raw.get("sites"), dict):
         raise ConfigError(f'{file} must be an object with a "sites" object.')
     shared = _check_secrets(raw.get("secrets", {}), str(file))
