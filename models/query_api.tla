@@ -1,7 +1,7 @@
 ---- MODULE query_api ----
 \* 1 call of core.query_api. The input choice is at each branch.
-\* It holds the date check of a dated method (gsc._search_analytics, ga4._sent_range,
-\* clarity._check_date) and the shape check of an HTTP 200 (shared.once with good=).
+\* It holds the date check of a dated method (gsc._search_analytics, ga4._sent_range for
+\* dateRanges and each cohort dateRange, clarity._check_date) and the shape check of an HTTP 200 (shared.once with good=).
 EXTENDS Naturals
 VARIABLES pc, api, sent, wrote, scrubbed, saved, fromCache, dates, moved, reply, read, covRead
 vars == <<pc, api, sent, wrote, scrubbed, saved, fromCache, dates, moved, reply, read, covRead>>
