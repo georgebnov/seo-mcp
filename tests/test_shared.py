@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -259,6 +260,42 @@ async def test_a_prune_reaches_entries_behind_many_lock_files(live, monkeypatch)
     os.utime(stale, (long_ago, long_ago))
     await sources("page_speed")
     assert not stale.exists()
+
+
+def test_parallel_pruners_of_shared_skip_a_removed_file_and_fail_none(tmp_path):
+    """A pruner lists the folder, and another pruner removes a listed file before its stat."""
+    cache = tmp_path / "parallel"
+    entries = cache / "shared"
+    entries.mkdir(parents=True)
+    long_ago = datetime.now(UTC).timestamp() - shared.PRUNE_SECONDS - 1
+    for number in range(2000):
+        path = entries / f"{number:032x}.json"
+        path.write_text("{}")
+        os.utime(path, (long_ago, long_ago))
+    go = tmp_path / "go"
+    # Each worker starts on the same file, so that the prunes overlap.
+    script = textwrap.dedent(
+        f"""
+        import os, time
+        from seo_mcp import shared
+        while not os.path.exists({str(go)!r}):
+            time.sleep(0.001)
+        for _ in range(200):
+            if not any(shared.folder().glob("*.json")):
+                break
+            shared._prune(shared.folder())
+        """
+    )
+    env = {**os.environ, "SEO_MCP_CACHE_DIR": str(cache)}
+    workers = [
+        subprocess.Popen([sys.executable, "-c", script], env=env, stderr=subprocess.PIPE)
+        for _ in range(8)
+    ]
+    time.sleep(1)
+    go.touch()
+    errors = [worker.communicate(timeout=60)[1].decode() for worker in workers]
+    assert [worker.returncode for worker in workers] == [0] * 8, errors
+    assert sorted(path.name for path in entries.glob("*.json")) == []
 
 
 async def test_a_longer_lifetime_does_not_extend_a_short_saved_answer(live):
@@ -543,6 +580,49 @@ def _callers(path, called):
             yield from visit(child, name)
 
     yield from visit(ast.parse(path.read_text(encoding="utf-8")), "module")
+
+
+def _places(path, found):
+    def visit(node, name):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            name = node.name
+        if found(node):
+            yield f"{path.relative_to(SOURCE).as_posix()}:{node.lineno}", name
+        for child in ast.iter_child_nodes(node):
+            yield from visit(child, name)
+
+    yield from visit(ast.parse(path.read_text(encoding="utf-8")), "module")
+
+
+LISTINGS = {"scandir", "listdir", "walk", "iterdir", "glob", "rglob"}
+
+
+def _lists_a_folder(node):
+    return isinstance(node, ast.Call) and getattr(node.func, "attr", None) in LISTINGS
+
+
+def _names_a_lock(node):
+    return isinstance(node, ast.Constant) and ".lock" in str(node.value)
+
+
+def test_each_prune_lists_and_locks_through_1_rule():
+    """A prune that lists a folder alone can stop on a file that another process removed.
+
+    A lock name of a second rule lets a prune remove an answer that another process uses.
+    """
+    files = sorted(SOURCE.rglob("*.py"))
+    listings = [pair for path in files for pair in _places(path, _lists_a_folder)]
+    wrong = [place for place, name in listings if name != "_remove_old"]
+    assert not wrong, (
+        f"A folder listing at {wrong}. List a cache folder only in shared._remove_old: it skips "
+        "a file that another process removed, and it takes the lock of shared.lock_path."
+    )
+    locks = [pair for path in files for pair in _places(path, _names_a_lock)]
+    wrong = [place for place, name in locks if name not in {"lock_path", "locked"}]
+    assert not wrong, (
+        f"A lock name at {wrong}. Get the lock of an answer from shared.lock_path, and the lock "
+        "of a ledger from quota.locked."
+    )
 
 
 def test_each_api_call_goes_through_the_shared_guard():

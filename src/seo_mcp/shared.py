@@ -34,9 +34,9 @@ REALTIME_SECONDS = 30
 FAILURE_WINDOW_SECONDS = 60
 PRUNE_SECONDS = 3600
 PRUNE_BATCH = 100
-# The name of a Clarity answer of shared.named, or of its failure. The stem names the lock of
-# both. Each other file of the cache folder, such as a ledger or the salt, does not match.
-DAY_ANSWER = re.compile(r"(?P<stem>clarity-.+-k\d+-[0-9a-f]{32})(?:\.failed)?\.json")
+# The name of a Clarity answer of shared.named, or of its failure. lock_path gives both the
+# same lock. Each other file of the cache folder, such as a ledger or the salt, does not match.
+DAY_ANSWER = re.compile(r"clarity-.+-k\d+-[0-9a-f]{32}(?:\.failed)?\.json")
 # 2 adds the credential identity. An entry of format 1 has none, so no key reads it.
 KEY_FORMAT = 2
 SALT_FILE = "credential-salt"
@@ -262,20 +262,38 @@ def _mark_failure(path: Path, status: int | None, detail: str | None) -> None:
     quota.write_json(failure_path(path), stored)
 
 
-def _prune(where: Path) -> None:
-    """Remove old entries of this folder only. A ledger is outside it, and it must stay."""
-    limit = datetime.now(UTC).timestamp() - PRUNE_SECONDS
+def lock_path(path: Path) -> Path:
+    """The lock of an answer and of its failure twin. A dot in the stem stays in the name."""
+    stem = path.name.removesuffix(".json").removesuffix(".failed")
+    return path.with_name(f"{stem}.lock")
+
+
+def _remove_old(where: Path, ours: Callable[[str], bool], limit: float) -> None:
+    """Remove the oldest files of where that ours accepts and that are older than limit.
+
+    Another process can remove a file before each stat, so a gone file is skipped. Each file
+    goes under lock_path, so a file that another process uses stays for the next prune.
+    """
+    old: list[tuple[float, str]] = []
     with os.scandir(where) as found:
-        # Oldest first: a lock file or a fresh entry must not use up the batch.
-        entries = [item for item in found if item.name.endswith(".json")]
-    entries.sort(key=lambda item: item.stat().st_mtime)
-    for item in entries[:PRUNE_BATCH]:
-        path = Path(item.path)
-        lock_file = where / f"{path.name.split('.')[0]}.lock"
-        with lock_file.open("a") as lock, suppress(OSError):
+        for item in found:
+            with suppress(OSError):
+                if ours(item.name) and (at := item.stat().st_mtime) < limit:
+                    old.append((at, item.path))
+    # Oldest first: a lock file or a fresh entry must not use up the batch.
+    old.sort()
+    for _, name in old[:PRUNE_BATCH]:
+        path = Path(name)
+        with suppress(OSError), lock_path(path).open("a") as lock:
             quota.try_lock(lock)
             if path.stat().st_mtime < limit:
                 path.unlink()
+
+
+def _prune(where: Path) -> None:
+    """Remove old entries of this folder only. A ledger is outside it, and it must stay."""
+    limit = datetime.now(UTC).timestamp() - PRUNE_SECONDS
+    _remove_old(where, lambda name: name.endswith(".json"), limit)
 
 
 def prune_day_answers(where: Path) -> None:
@@ -283,31 +301,17 @@ def prune_day_answers(where: Path) -> None:
 
     A Clarity answer serves only on the UTC day of its call, so an older file never serves.
     Only a name of DAY_ANSWER goes. A lock file stays: a process can wait on it, and a new lock
-    file of the same name would let 2 processes send. A busy answer stays for the next prune.
+    file of the same name would let 2 processes send.
     """
     today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     limit = (today - timedelta(days=1)).timestamp()
-    old: list[tuple[float, str, str]] = []
-    with os.scandir(where) as found:
-        for item in found:
-            match = DAY_ANSWER.fullmatch(item.name)
-            # Another process can remove the file before this stat.
-            with suppress(OSError):
-                if match and item.stat().st_mtime < limit:
-                    old.append((item.stat().st_mtime, item.path, match["stem"]))
-    old.sort()
-    for _, name, stem in old[:PRUNE_BATCH]:
-        with suppress(OSError), (where / f"{stem}.lock").open("a") as lock:
-            quota.try_lock(lock)
-            path = Path(name)
-            if path.stat().st_mtime < limit:
-                path.unlink()
+    _remove_old(where, lambda name: DAY_ANSWER.fullmatch(name) is not None, limit)
 
 
 @asynccontextmanager
 async def _only_sender(path: Path) -> AsyncIterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with path.with_suffix(".lock").open("a") as lock:
+    with lock_path(path).open("a") as lock:
         await quota.take_lock(lock)
         yield
 
