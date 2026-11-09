@@ -725,6 +725,46 @@ async def test_dashboard_shows_the_question_that_clarity_answered(live, fake_net
     assert data["answered_question"] == "Rewritten question"
 
 
+# The wording of a real answer that Clarity rewrote, with the dates changed.
+TOP_10 = (
+    "Total dead click counts per visited page URL for non-bot users between "
+    "'2026/08/12 00:00:00' and '2026/11/09 23:59:59', showing the top 10 pages by dead clicks."
+)
+
+
+def dead_click_pages(count: int) -> list[dict[str, object]]:
+    return [
+        {"VisitedUrl": f"https://www.example.com/{n}", "TotalDeadClicks": 9 - n}
+        for n in range(count)
+    ]
+
+
+async def test_a_full_top_list_of_the_dashboard_can_hide_rows(live, fake_net):
+    reply = {"query": TOP_10, "data": dead_click_pages(10), "dataErrorType": 0}
+    fake_net(lambda _: httpx2.Response(200, json=reply))
+    data = await ask("clarity", "dashboard_query", {"query": "q"})
+    assert data["more_rows"] == "possible"
+    assert "top 10" in data["reason"]
+    assert "full URL" in data["reason"]
+
+
+async def test_a_short_top_list_of_the_dashboard_has_all_rows(live, fake_net):
+    reply = {"query": TOP_10, "data": dead_click_pages(7), "dataErrorType": 0}
+    fake_net(lambda _: httpx2.Response(200, json=reply))
+    data = await ask("clarity", "dashboard_query", {"query": "q"})
+    assert data["more_rows"] == "no"
+    assert data["reason"] is None
+
+
+async def test_a_dashboard_answer_with_no_top_list_has_all_rows(live, fake_net):
+    question = "Dead click counts per page between '2026/08/12' and '2026/11/09'."
+    reply = {"query": question, "data": dead_click_pages(10), "dataErrorType": 0}
+    fake_net(lambda _: httpx2.Response(200, json=reply))
+    data = await ask("clarity", "dashboard_query", {"query": "q"})
+    assert data["more_rows"] == "no"
+    assert data["reason"] is None
+
+
 async def test_a_removed_method_is_unknown_and_spends_nothing(live):
     data = await ask("clarity", "documentation", {"query": "q"})
     assert data["status"] == "error"
