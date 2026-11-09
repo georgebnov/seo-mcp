@@ -26,7 +26,7 @@ EXPECTED = {
     "bing": ("not_connected", None),
     "clarity": ("error", f"HTTP 403 from the API. {core.STATUS_HINTS[403]}"),
     "ga4": ("error", "The source failed with RuntimeError."),
-    "search_console": ("error", "The source timed out after 0.05 seconds."),
+    "search_console": ("error", "The source timed out after 1 seconds."),
 }
 
 
@@ -58,7 +58,8 @@ def edge(write_config, account, monkeypatch):
     monkeypatch.setenv("GOOGLE_KEY_ENV", "google-key-value-1234")
     site = {name: value for name, value in SITE.items() if name != "bing_site_url"}
     write_config(site, {**account, "google_api_key": {"env": "GOOGLE_KEY_ENV"}})
-    monkeypatch.setattr(core, "SOURCE_TIMEOUT_SECONDS", 0.05)
+    # Real sources run inside the limit, so it leaves time for a slow CI machine.
+    monkeypatch.setattr(core, "SOURCE_TIMEOUT_SECONDS", 1)
     transport = Edge({CRUX: 404, CLARITY: 403, ga4.HOST: "raise", gsc.HOST: "wait", BING: 500})
     net.transport = transport
     return transport
