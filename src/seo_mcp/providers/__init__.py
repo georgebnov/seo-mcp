@@ -1,4 +1,6 @@
-"""To add a provider: write 1 file with ENDPOINTS, SOURCES, and PROVIDER_OF, then list it here.
+"""To add a provider: write 1 file with ENDPOINTS, SOURCES, ACCEPTS, APIS, and PROVIDER_OF.
+
+Then list it here.
 
 Each source and each method runs behind the connection gate: a provider that the site is not
 connected to never runs, so it reads no secret, no saved answer, and no ledger.

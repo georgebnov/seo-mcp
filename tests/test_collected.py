@@ -387,3 +387,24 @@ async def test_a_task_comparison_before_the_first_day_says_what_to_ask(
     fix = f"{name} {api}: the read text of the step must say this, see tasks.FIRST_DAY_READ."
     for words in ("first_data_day", "delta is null", "reason", "no pair fits", "could not check"):
         assert words in read, f"{fix} It misses: {words!r}"
+
+
+async def test_the_ga4_period_step_says_that_0_sessions_give_a_real_delta(
+    live, fake_net, monkeypatch
+):
+    """Complete days with no sessions give 0 totals and a delta, not an empty delta."""
+    freeze(monkeypatch, ANSWERED)
+    main = {f"202610{day:02d}": 1 for day in range(12, 32)}
+    fake_net(replies(property_with(main, first_event="20250101")))
+    built = tasks.build("page_over_two_periods", HOST, "ga4", today=ANSWERED.date())
+    (step,) = built["rows"][0]["steps"]
+    data = await core.get_seo_data(**{**step["args"], "page": f"https://{HOST}/"})
+    (result,) = data["sources"].values()
+    assert result["comparison"]["totals"]["sessions"] == 0
+    assert result["comparison"]["totals"]["engagementRate"] is None
+    assert result["delta"]["sessions"] == result["totals"]["sessions"] > 0
+    assert result["delta"]["engagementRate"] is None
+    read = " ".join(step["read"].split())
+    assert "is empty" not in read, read
+    for words in ("sessions 0", "delta shows the drop", "engagementRate and its delta are null"):
+        assert words in read, f"The GA4 step of page_over_two_periods misses: {words!r}"
