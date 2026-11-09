@@ -162,12 +162,12 @@ def test_a_start_date_keeps_2_periods_of_the_same_length():
     }
 
 
-def test_a_start_date_gives_ga4_a_relative_start_of_that_day():
+def test_a_start_date_gives_ga4_that_start_as_a_plain_date():
     filled = tasks.build(
         "scroll_depth_by_page", "", "ga4", today=date(2026, 11, 6), start=date(2026, 10, 27)
     )
     ranges = filled["rows"][0]["steps"][0]["args"]["request"]["dateRanges"]
-    assert ranges == [{"startDate": "10daysAgo", "endDate": "today"}]
+    assert ranges == [{"startDate": "2026-10-27", "endDate": "2026-11-05"}]
 
 
 @pytest.mark.parametrize(
@@ -231,7 +231,7 @@ def test_a_task_end_with_a_lag_is_complete_in_each_zone(today):
         assert end <= place - timedelta(days=task.lag), place
 
 
-def test_a_ga4_task_step_sends_relative_dates_that_google_reads_in_the_property_zone():
+def test_a_ga4_task_step_sends_plain_dates_that_end_yesterday():
     built = [
         tasks.build("scroll_depth_by_page", "", "ga4", today=day)
         for day in (date(2026, 3, 18), date(2026, 3, 19))
@@ -239,7 +239,10 @@ def test_a_ga4_task_step_sends_relative_dates_that_google_reads_in_the_property_
     ranges = [
         row["steps"][0]["args"]["request"]["dateRanges"] for item in built for row in item["rows"]
     ]
-    assert ranges[0] == ranges[1] == [{"startDate": "89daysAgo", "endDate": "today"}]
+    assert ranges == [
+        [{"startDate": "2025-12-19", "endDate": "2026-03-17"}],
+        [{"startDate": "2025-12-20", "endDate": "2026-03-18"}],
+    ]
 
 
 async def test_a_step_names_the_input_that_it_needs():

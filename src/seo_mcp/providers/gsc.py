@@ -14,12 +14,12 @@ from seo_mcp.params import (
     DATES,
     MAX_TEXT,
     NONE,
-    SLACK_DAYS,
     BadInput,
     Params,
     iso_day,
     moved,
     moved_note,
+    newest,
     page_url,
     period,
     today,
@@ -43,15 +43,15 @@ WINDOW_DAYS = 28
 # The docs say that data is typically available after 2-3 days. A default range ends on the
 # last complete day that the API gives, and on this estimate only when the API gives none.
 LAG_DAYS = 3
-# The docs give the dates of a request "in PT time (UTC - 7:00/8:00)". The server reads no zone:
-# a PT day is never after the UTC date, so the UTC date is the newest day that can have data.
+# The docs give the dates of a request "in PT time (UTC - 7:00/8:00)". This is only a label: the
+# server reads no zone, and its newest day is params.newest, today minus 1.
 ZONE = "PT (UTC-7 or UTC-8)"
 # The docs: a query grouped by date for the past 10 days finds the newest data.
 COVERAGE_DAYS = 10
 API_HOW = "metadata.firstIncompleteDate of Search Console, minus 1 day."
 ESTIMATE_HOW = (
-    f"An estimate: {LAG_DAYS + SLACK_DAYS} days before the UTC date of the answer. The "
-    f"docs say that data takes 2-3 days, and a {ZONE} day can be 1 day before the UTC date."
+    f"An estimate: {LAG_DAYS} days before the newest day (today minus 1, the local date of the "
+    "server). The docs say that data takes 2-3 days."
 )
 ASK_HOW = f"{ESTIMATE_HOW} Send dataState all with the dimension date for the value of the API."
 # The API maximum for 1 call. A sort of fewer rows can miss the real top rows.
@@ -79,17 +79,13 @@ SITEMAP = shared.holds("path")
 Known = tuple[date, str, str]
 
 
-def _estimate(day: date) -> Known:
-    return day - timedelta(days=LAG_DAYS + SLACK_DAYS), "estimate", ESTIMATE_HOW
+def _estimate() -> Known:
+    return newest() - timedelta(days=LAG_DAYS), "estimate", ESTIMATE_HOW
 
 
 def _newest_end(name: str, start: date, end: date) -> date:
-    """The UTC date is the newest day: dataState all gives it, and it is partial.
-
-    In PT it can still be the day before. That day then has no data, and it is marked partial:
-    a valid day never moves.
-    """
-    latest = today()
+    """Today minus 1 is the newest day: dataState all gives it, and it can be partial."""
+    latest = newest()
     if start > latest:
         raise too_late(name, latest)
     return min(end, latest)
@@ -220,10 +216,10 @@ def _reported(reply: Any) -> date | None:
 async def _last_complete(site: Site, headers: dict[str, str]) -> Known:
     """The docs give no other way: a report of final data has no metadata of its days.
 
-    The body changes only with the UTC date, so all sources and agents of a site share this
-    read. The report stays good without it, and then it ends on the estimate.
+    The body changes only with the day, so all sources and agents of a site share this read.
+    The report stays good without it, and then it ends on the estimate.
     """
-    day = today()
+    day = newest()
     body = {
         "startDate": (day - timedelta(days=COVERAGE_DAYS)).isoformat(),
         "endDate": day.isoformat(),
@@ -234,7 +230,7 @@ async def _last_complete(site: Site, headers: dict[str, str]) -> Known:
         last = _reported(await _analytics(site, body, headers))
         if last:
             return last, "api", API_HOW
-    return _estimate(day)
+    return _estimate()
 
 
 async def _first_data(site: Site, headers: dict[str, str]) -> dict[str, Any]:
@@ -242,13 +238,12 @@ async def _first_data(site: Site, headers: dict[str, str]) -> dict[str, Any]:
 
     The docs: "Data collection for a property starts as soon anyone adds the property to their
     Search Console account". A day with no impression has no row, so a missing row is no proof:
-    the first day of the whole property is the best fact. The body changes only with the UTC
-    date, so each range and each source of 1 call share 1 saved answer.
+    the first day of the whole property is the best fact. The body changes only with the day,
+    so each range and each source of 1 call share 1 saved answer.
     """
-    day = today()
     body = {
-        "startDate": _oldest_day(day).isoformat(),
-        "endDate": day.isoformat(),
+        "startDate": _oldest_day(today()).isoformat(),
+        "endDate": newest().isoformat(),
         "dimensions": ["date"],
         "rowLimit": FETCH_ROWS,
         "dataState": "all",
@@ -270,14 +265,14 @@ async def _first_data(site: Site, headers: dict[str, str]) -> dict[str, Any]:
 
 def _basis(known: Known) -> str:
     """A saved report serves only under the API day that it was fetched with: else a day that
-    was partial in its rows can show as complete. An estimate is taken again from the day of
-    the answer (_shown), so it needs no day in the key."""
-    return known[0].isoformat() if known[1] == "api" else "estimate"
+    was partial in its rows can show as complete. An estimate comes from today, so its report
+    serves only on the same day."""
+    return known[0].isoformat() if known[1] == "api" else f"estimate {today().isoformat()}"
 
 
 def _shown(known: Known, how: str = ESTIMATE_HOW) -> Known:
-    """A saved report keeps the estimate of its own call, also after midnight."""
-    return known if known[1] == "api" else (*_estimate(_google.answer_day())[:2], how)
+    """An API day as it is, or the estimate of today with its text."""
+    return known if known[1] == "api" else (*_estimate()[:2], how)
 
 
 def _coverage(window: dict[str, str], known: Known, state: str) -> dict[str, Any]:
@@ -461,7 +456,7 @@ async def _inspect(
 
 async def _top_urls(site: Site, headers: dict[str, str]) -> list[str]:
     # Only the top pages matter here, so the estimate is enough: it costs no coverage read.
-    last = _estimate(today())[0]
+    last = _estimate()[0]
     rows = await _rows(site, ["page"], headers, _default(NONE, last), NONE, "final")
     pages = sorted(rows, key=_by_traffic, reverse=True)
     home = f"https://{site.host}/"

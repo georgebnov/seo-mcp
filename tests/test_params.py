@@ -1,12 +1,12 @@
 """The simple path: a time frame, a page, a query, and a comparison on get_seo_data."""
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import httpx2
 import pytest
 
-from seo_mcp import core, providers, shared
+from seo_mcp import core, params, providers, shared
 from seo_mcp.providers import clarity
 from test_query_api import clarity_auth
 
@@ -36,12 +36,13 @@ GOOD_DAY = "2026-01-10"
 
 
 def days_ago(days: int) -> str:
-    return (datetime.now(UTC).date() - timedelta(days=days)).isoformat()
+    return (params.today() - timedelta(days=days)).isoformat()
 
 
 def search_console_days_ago(days: int) -> str:
-    """This fake has no firstIncompleteDate, so a default range ends on the estimate."""
-    return (datetime.now(UTC).date() - timedelta(days=days + 1)).isoformat()
+    """This fake has no firstIncompleteDate, so a default range ends on the estimate: 3 days
+    before the newest day, today minus 1."""
+    return (params.today() - timedelta(days=days + 1)).isoformat()
 
 
 def body_of(request) -> dict:
@@ -203,7 +204,7 @@ async def test_search_console_default_body_is_unchanged(live):
 async def test_ga4_default_body_is_unchanged(live):
     await ask(["ga4_landing_pages"])
     assert body_of(api_calls(live)[0]) == {
-        "dateRanges": [{"startDate": "30daysAgo", "endDate": "3daysAgo"}],
+        "dateRanges": [{"startDate": days_ago(30), "endDate": days_ago(3)}],
         "dimensions": [{"name": "landingPage"}],
         "metrics": [
             {"name": "sessions"},
@@ -285,7 +286,7 @@ async def test_last_days_ends_where_the_default_window_ends(live):
     window = data["sources"]["search_pages"]["window"]
     assert window == {"start": search_console_days_ago(9), "end": search_console_days_ago(3)}
     ga4 = next(call for call in api_calls(live) if call.url.path.endswith(":runReport"))
-    assert body_of(ga4)["dateRanges"] == [{"startDate": "9daysAgo", "endDate": "3daysAgo"}]
+    assert body_of(ga4)["dateRanges"] == [{"startDate": days_ago(9), "endDate": days_ago(3)}]
     assert body_of(ga4)["limit"] == 8
 
 

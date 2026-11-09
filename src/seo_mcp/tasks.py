@@ -18,8 +18,8 @@ CLICK_DAYS = 28
 RECORDING_DAYS = 30
 RETENTION_DOCS = "https://learn.microsoft.com/en-us/clarity/setup-and-installation/data-retention"
 SEARCH_DAYS = 28
-# Search Console data ends about 3 days before the call. A YYYY-MM-DD end of a task with a lag
-# takes 1 more day, so that it is complete in each zone: the server reads no zone.
+# Search Console data ends about 3 days before the newest day (params.newest, today minus 1), so
+# the end of a task with a lag is that many days before the newest day.
 SEARCH_LAG_DAYS = 3
 # A trimmed session row is about 0.6 KB. 20 rows fit the tool output of an agent with room for
 # the work around them, and the newest sessions show the elements of the site of today.
@@ -263,9 +263,7 @@ TASKS: dict[str, Task] = {
                             "api": "ga4",
                             "method": "run_report",
                             "request": {
-                                "dateRanges": [
-                                    {"startDate": "{start_ago}", "endDate": "{end_ago}"}
-                                ],
+                                "dateRanges": [{"startDate": "{start}", "endDate": "{dated_end}"}],
                                 "dimensions": [{"name": "pagePath"}],
                                 "metrics": [{"name": "eventCount"}],
                                 "dimensionFilter": {
@@ -492,10 +490,6 @@ def find(asked: str) -> list[str]:
     ]
 
 
-def _ago(days: int) -> str:
-    return "today" if days == 0 else f"{days}daysAgo"
-
-
 def _dated(task: Task) -> bool:
     return "{start" in str([step.args for recipe in task.recipes for step in recipe.steps])
 
@@ -518,7 +512,7 @@ def _length(name: str, task: Task, start: date, end: date) -> int:
 def _marks(
     name: str, task: Task, today: date, given: date | None
 ) -> tuple[dict[str, str], dict[str, Any]]:
-    lag = task.lag + params.SLACK_DAYS if task.lag else 0
+    lag = params.NEWEST_LAG_DAYS + task.lag if task.lag else 0
     end = today - timedelta(days=lag)
     length = _length(name, task, given, end) if given else task.days
     start = end - timedelta(days=length - 1)
@@ -534,10 +528,9 @@ def _marks(
         marks[f"{{{name}_slash}}"] = day.strftime("%Y/%m/%d")
     marks["{start_instant}"] = f"{start}T00:00:00.000Z"
     marks["{end_instant}"] = f"{end}T23:59:59.999Z"
-    # GA4 reads a relative date in the property zone, so it needs no slack. A given start is
-    # the day that the agent names.
-    marks["{start_ago}"] = _ago((today - given).days if given else task.lag + task.days - 1)
-    marks["{end_ago}"] = _ago(task.lag)
+    # A dated source (GA4, Search Console) has no day after today minus 1.
+    newest = today - timedelta(days=params.NEWEST_LAG_DAYS)
+    marks["{dated_end}"] = str(min(end, newest))
     return marks, window
 
 

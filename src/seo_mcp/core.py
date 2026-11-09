@@ -2,13 +2,13 @@
 
 import asyncio
 from collections.abc import Awaitable
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from seo_mcp import api as full_api
 from seo_mcp import config, net, providers, quota, shared, tasks
 from seo_mcp.config import ConfigError, Site
-from seo_mcp.params import COMPARE_NEEDS, NONE, BadInput, Params, day, length, parse, today
+from seo_mcp.params import COMPARE_NEEDS, NONE, BadInput, Params, day, one_day, parse
 from seo_mcp.results import NotConnected, Refused, Unsupported, failed, ok, unsupported
 from seo_mcp.secrets import safe_reason, scrub
 
@@ -63,22 +63,16 @@ async def _run(name: str, site: Site, params: Params) -> dict[str, Any]:
         return unsupported(exc.params, safe_reason(str(exc)), _accepts(name))
 
 
-def _days(result: dict[str, Any]) -> tuple[int, int] | None:
-    """The fewest and the most days. A move to GA4 today has no exact length with no zone."""
+def _days(result: dict[str, Any]) -> int | None:
+    """The days of the range that went out. Each coverage date is a plain date."""
     coverage = result.get("coverage")
     if not coverage:
         return None
-    at = result.get("cached_at")
-    day = today(datetime.fromisoformat(at) if at else None)
-    return length(coverage["start_date"], coverage["end_date"], day)
-
-
-def _shown(days: tuple[int, int]) -> int | list[int]:
-    return days[0] if days[0] == days[1] else list(days)
-
-
-def _said(days: tuple[int, int]) -> str:
-    return str(days[0]) if days[0] == days[1] else f"{days[0]} to {days[1]}"
+    start, end = (
+        date.fromisoformat(coverage["start_date"]),
+        date.fromisoformat(coverage["end_date"]),
+    )
+    return (end - start).days + 1
 
 
 def _warn_of_unequal_ranges(result: dict[str, Any], other: dict[str, Any]) -> None:
@@ -86,13 +80,10 @@ def _warn_of_unequal_ranges(result: dict[str, Any], other: dict[str, Any]) -> No
     main, comparison = _days(result), _days(other)
     if "date_moved" not in result and "date_moved" not in other:
         return
-    if main is None or comparison is None or main == comparison and main[0] == main[1]:
+    if main is None or comparison is None or main == comparison:
         return
-    result["range_days"] = {"main": _shown(main), "comparison": _shown(comparison)}
-    exact = main[0] == main[1] and comparison[0] == comparison[1]
-    can = "compares" if exact else "can compare"
-    lengths = f"{_said(main)} and {_said(comparison)} days"
-    note = f"The 2 ranges are now {lengths}, so delta {can} unequal ranges."
+    result["range_days"] = {"main": main, "comparison": comparison}
+    note = f"The 2 ranges are now {main} and {comparison} days, so delta compares unequal ranges."
     result["reason"] = " ".join(filter(None, [result["reason"], note]))
 
 
@@ -262,6 +253,34 @@ async def get_seo_data(
     compare_end_date: str | None = None,
     compare_page: str | None = None,
 ) -> dict[str, Any]:
+    with one_day():
+        return await _get_seo_data(
+            site,
+            sources,
+            start_date=start_date,
+            end_date=end_date,
+            last_days=last_days,
+            page=page,
+            query=query,
+            compare_start_date=compare_start_date,
+            compare_end_date=compare_end_date,
+            compare_page=compare_page,
+        )
+
+
+async def _get_seo_data(
+    site: str,
+    sources: list[str] | None,
+    *,
+    start_date: str | None,
+    end_date: str | None,
+    last_days: int | None,
+    page: str | None,
+    query: str | None,
+    compare_start_date: str | None,
+    compare_end_date: str | None,
+    compare_page: str | None,
+) -> dict[str, Any]:
     try:
         entry = config.resolve(site)
         primary, comparison, asked = parse(
@@ -417,6 +436,13 @@ async def query_api(
     request: dict[str, Any] | None = None,
     task: str = "",
     start_date: str = "",
+) -> dict[str, Any]:
+    with one_day():
+        return await _query_api(site, api, method, request, task, start_date)
+
+
+async def _query_api(
+    site: str, api: str, method: str, request: dict[str, Any] | None, task: str, start_date: str
 ) -> dict[str, Any]:
     if task and (method or request is not None):
         return failed("error", "A task finds a call and sends none. Omit method and request.")
