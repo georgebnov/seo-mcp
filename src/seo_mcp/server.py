@@ -40,6 +40,9 @@ page is a path such as /pricing or a full https URL on the site. query is 1 exac
 compare_start_date and compare_end_date ask for a 2nd period, and need start_date and end_date.
 compare_page asks for a 2nd page, and needs page. Use 1 comparison in a call.
 A comparison adds comparison (the same fields) and delta (main value minus comparison value).
+In a date comparison, a range can start before the first day of data of the source (GA4 or
+Search Console collected nothing then): delta is null, first_data_day names that day, and reason
+asks for ranges that start on or after it. The server moves no range.
 If a date move makes the 2 ranges different in length, range_days and reason say so.
 When search_queries rows sum to less than totals, reason gives the cut rows and the
 queries that Google hides (anonymized queries), in clicks and impressions.

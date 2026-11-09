@@ -23,6 +23,10 @@ export const state = (v) => {
     if (v.totals === "zero" && v.start > v.shownLast) return "Status ok: a range of partial days shows totals 0";
     return "Status ok, with coverage and partial_days";
   }
+  if (v.pc === "gated") {
+    if (v.delta === "shown" && v.first > v.start) return "A delta compares days with no data";
+    return v.delta === "shown" ? "Delta is shown" : "Delta is null, and the reason says why";
+  }
   return flow[v.pc];
 };
 const labels = {
@@ -37,9 +41,17 @@ const labels = {
   SavedReport: "another source read the coverage first, and the API moved its last complete day since",
   BadShape: "the answer has no documented field",
   Result: "the answer has a documented field",
+  DeltaNoRead: "the GA4 day rows have a row on the first day of the range",
 };
 export const step = (action, from, to) => {
   if (action === "Done") return null;
+  if (action === "DeltaAfterRead") {
+    return {
+      found: "1 extra read gives the first day of data",
+      noEvent: "1 extra read finds no data on any day",
+      failed: "the extra read fails",
+    }[to.read];
+  }
   if (action === "Answer") {
     return {
       rows: "the API answers with rows",
@@ -54,7 +66,7 @@ export const group = (v) => {
   if (["asked", "named", "checked", "endSet"].includes(v.pc)) return "Dates";
   if (["covered"].includes(v.pc)) return "Days";
   if (["flight", "answered"].includes(v.pc)) return "Report";
-  if (v.pc === "result" && v.status === "ok") return "Result";
+  if (["result", "gated"].includes(v.pc) && v.status === "ok") return "Result";
   return "Stop";
 };
 export const colors = { Dates: "blue", Days: "teal", Report: "orange", Stop: "pink", Result: "purple" };

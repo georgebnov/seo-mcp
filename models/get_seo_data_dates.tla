@@ -4,12 +4,15 @@
 \* A day is a number. Last is the last complete day of the API now, and Newest is the newest day
 \* that the server allows (Search Console: the UTC date; GA4: the UTC date plus 1, sent as today).
 \* The model does not hold the zone of a GA4 property: the server reads none.
+\* The range is 1 side of a date comparison. First is the first day of data of the property:
+\* GA4 or Search Console collected nothing before it. The other side has data on each day.
 EXTENDS Naturals
 CONSTANTS Last, Newest, MaxDay
 VARIABLES pc, prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, status,
-          totals, partial, sent
+          totals, partial, sent, first, startRow, read, delta, extra
 vars == <<pc, prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, status,
-          totals, partial, sent>>
+          totals, partial, sent, first, startRow, read, delta, extra>>
+Gate == <<first, startRow, read, delta, extra>>
 Days == 1..MaxDay
 Min(a, b) == IF a < b THEN a ELSE b
 
@@ -17,14 +20,16 @@ Init ==
   /\ pc = "asked" /\ prov = "unset" /\ start = 0 /\ end = 0 /\ sentEnd = 0 /\ moved = FALSE
   /\ cov = "none" /\ fetchedLast = 0 /\ shownLast = 0 /\ reply = "none" /\ status = "none"
   /\ totals = "none" /\ partial = FALSE /\ sent = 0
+  /\ first = 0 /\ startRow = FALSE /\ read = "none" /\ delta = "none" /\ extra = 0
 
-\* The agent names a source and 2 dates.
+\* The agent names a source and 2 dates. The property has its first day of data.
 Ask ==
   /\ pc = "asked" /\ pc' = "named"
-  /\ prov' \in {"gsc", "ga4"} /\ start' \in Days /\ end' \in Days
+  /\ prov' \in {"gsc", "ga4"} /\ start' \in Days /\ end' \in Days /\ first' \in Days
   /\ UNCHANGED <<sentEnd, moved, cov, fetchedLast, shownLast, reply, status, totals, partial, sent>>
+  /\ UNCHANGED <<startRow, read, delta, extra>>
 Same == UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, status,
-                    totals, partial, sent>>
+                    totals, partial, sent>> /\ UNCHANGED Gate
 \* params.period: start_date after end_date is BadInput for every source, before any source runs.
 DatesBackwards == pc = "named" /\ start > end /\ pc' = "paramError" /\ Same
 DatesInOrder == pc = "named" /\ start <= end /\ pc' = "checked" /\ Same
@@ -37,20 +42,24 @@ EndSet ==
   /\ pc = "checked" /\ start <= Newest /\ pc' = "endSet"
   /\ sentEnd' = Min(end, Newest) /\ moved' = (end > Newest \/ (prov = "ga4" /\ end = Newest /\ start + 1 < Newest))
   /\ UNCHANGED <<prov, start, end, cov, fetchedLast, shownLast, reply, status, totals, partial, sent>>
+  /\ UNCHANGED Gate
 \* gsc._last_complete: the coverage read (its own saved entry, 5 minutes) gives
 \* firstIncompleteDate minus 1. It is the value of the API now.
 CoverageFromApi ==
   /\ pc = "endSet" /\ prov = "gsc" /\ pc' = "covered" /\ cov' = "api" /\ shownLast' = Last
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, fetchedLast, reply, status, totals, partial, sent>>
+  /\ UNCHANGED Gate
 \* The coverage read fails or has no value (Search Console), or the source is GA4 (3daysAgo):
 \* an estimate, which the code takes again from the day of the oldest answer (answer_day).
 CoverageEstimate ==
   /\ pc = "endSet" /\ pc' = "covered" /\ cov' = "estimate"
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, fetchedLast, shownLast, reply, status, totals, partial, sent>>
+  /\ UNCHANGED Gate
 \* shared.once: the report goes out, and the answer holds the days as the API has them now.
 SendReport ==
   /\ pc = "covered" /\ pc' = "flight" /\ sent' = sent + 1 /\ fetchedLast' = Last
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, shownLast, reply, status, totals, partial>>
+  /\ UNCHANGED Gate
 \* shared.once: a saved answer of the same body. Another source or agent read the coverage first,
 \* so the 2 entries end at different times. With an API day, that day is in the key of the report
 \* (gsc._report basis), so a saved answer has the day of the coverage. With an estimate, it can
@@ -60,15 +69,18 @@ SavedReport ==
   /\ fetchedLast' = IF cov = "api" THEN shownLast ELSE Last - 1
   /\ reply' \in {"rows", "noRows"}
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, shownLast, status, totals, partial, sent>>
+  /\ UNCHANGED Gate
 \* An HTTP 200. noRows has a documented field and no row, such as responseAggregationType or kind.
 Answer ==
   /\ pc = "flight" /\ pc' = "answered" /\ reply' \in {"rows", "noRows", "emptyObject", "otherText"}
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, status, totals, partial, sent>>
+  /\ UNCHANGED Gate
 \* gsc.REPORT = shared.has_any and ga4.REPORT = shared.holds("kind") refuse {}.
 Good(r) == r \in {"rows", "noRows"}
 BadShape ==
   /\ pc = "answered" /\ ~Good(reply) /\ pc' = "result" /\ status' = "error"
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, totals, partial, sent>>
+  /\ UNCHANGED Gate
 \* gsc._report, ga4._report: with no totals row, totals are null ("none") when the start is
 \* after the shown last complete day (each day is partial), else "zero": 0 for each count.
 \* A GA4 rate is null in "zero", because 0 sessions give 0/0 (ga4.EMPTY_TOTALS).
@@ -79,15 +91,38 @@ Result ==
   /\ totals' = IF reply = "rows" THEN "value"
                ELSE IF start <= shownLast' THEN "zero" ELSE "none"
   /\ partial' = (sentEnd > shownLast')
+  \* GA4 or Search Console has no row on a day before First, and can have none on a real 0 day.
+  /\ startRow' \in IF reply = "rows" /\ start >= first THEN BOOLEAN ELSE {FALSE}
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, reply, sent>>
-Done == pc \in {"paramError", "tooLate", "result"} /\ UNCHANGED vars
+  /\ UNCHANGED <<first, read, delta, extra>>
+\* core._delta: unknown totals give no delta.
+Shown == IF totals = "none" THEN "null" ELSE "shown"
+Keep == UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, status,
+                    totals, partial, sent, first, startRow>>
+\* ga4._gap_at_start: a GA4 day report with a row on the first day of the range needs no read.
+\* A GA4 landing page report and each Search Console report have no day rows, so they read.
+NeedsRead == prov = "gsc" \/ ~startRow
+DeltaNoRead ==
+  /\ pc = "result" /\ status = "ok" /\ ~NeedsRead /\ pc' = "gated" /\ delta' = Shown
+  /\ UNCHANGED <<read, extra>> /\ Keep
+\* ga4._first_event, gsc._first_data: 1 saved read of a fixed body gives the first day of data,
+\* no day (no event at all), or a failure. core._gate_delta: only a found day on or before the
+\* start keeps the delta.
+DeltaAfterRead ==
+  /\ pc = "result" /\ status = "ok" /\ NeedsRead /\ pc' = "gated" /\ extra' = extra + 1
+  /\ read' \in {"found", "noEvent", "failed"}
+  /\ delta' = IF read' = "found" /\ first <= start THEN Shown ELSE "null"
+  /\ Keep
+Done == (pc \in {"paramError", "tooLate", "gated"} \/ (pc = "result" /\ status = "error"))
+        /\ UNCHANGED vars
 
 Next ==
   Ask \/ DatesBackwards \/ DatesInOrder \/ StartTooLate \/ EndSet \/ CoverageFromApi
-  \/ CoverageEstimate \/ SendReport \/ SavedReport \/ Answer \/ BadShape \/ Result \/ Done
+  \/ CoverageEstimate \/ SendReport \/ SavedReport \/ Answer \/ BadShape \/ Result
+  \/ DeltaNoRead \/ DeltaAfterRead \/ Done
 
 Spec == Init /\ [][Next]_vars
-Ok == pc = "result" /\ status = "ok"
+Ok == pc \in {"result", "gated"} /\ status = "ok"
 
 \* George: a start after the end sends no request (also after the end moves to the newest day).
 StartAfterEndSendsNothing == (pc # "asked" /\ (start > end \/ start > Newest)) => sent = 0
@@ -103,4 +138,12 @@ NoDocumentedFieldIsNeverOk == (pc = "result" /\ reply \in {"emptyObject", "other
 UnfinishedDayIsNeverZero == (Ok /\ start > shownLast) => totals # "zero"
 \* George: a range with a complete day and no rows is a real 0, so a drop shows in delta.
 CompleteDayWithNoRowsIsZero == (Ok /\ reply = "noRows" /\ start <= shownLast) => totals = "zero"
+\* George: the comparison needs to be same dates. A delta never compares a range with no data.
+DeltaNeverComparesNoData == delta = "shown" => first <= start
+\* A real 0 after the first day of data keeps the delta.
+RealZeroKeepsTheDelta ==
+  (pc = "gated" /\ read = "found" /\ first <= start /\ totals # "none") => delta = "shown"
+\* A GA4 day report with a row on the first day sends no extra read, and no range sends 2.
+ExtraReadOnlyForAGap == (pc = "gated" /\ prov = "ga4" /\ startRow) => extra = 0
+AtMost1ExtraRead == extra <= 1
 ====
