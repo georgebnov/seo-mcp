@@ -1012,6 +1012,33 @@ async def test_each_covered_source_shows_a_moved_end(live, monkeypatch, name):
     assert "moved from" in result["reason"]
 
 
+ENDS = sorted(name for name, accepts in providers.ACCEPTS.items() if "end_date" in accepts)
+
+
+@pytest.mark.parametrize("name", ENDS)
+async def test_applied_shows_the_end_date_that_went_out(live, monkeypatch, name):
+    """A live test: applied showed the asked end 2026-11-12, and GA4 sent today.
+
+    The tool text says that a source that ran shows the values that it used in applied.
+    """
+    freeze(monkeypatch, MORNING)
+    data = await core.get_seo_data(
+        HOST,
+        [name],
+        start_date="2026-03-10",
+        end_date="2026-04-01",
+        compare_start_date="2026-03-01",
+        compare_end_date="2026-04-02",
+    )
+    result = data["sources"][name]
+    assert result["status"] == "ok", result["reason"]
+    for side in (result, result["comparison"]):
+        sent = side["date_moved"]["sent_end_date"]
+        fix = f"{name}: applied must show the sent end date of date_moved (core._asked)."
+        assert side["applied"]["end_date"] == sent, fix
+        assert side["applied"]["start_date"] in {"2026-03-10", "2026-03-01"}
+
+
 @pytest.mark.parametrize("name", sorted(COVERED))
 async def test_no_covered_source_shows_a_0_for_only_partial_days(live, fake_net, monkeypatch, name):
     freeze(monkeypatch, MORNING)

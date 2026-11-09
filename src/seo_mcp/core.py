@@ -226,6 +226,9 @@ async def _asked(
     for done, params in zip([result, *rest], [primary, comparison], strict=False):
         if done["status"] == "ok" and params:
             done["applied"] = params.applied()
+            # A source moves an end past its newest day: applied shows the end that went out.
+            if "date_moved" in done:
+                done["applied"]["end_date"] = done["date_moved"]["sent_end_date"]
     if rest:
         result["comparison"] = rest[0]
         if result["status"] == rest[0]["status"] == "ok" and "totals" in result:
