@@ -12,12 +12,18 @@ from typing import Any, NamedTuple
 from seo_mcp import params
 
 CLARITY_DAYS = 90
+# Clarity keeps playback data for 30 days, so a sample has no older session. 28 days stays
+# inside that with a margin, has 4 whole weeks, and shows fewer elements that a site removed.
+CLICK_DAYS = 28
+RECORDING_DAYS = 30
+RETENTION_DOCS = "https://learn.microsoft.com/en-us/clarity/setup-and-installation/data-retention"
 SEARCH_DAYS = 28
 # Search Console data ends about 3 days before the call. A YYYY-MM-DD end of a task with a lag
 # takes 1 more day, so that it is complete in each zone: the server reads no zone.
 SEARCH_LAG_DAYS = 3
-# A session row is about 2 KB, and a result stops at about 100 KB.
-SAMPLE_SESSIONS = 50
+# A trimmed session row is about 0.6 KB. 20 rows fit the tool output of an agent with room for
+# the work around them, and the newest sessions show the elements of the site of today.
+SAMPLE_SESSIONS = 20
 INPUT_MARK = re.compile(r"<[a-z_]+>")
 
 CLARITY_QUOTA = (
@@ -31,8 +37,15 @@ ZERO_COUNT_STOP = (
     "status skipped and spends nothing."
 )
 OLD_DATA = (
-    "Empty rows do not prove zero activity. Clarity refuses no time frame, and it does not "
-    "state how long it keeps data: rows of old days are simply absent. Try a longer window."
+    "Empty rows do not prove zero activity. Clarity refuses no time frame, and it keeps "
+    f"dashboard data for 9 months ({RETENTION_DOCS}): rows of old days are simply absent. "
+    "Try a longer window."
+)
+RECORDING_AGE = (
+    f"Clarity keeps recordings for {RECORDING_DAYS} days ({RETENTION_DOCS}), so the window "
+    f"is at most {RECORDING_DAYS} days. Empty rows do not prove zero activity. After a change "
+    "to the site, ask the task again with start_date set to the day of the change: then both "
+    "steps show only the site of today."
 )
 OTHER_HOSTS = (
     "Rows can hold other hosts, such as localhost, when the tag ran there. Keep only the "
@@ -88,6 +101,8 @@ class Task(NamedTuple):
     days: int = CLARITY_DAYS
     lag: int = 0
     compare: bool = False
+    # The most days that a start_date can give. 0 means no limit.
+    max_days: int = 0
 
 
 def _question(text: str, why: str, read: str) -> Step:
@@ -124,15 +139,17 @@ def _click_recipe(flag: str, question: str, count_read: str, event_read: str, me
             _sessions(flag, event_read),
         ),
         means,
-        (CLARITY_QUOTA, ZERO_COUNT_STOP, OLD_DATA, OTHER_HOSTS, COUNT_ONLY, SESSION_LINKS),
+        (CLARITY_QUOTA, ZERO_COUNT_STOP, RECORDING_AGE, OTHER_HOSTS, COUNT_ONLY, SESSION_LINKS),
     )
 
 
 EVENT_ROWS = (
     "In each row, read timeline[].url for the page and timeline[].timelineEvents[]. An event "
     "with eventtype {name} is 1 such click. text is the element text: masked, cut at 25 "
-    "characters, and it can be empty. hash identifies the element, so count by hash. This is "
-    "a sample: never use it as a total."
+    "characters, and it can be empty. hash identifies the element on its page, so count by "
+    "page and hash. url has no query and no fragment. The rows are the newest sessions first, "
+    "and the server keeps only the fields in kept_fields. This is a sample: never use it as a "
+    "total."
 )
 
 TASKS: dict[str, Task] = {
@@ -150,6 +167,8 @@ TASKS: dict[str, Task] = {
                 "broken control.",
             ),
         ),
+        days=CLICK_DAYS,
+        max_days=RECORDING_DAYS,
     ),
     "rage_clicks": Task(
         "Rapid repeated clicks on 1 place, for each page and element.",
@@ -165,6 +184,8 @@ TASKS: dict[str, Task] = {
                 "a slow or a broken control.",
             ),
         ),
+        days=CLICK_DAYS,
+        max_days=RECORDING_DAYS,
     ),
     "quickback_clicks": Task(
         "Clicks to a page that people leave again at once.",
@@ -188,9 +209,18 @@ TASKS: dict[str, Task] = {
                 ),
                 "A quickback is a click to a page, then a fast return. The page did not "
                 "give what the link promised.",
-                (CLARITY_QUOTA, ZERO_COUNT_STOP, OLD_DATA, OTHER_HOSTS, COUNT_ONLY, SESSION_LINKS),
+                (
+                    CLARITY_QUOTA,
+                    ZERO_COUNT_STOP,
+                    RECORDING_AGE,
+                    OTHER_HOSTS,
+                    COUNT_ONLY,
+                    SESSION_LINKS,
+                ),
             ),
         ),
+        days=CLICK_DAYS,
+        max_days=RECORDING_DAYS,
     ),
     "scroll_depth_by_page": Task(
         "How far people scroll on each page.",
@@ -451,15 +481,37 @@ def _ago(days: int) -> str:
     return "today" if days == 0 else f"{days}daysAgo"
 
 
-def _marks(task: Task, today: date) -> tuple[dict[str, str], dict[str, Any]]:
+def _dated(task: Task) -> bool:
+    return "{start" in str([step.args for recipe in task.recipes for step in recipe.steps])
+
+
+def _length(name: str, task: Task, start: date, end: date) -> int:
+    if not _dated(task):
+        raise params.BadInput(f"{name} has no dates, so it takes no start_date.")
+    if start > end:
+        raise params.BadInput(f"start_date must not be after {end}, the end of {name}.")
+    days = (end - start).days + 1
+    if task.max_days and days > task.max_days:
+        first = end - timedelta(days=task.max_days - 1)
+        raise params.BadInput(
+            f"start_date of {name} must be on or after {first}: Clarity keeps recordings for "
+            f"{task.max_days} days."
+        )
+    return days
+
+
+def _marks(
+    name: str, task: Task, today: date, given: date | None
+) -> tuple[dict[str, str], dict[str, Any]]:
     lag = task.lag + params.SLACK_DAYS if task.lag else 0
     end = today - timedelta(days=lag)
-    start = end - timedelta(days=task.days - 1)
+    length = _length(name, task, given, end) if given else task.days
+    start = end - timedelta(days=length - 1)
     days = {"start": start, "end": end}
-    window: dict[str, Any] = {"start": str(start), "end": str(end), "days": task.days}
+    window: dict[str, Any] = {"start": str(start), "end": str(end), "days": length}
     if task.compare:
         days["compare_end"] = start - timedelta(days=1)
-        days["compare_start"] = days["compare_end"] - timedelta(days=task.days - 1)
+        days["compare_start"] = days["compare_end"] - timedelta(days=length - 1)
         window |= {name: str(days[name]) for name in ("compare_start", "compare_end")}
     marks = {}
     for name, day in days.items():
@@ -467,8 +519,9 @@ def _marks(task: Task, today: date) -> tuple[dict[str, str], dict[str, Any]]:
         marks[f"{{{name}_slash}}"] = day.strftime("%Y/%m/%d")
     marks["{start_instant}"] = f"{start}T00:00:00.000Z"
     marks["{end_instant}"] = f"{end}T23:59:59.999Z"
-    # GA4 reads a relative date in the property zone, so it needs no slack.
-    marks["{start_ago}"] = _ago(task.lag + task.days - 1)
+    # GA4 reads a relative date in the property zone, so it needs no slack. A given start is
+    # the day that the agent names.
+    marks["{start_ago}"] = _ago((today - given).days if given else task.lag + task.days - 1)
     marks["{end_ago}"] = _ago(task.lag)
     return marks, window
 
@@ -508,9 +561,12 @@ def _row(name: str, recipe: Recipe, site: str, marks: dict[str, str]) -> dict[st
     }
 
 
-def build(name: str, site: str, api: str, today: date | None = None) -> dict[str, Any]:
+def build(
+    name: str, site: str, api: str, today: date | None = None, start: date | None = None
+) -> dict[str, Any]:
+    """start is the first day that the agent wants, such as the day of a change to the site."""
     task = TASKS[name]
-    marks, window = _marks(task, today or params.today())
+    marks, window = _marks(name, task, today or params.today(), start)
     recipes = [recipe for recipe in task.recipes if api in ("", recipe.api)]
     return {"window": window, "rows": [_row(name, item, site, marks) for item in recipes]}
 

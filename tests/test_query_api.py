@@ -87,7 +87,12 @@ def answer(request):
         row = {"Device": "PC", "SessionCount": 1}
         return httpx2.Response(200, json={"query": "q", "data": [row], "dataErrorType": 0})
     if host == "clarity.microsoft.com":
-        return httpx2.Response(200, json=[{"sessionId": "s1"}])
+        row = {
+            "sessionId": "s1",
+            "timestamp": "2026-01-01 10:00:00",
+            "link": "https://clarity.microsoft.com/player/p/s1",
+        }
+        return httpx2.Response(200, json=[row])
     return httpx2.Response(500)
 
 
@@ -568,7 +573,9 @@ async def test_recordings_send_filters_and_the_sort_number(live):
         "count": 20,
     }
     assert call.headers["authorization"].startswith("Bearer ")
-    assert data["rows"] == [{"sessionId": "s1"}]
+    assert data["rows"] == [
+        {"timestamp": "2026-01-01 10:00:00", "link": "https://clarity.microsoft.com/player/p/s1"}
+    ]
     assert data["calls_used_today"] == 1
 
 

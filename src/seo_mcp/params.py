@@ -93,7 +93,7 @@ def length(start: object, end: object, day: date) -> tuple[int, int] | None:
     return (finish[0] - begin[1]).days + 1, (finish[1] - begin[0]).days + 1
 
 
-def _date(name: str, text: str) -> date:
+def day(name: str, text: str) -> date:
     found = iso_day(text)
     if not found:
         raise BadInput(f"{name} must be a real date in the form YYYY-MM-DD.")
@@ -107,7 +107,7 @@ def period(
         return None, None
     if start_text is None or end_text is None:
         raise BadInput(f"{first} and {last} go together. Give both or neither.")
-    start, end = _date(first, start_text), _date(last, end_text)
+    start, end = day(first, start_text), day(last, end_text)
     if start > end:
         raise BadInput(f"{first} must not be after {last}.")
     return start, end

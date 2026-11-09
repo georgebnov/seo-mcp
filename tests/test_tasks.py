@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx2
 import pytest
 
-from seo_mcp import core, providers, server, tasks
+from seo_mcp import core, params, providers, server, tasks
 from test_query_api import HOST, SITE, answer
 
 README = Path(__file__).parent.parent / "README.md"
@@ -121,13 +121,91 @@ async def test_dead_clicks_ask_the_count_first_then_the_elements():
     assert not row["needs"]
 
 
-def test_dates_are_real_and_a_window_has_the_named_length():
-    filled = tasks.build("dead_clicks", "", "", today=date(2026, 11, 6))
-    assert filled["window"] == {"start": "2026-08-09", "end": "2026-11-06", "days": 90}
+@pytest.mark.parametrize("name", ["dead_clicks", "rage_clicks", "quickback_clicks"])
+def test_a_click_recipe_looks_back_28_days_and_asks_20_sessions(name):
+    filled = tasks.build(name, "", "", today=date(2026, 11, 6))
+    assert filled["window"] == {"start": "2026-10-10", "end": "2026-11-06", "days": 28}
     steps = filled["rows"][0]["steps"]
-    assert "2026/08/09 and 2026/11/06" in steps[0]["args"]["request"]["query"]
-    span = steps[1]["args"]["request"]["filters"]["date"]
-    assert span == {"start": "2026-08-09T00:00:00.000Z", "end": "2026-11-06T23:59:59.999Z"}
+    assert "2026/10/10 and 2026/11/06" in steps[0]["args"]["request"]["query"]
+    request = steps[1]["args"]["request"]
+    span = request["filters"]["date"]
+    assert span == {"start": "2026-10-10T00:00:00.000Z", "end": "2026-11-06T23:59:59.999Z"}
+    assert request["count"] == 20
+
+
+@pytest.mark.parametrize("name", ["scroll_depth_by_page", "most_clicked_elements"])
+def test_a_dashboard_only_clarity_task_keeps_90_days(name):
+    filled = tasks.build(name, "", "clarity", today=date(2026, 11, 6))
+    assert filled["window"] == {"start": "2026-08-09", "end": "2026-11-06", "days": 90}
+
+
+def test_a_start_date_from_the_agent_sets_both_click_steps():
+    filled = tasks.build("dead_clicks", "", "", today=date(2026, 11, 6), start=date(2026, 10, 30))
+    assert filled["window"] == {"start": "2026-10-30", "end": "2026-11-06", "days": 8}
+    first, second = filled["rows"][0]["steps"]
+    assert "2026/10/30 and 2026/11/06" in first["args"]["request"]["query"]
+    span = second["args"]["request"]["filters"]["date"]
+    assert span == {"start": "2026-10-30T00:00:00.000Z", "end": "2026-11-06T23:59:59.999Z"}
+
+
+def test_a_start_date_keeps_2_periods_of_the_same_length():
+    filled = tasks.build(
+        "page_over_two_periods", "", "", today=date(2026, 11, 6), start=date(2026, 10, 27)
+    )
+    assert filled["window"] == {
+        "start": "2026-10-27",
+        "end": "2026-11-02",
+        "days": 7,
+        "compare_start": "2026-10-20",
+        "compare_end": "2026-10-26",
+    }
+
+
+def test_a_start_date_gives_ga4_a_relative_start_of_that_day():
+    filled = tasks.build(
+        "scroll_depth_by_page", "", "ga4", today=date(2026, 11, 6), start=date(2026, 10, 27)
+    )
+    ranges = filled["rows"][0]["steps"][0]["args"]["request"]["dateRanges"]
+    assert ranges == [{"startDate": "10daysAgo", "endDate": "today"}]
+
+
+@pytest.mark.parametrize(
+    ("name", "start", "named"),
+    [
+        pytest.param("dead_clicks", date(2026, 11, 7), "after", id="after-the-end"),
+        pytest.param("dead_clicks", date(2026, 10, 7), "2026-10-08", id="past-recording-retention"),
+        pytest.param("page_over_two_periods", date(2026, 11, 3), "after", id="after-a-lagged-end"),
+        pytest.param("core_web_vitals", date(2026, 11, 1), "no dates", id="task-with-no-dates"),
+    ],
+)
+def test_a_start_date_that_cannot_apply_is_refused(name, start, named):
+    with pytest.raises(params.BadInput, match=named):
+        tasks.build(name, "", "", today=date(2026, 11, 6), start=start)
+
+
+def test_a_click_recipe_takes_a_start_at_the_retention_edge():
+    filled = tasks.build("dead_clicks", "", "", today=date(2026, 11, 6), start=date(2026, 10, 8))
+    assert filled["window"]["days"] == 30
+
+
+async def test_query_api_passes_the_start_date_to_the_task():
+    start = (params.today() - timedelta(days=4)).isoformat()
+    data = await core.query_api(task="dead clicks", start_date=start)
+    assert data["status"] == "ok"
+    assert data["rows"][0]["window"]["start"] == start
+
+
+@pytest.mark.parametrize(
+    ("args", "named"),
+    [
+        pytest.param({"task": "dead clicks", "start_date": "2026-13-01"}, "YYYY-MM-DD", id="bad"),
+        pytest.param({"api": "clarity", "start_date": "2026-11-01"}, "task", id="no-task"),
+    ],
+)
+async def test_query_api_refuses_a_start_date_that_it_cannot_use(args, named):
+    data = await core.query_api(**args)
+    assert data["status"] == "error"
+    assert named in data["reason"]
 
 
 def test_2_periods_have_the_same_length_and_do_not_overlap():
@@ -286,9 +364,9 @@ def clarity_paths(calls):
     return [call.url.path for call in calls if "clarity" in call.url.host]
 
 
-async def run_recipe(name, fake_net, rows=None, question=None):
+async def run_recipe(name, fake_net, rows=None, question=None, start=""):
     """Run the 2 steps of the task as an agent that ignores skip_if."""
-    data = await core.query_api(HOST, "clarity", "", None, name)
+    data = await core.query_api(HOST, "clarity", "", None, name, start)
     column = COUNTS[name][0]
     window = data["rows"][0]["window"]
     rows = [{"VisitedUrl": f"https://{HOST}/a", column: 0}] if rows is None else rows
@@ -312,6 +390,15 @@ async def test_a_0_count_makes_the_server_skip_the_sample(live, fake_net, name):
     assert clarity_paths(calls) == ["/mcp/dashboard/query"]
     assert sample["calls_used_today"] == 1
     assert sample["rows"] == []
+
+
+@pytest.mark.parametrize("name", sorted(COUNTS))
+async def test_a_0_count_skips_the_sample_also_from_a_start_date(live, fake_net, name):
+    start = (params.today() - timedelta(days=6)).isoformat()
+    count, sample, calls = await run_recipe(name, fake_net, start=start)
+    assert f"between {start.replace('-', '/')} and" in count["applied"]["query"]
+    assert sample["status"] == "skipped"
+    assert clarity_paths(calls) == ["/mcp/dashboard/query"]
 
 
 def test_each_click_task_has_a_count_that_the_server_reads():

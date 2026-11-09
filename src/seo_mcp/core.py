@@ -8,7 +8,7 @@ from typing import Any
 from seo_mcp import api as full_api
 from seo_mcp import config, net, providers, quota, shared, tasks
 from seo_mcp.config import ConfigError, Site
-from seo_mcp.params import COMPARE_NEEDS, NONE, BadInput, Params, length, parse, today
+from seo_mcp.params import COMPARE_NEEDS, NONE, BadInput, Params, day, length, parse, today
 from seo_mcp.results import NotConnected, Refused, Unsupported, failed, ok, unsupported
 from seo_mcp.secrets import safe_reason, scrub
 
@@ -305,11 +305,15 @@ def _no_task(reason: str) -> dict[str, Any]:
     return unsupported(["task"], safe_reason(reason), sorted(tasks.TASKS))
 
 
-def _task(site: str, api: str, asked: str) -> dict[str, Any]:
+def _task(site: str, api: str, asked: str, start_date: str) -> dict[str, Any]:
     names = tasks.find(asked)
     if not names:
         return _no_task("No task matches this ask, and the server does not guess a call.")
-    built = {name: tasks.build(name, site, api) for name in names}
+    try:
+        start = day("start_date", start_date) if start_date else None
+        built = {name: tasks.build(name, site, api, start=start) for name in names}
+    except BadInput as exc:
+        return failed("error", safe_reason(str(exc)))
     target = _target(site)
     rows = [
         {
@@ -353,16 +357,19 @@ async def query_api(
     method: str = "",
     request: dict[str, Any] | None = None,
     task: str = "",
+    start_date: str = "",
 ) -> dict[str, Any]:
     if task and (method or request is not None):
         return failed("error", "A task finds a call and sends none. Omit method and request.")
+    if start_date and not task:
+        return failed("error", "start_date goes only with task. Omit it, or name a task.")
     if not api:
-        return _task(site, "", task) if task else _catalog(site)
+        return _task(site, "", task, start_date) if task else _catalog(site)
     entry = providers.APIS.get(api)
     if entry is None:
         return failed("error", safe_reason(f"Unknown api. Known: {', '.join(providers.APIS)}."))
     if task:
-        return _task(site, api, task)
+        return _task(site, api, task, start_date)
     if not method:
         return _options(api, entry, site)
     item = entry.methods.get(method)
