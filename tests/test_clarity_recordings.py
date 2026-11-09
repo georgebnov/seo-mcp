@@ -1,6 +1,8 @@
 """A recordings answer fits the tool output of an agent: each row keeps only the useful fields."""
 
 import json
+import re
+from pathlib import Path
 
 import httpx2
 import pytest
@@ -13,9 +15,9 @@ DAY = {"start": "2026-01-01T00:00:00.000Z", "end": "2026-01-01T23:59:59.999Z"}
 FBCLID = "IwAR" + "Zx9" * 60
 # Each key that a trimmed row can hold, at each level.
 KEPT = {"timestamp", "link", "timeline", "url", "timelineEvents", "eventtype", "hash", "text"}
-# The tool output of an agent cut a real answer of 68,321 characters. The 20 newest real
-# sessions trim to about 15,700 characters with the answer fields. 20,000 gives heavier
-# sessions room and keeps the dashboard step and the work of the agent next to it.
+# The tool output of an agent cut a real answer of full sessions. 20 trimmed sessions of
+# the fixture stay under 20,000, which gives heavier sessions room and keeps the dashboard step
+# and the work of the agent next to it.
 DEFAULT_BUDGET = 20_000
 
 
@@ -185,3 +187,23 @@ async def test_no_clarity_field_outside_the_list_reaches_an_answer(live):
         )
         assert data["rows_returned"] == 3
     assert data["from_cache"] is True
+
+
+ROOT = Path(__file__).parent.parent
+SIZE_TEXTS = ["README.md", "CHANGELOG.md", "src/seo_mcp/providers/clarity.py", __file__]
+SENTENCE = re.compile(r"[^.\n]*\bcharacters\b[^.\n]*")
+# A size of an answer has 4 digits or more, such as 40,000. The Keychain prompt keeps 128.
+SIZE = re.compile(r"\b\d{1,3}(?:,\d{3})+\b|\b\d{4,}\b")
+
+
+def test_each_size_in_characters_is_the_cap_of_the_code():
+    """A size from 1 live answer cannot be checked again, so the text gives only the cap."""
+    cap = f"{clarity.ROWS_BUDGET:,}"
+    for name in SIZE_TEXTS:
+        text = (ROOT / name).read_text()
+        found = {size for line in SENTENCE.findall(text) for size in SIZE.findall(line)}
+        sizes = found - {cap, str(clarity.ROWS_BUDGET)}
+        assert not sizes, (
+            f"{name} gives {sorted(sizes)} characters. Give only the cap of the code, about "
+            f"{cap} characters (clarity.ROWS_BUDGET), or measure the size in a test."
+        )
