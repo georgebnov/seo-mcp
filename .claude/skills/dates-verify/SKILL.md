@@ -45,11 +45,11 @@ Each model action names its code in a comment above it. The main map:
 
 Atomic steps: the model has 1 caller, so a step is 1 call or 1 decision in the code. The only other actor is a saved answer of another source or agent, which `SavedReport` stands for.
 
-Sync commit: `SYNC`. The model and mutants describe `src/` as of this commit. Move it forward only after you confirm that each model step still matches its code at the new commit.
+Sync commit: the squash commit of `fix: use plain local dates for each date rule` on `main`. Get its hash with `git log -1 --format=%h --fixed-strings --grep='use plain local dates for each date rule' origin/main`. A squash merge gives the hash only after the merge, so the next change of this check writes the hash here. The model and mutants describe `src/` as of this commit. Move it forward only after you confirm that each model step still matches its code at the new commit.
 
 ## Steps
 
-1. **Does the change touch the covered code?** Run `git diff SYNC -- src/seo_mcp/params.py src/seo_mcp/core.py src/seo_mcp/providers/gsc.py src/seo_mcp/providers/ga4.py src/seo_mcp/providers/_google.py`. Name each touched function from "Coverage", or none. If none, stop.
+1. **Does the change touch the covered code?** Run `git diff <sync commit> -- src/seo_mcp/params.py src/seo_mcp/core.py src/seo_mcp/providers/gsc.py src/seo_mcp/providers/ga4.py src/seo_mcp/providers/_google.py`. Name each touched function from "Coverage", or none. If none, stop.
 2. **Run the models.** Run `just models <scratch folder>`. Done when it prints "Each break is in the known list, and each other rule holds."
 3. **Read each result** with the `statechart` skill. For a break, read the shortest path in `<scratch folder>/get_seo_data_dates/report.md`. The check of record has 3,465 states, so it has no chart. For the chart, run `statechart` on `models/get_seo_data_dates.tla` with `models/get_seo_data_dates.chart.cfg` (2 days, and day 1 is both the last complete day and the newest day, so it fits the 500-state budget) and `models/get_seo_data_dates.view.mjs`, and show its `chart.mmd` as a `mermaid` block.
 4. **Run the mutants.** Run `uv run python scripts/verify_mutants.py dates` (about 1 minute). Done when it prints "Each mutant is caught." Read each other line by its first word:
@@ -72,7 +72,7 @@ Sync commit: `SYNC`. The model and mutants describe `src/` as of this commit. Mo
 
 ## Findings
 
-- Each rule holds at `SYNC`. No code breaks a rule.
+- Each rule holds at the sync commit. No code breaks a rule.
 - A test gap after the move to today minus 1: the code mutant of PartialDayNeverShownComplete (`gsc._basis` with no API day) was MISSED. The end of `test_a_saved_report_of_a_partial_day_never_shows_it_complete` moved to the newest day, so its 2nd report sent final data and missed the saved one for that reason alone. The test now ends after both API days, so only the key differs.
 - A test gap: the code mutant of RealZeroKeepsTheDelta (`first <= start` to `first < start` in `core._uncollected`) was MISSED by all of `tests/test_collected.py`. No test had a range that starts on the first day of data. `test_a_range_that_starts_on_the_first_event_keeps_the_delta` now covers it.
 - AtMost1ExtraRead has a model mutant only. In the code, `shared.once` makes a 2nd read of the same fixed body send nothing, so no 1-line break of the code sends 2.
