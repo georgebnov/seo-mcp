@@ -1,4 +1,4 @@
-"""To add a provider: write 1 file with ENDPOINTS and SOURCES, then list it here."""
+"""To add a provider: write 1 file with ENDPOINTS, SOURCES, ACCEPTS, and APIS, then list it here."""
 
 from collections.abc import Awaitable, Callable
 from typing import Any
