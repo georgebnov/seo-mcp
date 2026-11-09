@@ -42,12 +42,13 @@ def compare(found: set[tuple[str, str]], known: set[tuple[str, str]]) -> list[st
     return new + old
 
 
-def _run(model: str, out: Path) -> str:
+def run_model(model: str, out: Path, folder: Path = MODELS) -> str:
+    """Run 1 model of folder with its config and view, and give its report."""
     command = os.environ.get(COMMAND_ENV) or str(Path(COMMAND).expanduser())
     arguments = [f"{model}.tla", "--config", f"{model}.cfg", "--view", f"{model}.view.mjs"]
     subprocess.run(  # noqa: S603
         [command, *arguments, "--out", str(out / model)],
-        cwd=MODELS,
+        cwd=folder,
         stdout=subprocess.DEVNULL,
         check=False,
     )
@@ -60,7 +61,7 @@ def main() -> int:
     found: set[tuple[str, str]] = set()
     problems: list[str] = []
     for spec in sorted(MODELS.glob("*.tla")):
-        report = _run(spec.stem, out)
+        report = run_model(spec.stem, out)
         breaks = report_breaks(spec.stem, report)
         found |= breaks
         holds = HOLDS.search(report)
