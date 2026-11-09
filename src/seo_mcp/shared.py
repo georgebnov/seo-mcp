@@ -34,6 +34,9 @@ REALTIME_SECONDS = 30
 FAILURE_WINDOW_SECONDS = 60
 PRUNE_SECONDS = 3600
 PRUNE_BATCH = 100
+# The name of a Clarity answer of shared.named, or of its failure. The stem names the lock of
+# both. Each other file of the cache folder, such as a ledger or the salt, does not match.
+DAY_ANSWER = re.compile(r"(?P<stem>clarity-.+-k\d+-[0-9a-f]{32})(?:\.failed)?\.json")
 # 2 adds the credential identity. An entry of format 1 has none, so no key reads it.
 KEY_FORMAT = 2
 SALT_FILE = "credential-salt"
@@ -153,7 +156,10 @@ def entry(site: Site, *parts: Any, auth: Identity) -> Keyed:
 
 
 def named(stem: str, *, auth: Identity) -> Keyed:
-    """A file in the cache folder with a readable stem, for an answer that lives past a prune."""
+    """A file in the cache folder with a readable stem, for a Clarity answer of 1 UTC day.
+
+    It lives past the prune of shared/, and prune_day_answers removes it after yesterday.
+    """
     return Keyed(quota.folder() / f"{stem}-k{KEY_FORMAT}-{_checked(auth).digest}.json")
 
 
@@ -272,6 +278,32 @@ def _prune(where: Path) -> None:
                 path.unlink()
 
 
+def prune_day_answers(where: Path) -> None:
+    """Remove the Clarity answers and failures of the cache folder from before yesterday (UTC).
+
+    A Clarity answer serves only on the UTC day of its call, so an older file never serves.
+    Only a name of DAY_ANSWER goes. A lock file stays: a process can wait on it, and a new lock
+    file of the same name would let 2 processes send. A busy answer stays for the next prune.
+    """
+    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    limit = (today - timedelta(days=1)).timestamp()
+    old: list[tuple[float, str, str]] = []
+    with os.scandir(where) as found:
+        for item in found:
+            match = DAY_ANSWER.fullmatch(item.name)
+            # Another process can remove the file before this stat.
+            with suppress(OSError):
+                if match and item.stat().st_mtime < limit:
+                    old.append((item.stat().st_mtime, item.path, match["stem"]))
+    old.sort()
+    for _, name, stem in old[:PRUNE_BATCH]:
+        with suppress(OSError), (where / f"{stem}.lock").open("a") as lock:
+            quota.try_lock(lock)
+            path = Path(name)
+            if path.stat().st_mtime < limit:
+                path.unlink()
+
+
 @asynccontextmanager
 async def _only_sender(path: Path) -> AsyncIterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -299,7 +331,11 @@ async def once(
     that can have reached the API. Each failure of a spent call starts the failure window.
     The path holds the credential, so the answer, the failure, and the lock are of 1 key.
     """
-    async with _only_sender(_keyed(path)):
+    if _keyed(path).parent == quota.folder():
+        # Before the lock, so that a saved answer and a failure also prune.
+        with suppress(OSError):
+            prune_day_answers(path.parent)
+    async with _only_sender(path):
         saved = _saved(path, good, until)
         if saved:
             _note(True, saved["at"], saved["expires_at"])

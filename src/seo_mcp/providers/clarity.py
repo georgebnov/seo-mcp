@@ -408,9 +408,9 @@ TOP_REASON = (
 )
 MAX_RECORDINGS = 250
 DEFAULT_RECORDINGS = tasks.SAMPLE_SESSIONS
-# A full session row is about 1.8 KB, mostly page speed, titles, and referrers with ad tokens:
-# 41 real rows made 68,321 characters, which the tool output of an agent cut. A row keeps only
-# what shows which element on which page got the click, and when.
+# A full session row is about 1.8 KB, mostly page speed, titles, and referrers with ad tokens,
+# so a full answer was too large for the tool output of an agent. A row keeps only what shows
+# which element on which page got the click, and when.
 RECORDING_FIELDS: dict[str, Any] = {
     "timestamp": None,
     "link": None,
