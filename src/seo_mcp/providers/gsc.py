@@ -70,18 +70,9 @@ MISS_REASON = (
 REPORT = shared.has_any("rows", "responseAggregationType", "metadata")
 # Google leaves out an empty sitemap list, so {} is a site with no sitemap.
 SITEMAP_LIST = shared.documented("sitemap")
-# The docs mark no field of the Sitemaps resource as always there.
-SITEMAP = shared.documented(
-    "path",
-    "lastSubmitted",
-    "isPending",
-    "isSitemapsIndex",
-    "type",
-    "lastDownloaded",
-    "warnings",
-    "errors",
-    "contents",
-)
+# A live sitemaps.get gave 404 for a sitemap that does not exist, and a real record held path, so
+# {} is a failure.
+SITEMAP = shared.holds("path")
 
 
 Known = tuple[date, str, str]

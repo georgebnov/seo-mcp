@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx2
 import pytest
 
-from seo_mcp import core, quota, shared
+from seo_mcp import core, net, quota, shared
 from seo_mcp.providers import clarity, gsc
 from test_query_api import HOST, SITE
 from test_quota import (
@@ -435,13 +435,14 @@ async def test_a_real_empty_ga4_report_stays_ok(live, fake_net):
     assert repeat["from_cache"] is True
 
 
-# George: a live empty report has responseAggregationType, and each GA4 property has standard
-# fields, so {} of these reads is a failure. Google leaves out an empty sitemap list, so {} of
-# sitemaps.list stays ok.
+# George: a live empty report has responseAggregationType, each GA4 property has standard
+# fields, and a live sitemaps.get gave 404 for a sitemap that does not exist, so {} of these reads
+# is a failure. Google leaves out an empty sitemap list, so {} of sitemaps.list stays ok.
 EMPTY_IS_A_FAILURE = [
     ("search_queries", source("search_queries"), "/searchAnalytics/query"),
     ("search_analytics", search_console("search_analytics", RANGE), "/searchAnalytics/query"),
     ("metadata", query("ga4", "metadata"), "/metadata"),
+    ("sitemap", query("search_console", "sitemap", {"feedpath": FEED}), "sitemap.xml"),
 ]
 
 
@@ -460,9 +461,8 @@ async def test_an_empty_object_is_not_an_empty_answer(live, fake_net, name, call
     assert len(sent(calls, ending)) == first
 
 
-# The only checks that pass {}. George: Google leaves out an empty sitemap list. The docs mark no
-# field of a sitemap as always there.
-EMPTY_IS_OK = {("gsc.py", "SITEMAP_LIST"), ("gsc.py", "SITEMAP")}
+# The only checks that pass {}. George: Google leaves out an empty sitemap list.
+EMPTY_IS_OK = {("gsc.py", "SITEMAP_LIST")}
 
 
 def checks_that_pass_empty():
@@ -489,13 +489,30 @@ def test_only_the_named_checks_pass_an_empty_object():
     assert not stale, f"Remove these checks from EMPTY_IS_OK in {__file__}: {stale}"
 
 
-@pytest.mark.parametrize(
-    ("name", "call", "ending"),
-    [read for read in OTHER_READS if read[0] == "sitemap"],
-    ids=["sitemap"],
-)
-async def test_an_empty_reply_of_a_resource_with_no_required_field_stays_ok(
-    live, fake_net, name, call, ending
-):
-    search_console_says(fake_net, ending, {})
-    assert (await call())["status"] == "ok"
+# A live sitemaps.get of a submitted sitemap gave this record. The dates are placeholders.
+SITEMAP_RECORD = {
+    "path": FEED,
+    "lastSubmitted": "2026-11-01T00:00:00.000Z",
+    "isPending": False,
+    "isSitemapsIndex": False,
+    "type": "sitemap",
+    "lastDownloaded": "2026-11-02T00:00:00.000Z",
+    "warnings": "0",
+    "errors": "0",
+    "contents": [{"type": "web", "submitted": "57", "indexed": "0"}],
+}
+
+
+async def test_an_empty_sitemap_record_is_never_saved(live, fake_net):
+    search_console_says(fake_net, "sitemap.xml", {})
+    data = await core.query_api(HOST, "search_console", "sitemap", {"feedpath": FEED})
+    assert data["status"] == "error", "sitemaps.get showed {} as an ok sitemap."
+    assert net.BAD_SHAPE in data["reason"]
+    assert not [path for path in shared.folder().glob("*.json") if "failed" not in path.name]
+
+
+async def test_a_sitemap_record_with_a_path_is_ok(live, fake_net):
+    search_console_says(fake_net, "sitemap.xml", SITEMAP_RECORD)
+    data = await core.query_api(HOST, "search_console", "sitemap", {"feedpath": FEED})
+    assert data["status"] == "ok"
+    assert data["rows"] == [SITEMAP_RECORD]

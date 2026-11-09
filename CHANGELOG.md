@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix an HTTP 200 answer of `{}` from the Search Console `sitemap` method of `query_api`: it showed status `ok` with 1 empty row. A sitemap that does not exist gives HTTP 404, and a real record holds `path`, so `{}` is now a wrong shape: status `error`, not saved, and the same request does not go out for 60 seconds.
 - Fix an HTTP 200 answer of `{}` from a Search Console report or GA4 `metadata`: it showed status `ok` with 0 rows. Now it is a wrong shape: status `error`, not saved, and the same request does not go out for 60 seconds. `{}` of the Search Console sitemap list stays `ok`, because Google leaves out an empty list.
 - Fix a false drop of the GA4 `engagementRate` in a range with a complete day and no sessions: `totals` showed 0, so `delta` showed a drop of the rate. With 0 sessions the rate is 0/0, so `engagementRate` and its `delta` are now `null`. The counts stay 0, and their `delta` shows the drop. In each `delta`, a metric that is `null` on 1 side is now `null`, also for a Clarity page that is not found.
 - Enforce the 0 count rule of the Clarity click tasks in the server: after a saved dashboard count of 0 for the same click and days, `recordings` gives status `skipped`, sends nothing, and spends no call.

@@ -44,7 +44,7 @@ const labels = {
   SharedFailure: "the same request failed inside the window",
   ReadQuery: "the server fills the site and the key and sends 1 listed read request",
   Rows: "the API answers with a documented field",
-  EmptySitemapIsNoData: "Search Console answers {} for a sitemap read: no sitemap",
+  EmptySitemapIsNoData: "Search Console answers {} for the sitemap list: no sitemap",
   EmptyObjectFails: "the API answers HTTP 200 with no documented field",
   OtherTextFails: "the API answers HTTP 200 with no documented field",
   Google400: "a Google API answers HTTP 400 with a message",
