@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx2
 import pytest
 
-from seo_mcp import api, core, providers, server
+from seo_mcp import api, core, providers, server, shared
 from seo_mcp.providers import bing, clarity, ga4
 
 SITE = {
@@ -21,6 +21,14 @@ SITE = {
 }
 RANGE = {"startDate": "2026-01-01", "endDate": "2026-01-10"}
 HOST = "www.example.com"
+CLARITY_TOKEN = "clarity-token-value-1234"
+
+
+def clarity_auth() -> shared.Identity:
+    """The identity of the test Clarity token, in the cache folder of this test."""
+    return shared.identity("clarity_token", CLARITY_TOKEN)
+
+
 README = Path(__file__).parent.parent / "README.md"
 
 
@@ -938,8 +946,8 @@ async def test_parallel_calls_on_a_cold_cache_spend_1_call(live):
 
 
 async def test_a_call_waits_for_another_process_that_fetches_the_same_answer(live):
-    path = clarity.cache_path(HOST)
-    path.parent.mkdir(parents=True)
+    path = clarity.cache_path(HOST, clarity_auth())
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.with_suffix(".lock").open("a") as other_process:
         fcntl.flock(other_process, fcntl.LOCK_EX)
         waiting = asyncio.create_task(core.get_seo_data(HOST, ["clarity"]))

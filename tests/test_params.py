@@ -8,6 +8,7 @@ import pytest
 
 from seo_mcp import core, providers, shared
 from seo_mcp.providers import clarity
+from test_query_api import clarity_auth
 
 SITE = {
     "gsc_property": "sc-domain:example.com",
@@ -631,7 +632,7 @@ async def test_clarity_stops_at_the_daily_budget(write_config, fake_net, monkeyp
     monkeypatch.setenv("CLARITY_ENV", "clarity-token-value-1234")
     write_config(SITE)
     calls = fake_net(lambda _: httpx2.Response(500))
-    mark = shared.failure_path(clarity.cache_path("www.example.com"))
+    mark = shared.failure_path(clarity.cache_path("www.example.com", clarity_auth()))
     for _ in range(clarity.DAILY_CALLS):
         data = await ask(["clarity"])
         assert "HTTP 500" in data["sources"]["clarity"]["reason"]
@@ -704,7 +705,7 @@ async def test_a_declared_parameter_acts_and_an_undeclared_one_is_refused(live, 
     plain = await ask([name])
     before = trace(live)
     live.clear()
-    (cache := clarity.cache_path("www.example.com")).unlink(missing_ok=True)
+    (cache := clarity.cache_path("www.example.com", clarity_auth())).unlink(missing_ok=True)
     assert not cache.exists()
     filtered = await ask([name], **PARAM_VALUES[group])
     after = trace(live)

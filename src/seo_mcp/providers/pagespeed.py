@@ -34,14 +34,15 @@ RATINGS = {
 }
 
 
-def _key_header(key: str | None) -> dict[str, str]:
-    return {"X-Goog-Api-Key": key} if key else {}
+def _key_header(key: str | None) -> tuple[dict[str, str], shared.Identity]:
+    """The header of the key, and the identity of the key for the cache. None is no key."""
+    return ({"X-Goog-Api-Key": key} if key else {}), shared.identity("google_api_key", key)
 
 
 async def page_speed(site: Site, params: Params) -> dict[str, Any]:
     query = [("url", params.page or f"https://{site.host}/"), ("strategy", "mobile")]
     query += [("category", name) for name in CATEGORIES]
-    headers = _key_header(site.optional_secret("google_api_key"))
+    headers, auth = _key_header(site.optional_secret("google_api_key"))
     reply = await shared.request(
         site,
         ENDPOINTS,
@@ -50,6 +51,7 @@ async def page_speed(site: Site, params: Params) -> dict[str, Any]:
         params=query,
         headers=headers,
         good=shared.holds("lighthouseResult"),
+        auth=auth,
     )
     lighthouse = reply["lighthouseResult"]
     audits = lighthouse.get("audits", {})
@@ -94,7 +96,7 @@ def _rating(metric: str, p75: float) -> str | None:
 
 
 async def chrome_field_data(site: Site, params: Params) -> dict[str, Any]:
-    headers = _key_header(site.secret("google_api_key"))
+    headers, auth = _key_header(site.secret("google_api_key"))
     body = {"url": params.page} if params.page else {"origin": f"https://{site.host}"}
     try:
         reply = await shared.request(
@@ -105,6 +107,7 @@ async def chrome_field_data(site: Site, params: Params) -> dict[str, Any]:
             json=body,
             headers=headers,
             good=shared.holds("record"),
+            auth=auth,
         )
     except net.ApiError as exc:
         if exc.status == 404:
@@ -145,7 +148,7 @@ async def _psi(site: Site, request: dict[str, Any]) -> dict[str, Any]:
         query.append(("category", name))
     if "locale" in request:
         query.append(("locale", str(request["locale"])))
-    headers = _key_header(site.optional_secret("google_api_key"))
+    headers, auth = _key_header(site.optional_secret("google_api_key"))
     reply = await shared.request(
         site,
         ENDPOINTS,
@@ -155,6 +158,7 @@ async def _psi(site: Site, request: dict[str, Any]) -> dict[str, Any]:
         headers=headers,
         explain=True,
         good=shared.holds("lighthouseResult"),
+        auth=auth,
     )
     lighthouse = reply.get("lighthouseResult", {})
     rows = [
@@ -197,7 +201,7 @@ def _crux_reader(endpoint: str, periods: str) -> Run:
             one_of("formFactor", request["formFactor"], FORM_FACTORS)
         if "collectionPeriodCount" in request:
             whole("collectionPeriodCount", request["collectionPeriodCount"], 1, MAX_PERIODS)
-        headers = _key_header(site.secret("google_api_key"))
+        headers, auth = _key_header(site.secret("google_api_key"))
         try:
             # The docs: each successful reply of both methods holds a record object.
             reply = await shared.request(
@@ -209,6 +213,7 @@ def _crux_reader(endpoint: str, periods: str) -> Run:
                 headers=headers,
                 explain=True,
                 good=shared.holds("record"),
+                auth=auth,
             )
         except net.ApiError as exc:
             if exc.status == 404:

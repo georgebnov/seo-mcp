@@ -45,9 +45,13 @@ LIST_KEYS = ("Links", "Details")
 async def bing_links(site: Site, params: Params) -> dict[str, Any]:
     site_url = site.field("bing_site_url")
     # The Bing API takes its key only in the query string.
-    query = {"siteUrl": site_url, "page": 0, "apikey": site.secret("bing_api_key")}
+    key = site.secret("bing_api_key")
+    query = {"siteUrl": site_url, "page": 0, "apikey": key}
     url = f"{API}/GetLinkCounts"
-    body = await shared.request(site, ENDPOINTS, "GET", url, params=query, good=shared.holds("d"))
+    auth = shared.identity("bing_api_key", key)
+    body = await shared.request(
+        site, ENDPOINTS, "GET", url, params=query, good=shared.holds("d"), auth=auth
+    )
     data = body["d"]
     rows = [{"url": row["Url"], "inbound_links": row["Count"]} for row in data.get("Links") or []]
     rows.sort(key=lambda row: row["inbound_links"], reverse=True)
@@ -96,8 +100,9 @@ def _reader(name: str) -> Run:
             query[key] = _argument(site, key, arguments[key], value)
         query["apikey"] = site.secret("bing_api_key")
         url = f"{API}/{name}"
+        auth = shared.identity("bing_api_key", query["apikey"])
         reply = await shared.request(
-            site, ENDPOINTS, "GET", url, params=query, good=shared.holds("d")
+            site, ENDPOINTS, "GET", url, params=query, good=shared.holds("d"), auth=auth
         )
         data = reply["d"]
         pages = data.get("TotalPages") if isinstance(data, dict) else None

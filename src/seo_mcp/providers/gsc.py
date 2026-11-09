@@ -186,6 +186,7 @@ async def _analytics(
         explain=explain,
         good=REPORT,
         basis=basis,
+        auth=_google.principal(site),
     )
 
 
@@ -389,7 +390,10 @@ async def sitemaps(site: Site, params: Params) -> dict[str, Any]:
     prop = quote(site.field("gsc_property"), safe="")
     url = f"{SITES_API}/{prop}/sitemaps"
     headers = await _headers(site)
-    reply = await shared.request(site, ENDPOINTS, "GET", url, headers=headers, good=SITEMAP_LIST)
+    auth = _google.principal(site)
+    reply = await shared.request(
+        site, ENDPOINTS, "GET", url, headers=headers, good=SITEMAP_LIST, auth=auth
+    )
     rows = [
         {
             "path": item["path"],
@@ -475,7 +479,7 @@ async def index_status(site: Site, params: Params) -> dict[str, Any]:
         return {"rows": found}
 
     # 1 failed URL of many stays in the saved answer: a repeat must not spend all URLs again.
-    path = shared.entry(site, "index_status", key, sorted(urls))
+    path = shared.entry(site, "index_status", key, sorted(urls), auth=_google.principal(site))
     rows = (await shared.once(path, send, prepare=prepare))["rows"]
     bad = [row for row in rows if "error" in row]
     reason = f"{len(bad)} of {len(rows)} URLs failed inspection." if bad else None
@@ -592,7 +596,7 @@ async def _url_inspection(site: Site, request: dict[str, Any]) -> dict[str, Any]
     def good(reply: Any) -> bool:
         return shared.is_object(reply) and isinstance(reply.get("inspectionResult"), dict)
 
-    path = shared.entry(site, "url_inspection", body)
+    path = shared.entry(site, "url_inspection", body, auth=_google.principal(site))
     reply = await shared.once(path, send, prepare=prepare, good=good)
     return answer([reply["inspectionResult"]], more_rows="no", applied=body)
 
@@ -605,7 +609,15 @@ async def _sitemap_list(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     url = f"{SITES_API}/{prop}/sitemaps"
     headers = await _headers(site)
     reply = await shared.request(
-        site, ENDPOINTS, "GET", url, params=query, headers=headers, explain=True, good=SITEMAP_LIST
+        site,
+        ENDPOINTS,
+        "GET",
+        url,
+        params=query,
+        headers=headers,
+        explain=True,
+        good=SITEMAP_LIST,
+        auth=_google.principal(site),
     )
     return answer(reply.get("sitemap", []), more_rows="no", applied=query)
 
@@ -615,8 +627,9 @@ async def _sitemap_get(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     feed = page_url(site.host, request["feedpath"], "feedpath")
     url = f"{SITES_API}/{prop}/sitemaps/{quote(feed, safe='')}"
     headers = await _headers(site)
+    auth = _google.principal(site)
     reply = await shared.request(
-        site, ENDPOINTS, "GET", url, headers=headers, explain=True, good=SITEMAP
+        site, ENDPOINTS, "GET", url, headers=headers, explain=True, good=SITEMAP, auth=auth
     )
     return answer([reply], more_rows="no", applied={"feedpath": feed})
 
