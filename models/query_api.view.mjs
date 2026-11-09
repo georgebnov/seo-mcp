@@ -31,6 +31,8 @@ const labels = {
   TaskOnApi: "the call has a task for this api",
   TaskMatches: "a whole phrase matches a task and a provider has a recipe",
   TaskNoMatch: "no task matches, or this api has no recipe",
+  StartWithNoTask: "the call has a start_date and no task",
+  TaskStartRefused: "the start_date is after the end, past the retention, or on a task with no dates",
   NoMethod: "the call has no method",
   MethodNamed: "the method name is known",
   MethodUnknown: "the method name is unknown",

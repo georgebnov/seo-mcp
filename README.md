@@ -91,7 +91,7 @@ A start date past the newest day leaves no range. The server refuses it with a c
 ### `query_api`
 
 ```
-query_api(site?, api?, method?, request?, task?)
+query_api(site?, api?, method?, request?, task?, start_date?)
 ```
 
 The tool text names each API with 1 line, built from `APIS`, so an agent goes to step 1 with no discovery call. A call with no `api` lists the methods, the quota, and the tasks.
@@ -125,7 +125,7 @@ Each row of the result is 1 provider. `steps` holds the exact calls in order, wi
 | `queries_of_page` | Search Console, Bing; not GA4 |
 | `core_web_vitals` | Chrome UX Report, PageSpeed |
 
-The Clarity click tasks ask `dashboard_query` for the count first, then `recordings` for the elements. They look back 90 days, because a short window often holds no such click. When the dashboard count is 0, do not call `recordings`: it spends 1 call on a sample that cannot show such a click. The step shows this rule in `skip_if`, for `dead_clicks`, `rage_clicks`, and `quickback_clicks`. The server enforces the rule. Before a `recordings` call spends, it looks for the saved `dashboard_query` answer of the recipe question with the same click and the same days. If that answer shows 0 for each page, `recordings` gives status `skipped`, `reason` and `dashboard_question` name the 0 count, and the server sends nothing and spends nothing. It skips only when the match is certain, because a wrong skip hides data:
+The Clarity click tasks ask `dashboard_query` for the count first, then `recordings` for the elements. They look back 28 days and ask for the 20 newest sessions. Clarity keeps recordings for 30 days ([data retention](https://learn.microsoft.com/en-us/clarity/setup-and-installation/data-retention)), so an older window holds no recording, and a recent one shows fewer elements that the site removed. The other Clarity tasks ask only the dashboard, which keeps data for 9 months, so they look back 90 days. When the dashboard count is 0, do not call `recordings`: it spends 1 call on a sample that cannot show such a click. The step shows this rule in `skip_if`, for `dead_clicks`, `rage_clicks`, and `quickback_clicks`. The server enforces the rule. Before a `recordings` call spends, it looks for the saved `dashboard_query` answer of the recipe question with the same click and the same days. If that answer shows 0 for each page, `recordings` gives status `skipped`, `reason` and `dashboard_question` name the 0 count, and the server sends nothing and spends nothing. It skips only when the match is certain, because a wrong skip hides data:
 
 - The sample has the date and 1 click flag of the recipe (`deadClickPresent`, `rageClickPresent`, or `quickbackClickPresent`) set to `true`, and no other filter. `sortBy` and `count` can change.
 - The days are whole UTC days, from `T00:00:00.000Z` to `T23:59:59.999Z`, and the dashboard question has the same days in UTC.
@@ -133,6 +133,10 @@ The Clarity click tasks ask `dashboard_query` for the count first, then `recordi
 - Each row has 1 column that names the click, such as `TotalDeadClicks`, and it holds exactly 0.
 
 In all other cases, such as no saved answer, an empty answer, or a count above 0, the sample goes out as before. A dashboard answer saved after the check does not stop a sample that already started.
+
+After a change to the site, send `start_date` with `task`, such as `query_api(task="dead clicks", start_date="2026-11-01")`. Each step of the task then starts on that day and ends on the usual end, so the 2 Clarity steps keep the same days and the 0 count rule still applies. A comparison task gives the 2nd period the same length. The server refuses a `start_date` after the end of the task, on a task with no dates (`core_web_vitals`), and more than 30 days back for a click task, and the reason names the earliest day. `start_date` with no `task` is an error.
+
+Each `recordings` row keeps only the fields that show which element on which page got the click, and when: `timestamp`, `link`, and `timeline[]` with `url` and `timelineEvents[]` with `eventtype`, `hash`, and `text`. `url` has no query and no fragment, so an ad token such as `fbclid` does not reach the agent, and 2 pages that differ only in the query show as 1. The server drops the other Clarity fields, such as page speed, titles, durations, and the referrer. `kept_fields` says so. In 1 real answer, this cut 41 sessions from 73,861 to 32,289 characters, and the 20 newest from 35,944 to 14,517. An answer of any `count` stops at about 40,000 characters of rows, at a whole session, and it always shows the first session: `sessions_fetched` and `reason` give the count that came back. The cut is after the cache, so a saved raw answer is cut the same way.
 
 `tests/test_tasks.py` runs each step through the real tools, so a task cannot name a method, a field, or a filter that does not exist. It cannot prove what Clarity answers: each `read` text says when a question is not yet proven on real data.
 
@@ -216,7 +220,7 @@ Each list is also in the `not_in_the_api` field of `query_api`. This server does
 - Recording playback and download: the recordings method lists sessions with links, and Clarity has no recording download.
 - live_insights data older than 3 days.
 - More than 1,000 rows in live_insights: the API has no paging.
-- A retention limit: recordings and dashboard_query refuse no time frame, and rows of old days are simply absent. Empty rows do not prove zero activity.
+- Recordings older than 30 days and dashboard data older than 9 months: Clarity deletes them. recordings and dashboard_query refuse no time frame, so rows of old days are simply absent. Empty rows do not prove zero activity.
 
 The `/mcp/` endpoints of Clarity (`recordings/sample`, `dashboard/query`) come from the [Microsoft Clarity MCP server](https://github.com/microsoft/clarity-mcp-server), and they have no reference page. Microsoft can change them, and this server sends what that project sends. Its filter names, values, and units are copied here with credit: see `THIRD_PARTY_NOTICES.md`.
 

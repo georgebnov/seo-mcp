@@ -108,7 +108,9 @@ metadata only for custom names.
 To find how to get a thing, call it with only task, for example task="dead clicks". The result
 gives the exact calls to make for each provider, with real dates, how to read the answer, and
 what the answer means. It makes no network call and sends no query. Fill each mark in angle
-brackets, then make the calls. The tasks are:
+brackets, then make the calls. start_date (YYYY-MM-DD) goes only with task: each step of the
+task then starts on that day, such as the day of the last change to the site. A click task
+takes at most {tasks.RECORDING_DAYS} days: Clarity keeps recordings for that long. The tasks are:
 {tasks.describe()}
 
 Call it with no api to list the methods and the quota of each API.
@@ -143,8 +145,9 @@ async def query_api(
     method: str = "",
     request: dict[str, Any] | None = None,
     task: str = "",
+    start_date: str = "",
 ) -> dict[str, Any]:
-    return await core.query_api(site, api, method, request, task)
+    return await core.query_api(site, api, method, request, task, start_date)
 
 
 def main() -> None:
