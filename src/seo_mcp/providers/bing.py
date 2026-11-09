@@ -65,6 +65,7 @@ async def bing_links(site: Site, params: Params) -> dict[str, Any]:
 
 SOURCES = {"bing_links": bing_links}
 ACCEPTS = {"bing_links": frozenset[str]()}
+PROVIDER_OF = {"bing_links": "bing"}
 
 
 def _argument(site: Site, name: str, kind: str, value: Any) -> Any:
@@ -128,7 +129,6 @@ APIS = {
                 "The docs state no number for the read methods, so the server keeps no count. "
                 "1 key serves all the sites of a user.",
             ),
-            frozenset({"bing_site_url", "bing_api_key"}),
         ),
         methods={
             name: Method(

@@ -214,6 +214,7 @@ async def clarity(site: Site, params: Params) -> dict[str, Any]:
 
 SOURCES = {"clarity": clarity}
 ACCEPTS = {"clarity": frozenset({"last_days", "page"})}
+PROVIDER_OF = {"clarity": "clarity"}
 
 DIMENSIONS = (
     "Browser",
@@ -723,7 +724,6 @@ APIS = {
                 "The /mcp endpoints have no reference page, so the docs do not say if they "
                 f"share the {DAILY_CALLS}. The server counts them in the same {DAILY_CALLS}.",
             ),
-            frozenset({"clarity_token"}),
             now,
         ),
         methods={
