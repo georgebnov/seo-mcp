@@ -575,6 +575,49 @@ def _callers(path, called):
     yield from visit(ast.parse(path.read_text(encoding="utf-8")), "module")
 
 
+def _places(path, found):
+    def visit(node, name):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            name = node.name
+        if found(node):
+            yield f"{path.relative_to(SOURCE).as_posix()}:{node.lineno}", name
+        for child in ast.iter_child_nodes(node):
+            yield from visit(child, name)
+
+    yield from visit(ast.parse(path.read_text(encoding="utf-8")), "module")
+
+
+LISTINGS = {"scandir", "listdir", "walk", "iterdir", "glob", "rglob"}
+
+
+def _lists_a_folder(node):
+    return isinstance(node, ast.Call) and getattr(node.func, "attr", None) in LISTINGS
+
+
+def _names_a_lock(node):
+    return isinstance(node, ast.Constant) and ".lock" in str(node.value)
+
+
+def test_each_prune_lists_and_locks_through_1_rule():
+    """A prune that lists a folder alone can stop on a file that another process removed.
+
+    A lock name of a second rule lets a prune remove an answer that another process uses.
+    """
+    files = sorted(SOURCE.rglob("*.py"))
+    listings = [pair for path in files for pair in _places(path, _lists_a_folder)]
+    wrong = [place for place, name in listings if name != "_remove_old"]
+    assert not wrong, (
+        f"A folder listing at {wrong}. List a cache folder only in shared._remove_old: it skips "
+        "a file that another process removed, and it takes the lock of shared.lock_path."
+    )
+    locks = [pair for path in files for pair in _places(path, _names_a_lock)]
+    wrong = [place for place, name in locks if name not in {"lock_path", "locked"}]
+    assert not wrong, (
+        f"A lock name at {wrong}. Get the lock of an answer from shared.lock_path, and the lock "
+        "of a ledger from quota.locked."
+    )
+
+
 def test_each_api_call_goes_through_the_shared_guard():
     found = {
         pair for path in sorted(SOURCE.rglob("*.py")) for pair in _callers(path, "net.request")
