@@ -51,7 +51,8 @@ A comparison adds comparison (the same fields) and delta (main value minus compa
 {POSITION}
 In a date comparison, a range can start before the first day of data of the source (GA4 or
 Search Console collected nothing then): delta is null, first_data_day names that day, and reason
-asks for ranges that start on or after it. The server moves no range.
+gives the 2 ranges to ask next: both starts move forward by the same days, and both ends stay.
+With several sources, ask the pair with the latest start_date for all. The server moves no range.
 If a date move makes the 2 ranges different in length, range_days and reason say so.
 When search_queries rows sum to less than totals, reason gives the cut rows and the
 queries that Google hides (anonymized queries), in clicks and impressions.
