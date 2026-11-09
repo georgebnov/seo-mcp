@@ -121,6 +121,18 @@ def _sessions(flag: str, read: str) -> Step:
     return Step(why, "query_api", args, read, ZERO_COUNT_STOP)
 
 
+# Discovery makes no call, so the dates of a task cannot start on the first day of data of the
+# property. core._gate_delta finds that day and gives the next dates in reason.
+FIRST_DAY_READ = (
+    "If a range starts before the first day of data of the property, delta is null, "
+    "first_data_day names that day, and reason gives the pair to ask: both starts move forward "
+    "by the same days to first_data_day. Ask that pair. If it is too short to show a trend, or "
+    "reason says that no pair fits, ask 2 ranges of the same length that do not overlap and "
+    "start on or after first_data_day, or report that the property has too little history. If "
+    "reason says that the server could not check the first day, report the change as unknown."
+)
+
+
 def _search_step(sources: list[str], why: str, read: str, compare: bool = False) -> Step:
     args: dict[str, Any] = {
         "sources": sources,
@@ -130,6 +142,7 @@ def _search_step(sources: list[str], why: str, read: str, compare: bool = False)
     }
     if compare:
         args |= {"compare_start_date": "{compare_start}", "compare_end_date": "{compare_end}"}
+        read = f"{read} {FIRST_DAY_READ}"
     return Step(why, "get_seo_data", args, read)
 
 
