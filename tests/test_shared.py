@@ -16,7 +16,16 @@ import pytest
 from seo_mcp import config, core, quota, shared
 from seo_mcp.providers import clarity, gsc, pagespeed
 from test_query_api import HOST, SITE
-from test_quota import DASHBOARD, INSPECT, metered_requests, replies, run, sent, set_ledger
+from test_quota import (
+    DASHBOARD,
+    INSPECT,
+    ga4_reply,
+    metered_requests,
+    replies,
+    run,
+    sent,
+    set_ledger,
+)
 
 SOURCE = Path(__file__).parent.parent / "src" / "seo_mcp"
 RANGE = {"startDate": "2026-01-01", "endDate": "2026-01-10"}
@@ -305,6 +314,44 @@ async def test_a_failure_goes_out_again_after_the_window(live, fake_net):
     age_all(shared.FAILURE_WINDOW_SECONDS)
     await sources("page_speed")
     assert len(sent(calls)) == 2
+
+
+CACHE_FIELDS = {"from_cache", "cached_at", "cache_age_seconds", "cache_expires_at"}
+
+
+async def test_a_404_of_crux_shows_the_cache_fields(live, fake_net):
+    """A live test: a chrome_field_data answer had no cache fields, and the text says it has."""
+
+    def reply(request):
+        return httpx2.Response(404) if "records:" in request.url.path else None
+
+    fake_net(replies(reply))
+    first = (await sources("chrome_field_data"))["sources"]["chrome_field_data"]
+    again = (await sources("chrome_field_data"))["sources"]["chrome_field_data"]
+    fix = "A live answer from a failed call shows the cache fields (shared.once)."
+    assert CACHE_FIELDS <= set(first), fix
+    assert first["from_cache"] is False
+    assert again["from_cache"] is True
+
+
+@pytest.mark.parametrize(("name", "params"), REPEATS)
+async def test_each_network_source_shows_the_cache_fields(live, name, params):
+    result = (await sources(name, **params))["sources"][name]
+    assert result["status"] == "ok"
+    missing = sorted(CACHE_FIELDS - set(result))
+    assert not missing, f"{name} misses {missing}: note each call in shared.once."
+
+
+async def test_a_saved_ga4_answer_spent_no_token(live, fake_net):
+    """A live test: a saved GA4 answer showed tokens_spent 1 from the reading of the old call."""
+    fake_net(replies(ga4_reply))
+    live_answer = (await sources("ga4_organic"))["sources"]["ga4_organic"]
+    saved = (await sources("ga4_organic"))["sources"]["ga4_organic"]
+    assert live_answer["tokens_spent"] == 12
+    assert saved["from_cache"] is True
+    assert saved["tokens_spent"] == 0
+    # The reading of the day stays: only the spend of this answer is 0.
+    assert saved["tokens_used_today"] == 12
 
 
 async def test_a_404_of_crux_stays_the_no_data_answer_on_a_repeat(live, fake_net):

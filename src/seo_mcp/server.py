@@ -66,10 +66,13 @@ that ran shows the values that it used in applied: after a move, end_date is the
 An answer from the network or a saved answer shows from_cache, cached_at, cache_age_seconds, and
 cache_expires_at. Identical requests share 1 live call: a saved answer serves for 5 minutes (30
 seconds for a GA4 realtime report, the UTC day for clarity). With several requests in a source,
-from_cache is true only when all were saved, and the oldest part gives the age. After a failed
-call, the same request does not go out for 60 seconds, reason says so, and it spends nothing.
+from_cache is true only when all were saved. The oldest part gives cached_at and
+cache_age_seconds, and the first part to end gives cache_expires_at, so an answer with
+from_cache false can show the time of an older saved part. After a failed call, the same
+request does not go out for 60 seconds, reason says so, and it spends nothing.
 A source that spends a counted quota shows calls_used_today, daily_limit, and calls_left, or
-tokens_left for GA4. With few calls left, quota_warning appears. At the limit the server refuses
+tokens_left for GA4. tokens_spent is 0 for a saved answer. With few calls left, quota_warning
+appears. At the limit the server refuses
 before the network, and reason gives the reset time. Call list_sites to read this first.
 A dated result has coverage: the start_date and end_date that went out, and
 last_complete_day with its source (api or estimate). A day up to last_complete_day with no rows
@@ -141,8 +144,10 @@ same UTC day comes from the cache. After a saved 0 dashboard count of a click ta
 recordings call for the same click and days gives status skipped and spends nothing.
 Each URL inspection spends 1 of 2000 for the site each day.
 Identical requests share 1 live call: an answer shows from_cache, cached_at, cache_age_seconds,
-and cache_expires_at, and it serves for 5 minutes (30 seconds for a GA4 realtime report). After
-a failed call, the same request does not go out for 60 seconds, and it spends nothing.
+and cache_expires_at, and it serves for 5 minutes (30 seconds for a GA4 realtime report). With
+2 requests, such as search_analytics and its coverage read, the oldest part gives cached_at and
+cache_age_seconds, so an answer with from_cache false can show an older time. After a failed
+call, the same request does not go out for 60 seconds, and it spends nothing.
 A dated result has coverage: the start_date and end_date that went out, and
 last_complete_day with its source (api or estimate). A day up to last_complete_day with no rows
 is a real 0. A later day is partial: its data can still change, and it is not a drop.
