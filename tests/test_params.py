@@ -14,6 +14,7 @@ from test_query_api import clarity_auth
 def ledger_path(project_id):
     return quota.path(clarity.LEDGER, project_id)
 
+
 SITE = {
     "gsc_property": "sc-domain:example.com",
     "ga4_property_id": "123456789",
