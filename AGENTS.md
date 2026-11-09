@@ -9,7 +9,9 @@ A read-only stdio MCP server. Python, uv, ruff, mypy, pytest. Run `just check` b
 - Scrub first, then cut text.
 - The repo holds no private data: no real site, property id, home path, or key. `scripts/private_scan.py` checks files and git history.
 - Tests mock only the network edge (`net.transport`).
-- Keep it small. One file for each provider. Do not add a tool: add a source, or add a method to `APIS` for `query_api`.
+- Keep it small. One file for each provider. Add no dependency: use the standard library or a dependency that `pyproject.toml` already has.
+- The server has 3 tools: `list_sites`, `get_seo_data`, and `query_api`. `tests/test_stdio.py` pins them. Do not add a tool: add a source, or add a method to `APIS` for `query_api`.
+- Setup is a terminal command, `seo-mcp setup`, that the user runs. It is not an MCP tool.
 - A way to get a thing goes in `tasks.py` as a task. A step that names a method, a field, or a filter must run in `tests/test_tasks.py`.
 - A source never ignores a parameter. It declares what it applies in `ACCEPTS`, and it does not run with any other parameter.
 - Each live Clarity call goes through `_cached` in `clarity.py`, so that it spends from the ledger.
