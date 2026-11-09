@@ -429,6 +429,34 @@ DATES: tuple[Mutant, ...] = (
         ("tests/test_plain_dates.py::test_a_ga4_relative_date_goes_out_as_a_plain_date",),
         "ga4._sent_dates sends a converted end of today",
     ),
+    Code(
+        "FutureEndMovesAndSaysSo",
+        "src/seo_mcp/providers/ga4.py",
+        (
+            (
+                '        went, cut = _sent_range(item.get("dateRange"), field)\n',
+                '        went, cut = item.get("dateRange"), False\n',
+            ),
+        ),
+        (
+            "tests/test_plain_dates.py::test_no_ga4_method_sends_a_relative_date_or_a_day_after_yesterday",
+        ),
+        "ga4._sent_cohorts sends a cohort dateRange of today or a relative date",
+    ),
+    Code(
+        "FutureEndMovesAndSaysSo",
+        "src/seo_mcp/providers/ga4.py",
+        (
+            (
+                "        if cut:\n            shifts.append(",
+                "        if False:\n            shifts.append(",
+            ),
+        ),
+        (
+            "tests/test_plain_dates.py::test_a_ga4_cohort_range_goes_out_as_plain_dates_up_to_yesterday",
+        ),
+        "a moved cohort end gives no date_moved",
+    ),
     Model(
         "AppliedShowsTheSentEnd",
         DATES_MODEL,

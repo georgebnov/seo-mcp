@@ -8,6 +8,7 @@ and the UTC time apart, so a rule that still reads the UTC date fails.
 
 import ast
 import json
+import re
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -172,6 +173,149 @@ async def test_a_ga4_date_that_names_no_day_is_refused_with_nothing_sent(live, m
     assert data["status"] == "error"
     assert "YYYY-MM-DD" in data["reason"]
     assert google(live) == []
+
+
+def cohorts(*ranges):
+    items = [
+        {"name": f"c{index}", "dimension": "firstSessionDate", "dateRange": item}
+        for index, item in enumerate(ranges)
+    ]
+    return {"cohortSpec": {"cohorts": items}}
+
+
+@pytest.mark.parametrize("method", ["run_report", "pivot_report"])
+@pytest.mark.parametrize(
+    ("start", "end", "sent", "moved"),
+    [
+        ("7daysAgo", "today", ("2026-11-02", YESTERDAY), True),
+        ("2026-11-01", "2026-11-20", ("2026-11-01", YESTERDAY), True),
+        ("30daysAgo", "yesterday", ("2026-10-10", YESTERDAY), False),
+    ],
+)
+async def test_a_ga4_cohort_range_goes_out_as_plain_dates_up_to_yesterday(
+    live, monkeypatch, method, start, end, sent, moved
+):
+    freeze(monkeypatch)
+    request = cohorts({"startDate": start, "endDate": end})
+    data = await core.query_api(HOST, "ga4", method, request)
+    assert data["status"] == "ok", data["reason"]
+    went = {"startDate": sent[0], "endDate": sent[1]}
+    [body] = reports(live)
+    assert body["cohortSpec"]["cohorts"][0]["dateRange"] == went
+    assert data["applied"]["cohortSpec"]["cohorts"][0]["dateRange"] == went
+    if moved:
+        assert data["date_moved"] == [
+            {
+                "field": "cohortSpec.cohorts[0].dateRange",
+                "asked_end_date": end,
+                "sent_end_date": YESTERDAY,
+            }
+        ]
+        assert YESTERDAY in data["reason"]
+    else:
+        assert "date_moved" not in data
+
+
+@pytest.mark.parametrize(
+    "date_range",
+    [
+        {"startDate": "today", "endDate": "today"},
+        {"startDate": "2026-11-10", "endDate": "2026-11-12"},
+    ],
+    ids=["today", "future"],
+)
+async def test_a_ga4_cohort_start_past_the_newest_day_is_refused_with_nothing_sent(
+    live, monkeypatch, date_range
+):
+    freeze(monkeypatch)
+    request = cohorts({"startDate": "2026-11-01", "endDate": "2026-11-05"}, date_range)
+    data = await core.query_api(HOST, "ga4", "run_report", request)
+    assert data["status"] == "error"
+    assert YESTERDAY in data["reason"]
+    assert google(live) == []
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "cohorts",
+        {"cohorts": {"name": "c0"}},
+        {"cohorts": ["c0"]},
+        {"cohorts": [{"name": "c0", "dateRange": "today"}]},
+        {"cohorts": [{"name": "c0", "dateRange": {"startDate": "soon", "endDate": "today"}}]},
+        {"cohorts": [{"name": "c0", "dateRange": {"startDate": "today"}}]},
+        {"cohorts": [{"name": "c0", "dateRange": {"startDate": "today", "endDate": "7daysAgo"}}]},
+    ],
+)
+async def test_a_ga4_cohort_spec_with_no_checkable_dates_is_refused_with_nothing_sent(
+    live, monkeypatch, spec
+):
+    freeze(monkeypatch)
+    data = await core.query_api(HOST, "ga4", "run_report", {"cohortSpec": spec})
+    assert data["status"] == "error"
+    assert "cohort" in data["reason"]
+    assert google(live) == []
+
+
+# The guard: each GA4 method that takes a dated field sends only plain dates up to yesterday.
+# The fields of RunReportRequest and RunPivotReportRequest that hold a DateRange.
+GA4_DATED = {
+    "dateRanges": [
+        {"startDate": "7daysAgo", "endDate": "today"},
+        {"startDate": "today", "endDate": "today"},
+    ],
+    "cohortSpec": cohorts(
+        {"startDate": "7daysAgo", "endDate": "today"}, {"startDate": "today", "endDate": "today"}
+    )["cohortSpec"],
+}
+PLAIN = r"\d{4}-\d{2}-\d{2}"
+
+
+def sent_days(value: object) -> list[tuple[str, object]]:
+    """Each startDate and endDate at any depth of a request body."""
+    if isinstance(value, list):
+        return [found for item in value for found in sent_days(item)]
+    if not isinstance(value, dict):
+        return []
+    found = [(key, value[key]) for key in ("startDate", "endDate") if key in value]
+    return found + [item for child in value.values() for item in sent_days(child)]
+
+
+def dated_methods() -> list[str]:
+    methods = ga4.APIS["ga4"].methods
+    return sorted(name for name, method in methods.items() if method.fields & set(GA4_DATED))
+
+
+def test_the_guard_knows_each_dated_method():
+    assert dated_methods() == ["pivot_report", "run_report"]
+    assert sent_days({"a": [{"b": {"startDate": "today"}}]}) == [("startDate", "today")]
+
+
+@pytest.mark.parametrize("method", dated_methods())
+@pytest.mark.parametrize("field", sorted(GA4_DATED))
+async def test_no_ga4_method_sends_a_relative_date_or_a_day_after_yesterday(
+    live, monkeypatch, method, field
+):
+    """A dated field that skips ga4._sent_dates sends today, or GA4 reads a date in its zone."""
+    freeze(monkeypatch)
+    value = GA4_DATED[field]
+    # Each range alone: a range of today is refused, the others go out.
+    items = value if field == "dateRanges" else value["cohorts"]
+    for item in items:
+        one = [item] if field == "dateRanges" else {"cohorts": [item]}
+        await core.query_api(HOST, "ga4", method, {field: one})
+    days = [found for body in reports(live) for found in sent_days(body)]
+    wrong = [
+        (key, day)
+        for key, day in days
+        if not isinstance(day, str) or not re.fullmatch(PLAIN, day) or day > YESTERDAY
+    ]
+    fix = (
+        f"ga4 {method} sent {field} dates that are not plain or are after {YESTERDAY}. Send "
+        "each DateRange of the request through ga4._sent_dates."
+    )
+    assert days, f"ga4 {method} sent no {field} date"
+    assert not wrong, f"{fix} {wrong}"
 
 
 async def test_a_ga4_default_range_goes_out_as_plain_dates(live, monkeypatch):
