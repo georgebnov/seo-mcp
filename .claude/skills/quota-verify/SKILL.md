@@ -74,7 +74,7 @@ Sync commit: `61bbe1b`. The models and mutants describe `src/` as of this commit
 - Each rule has a model mutant and a code mutant, with 1 exception. NoTokenReadsNoAnswer has a model mutant only: the order of `clarity.credential` and `shared.once` has no 1-line break.
 - `metered_call` spends 1 call. `gsc.index_status` spends 1 call for each URL in 1 spend: the model does not cover the batch size.
 - `parallel_callers` has no busy ledger lock and no failed `quota.block`. `metered_call` has both.
-- Not covered: the midnight edge between `spend` and `block` (only tests cover `receipt.day`), the prune of old entries, the salt file, GA4 token readings (`ga4._record` only records what GA4 says, it gates no call), and Bing and PageSpeed, which have no ledger.
+- Not covered: the midnight edge between `spend` and `block` (only tests cover `receipt.day`), the prune of old entries (`shared._prune` and `shared.prune_day_answers`, which runs at the start of `shared.once` before the path lock and never removes a lock file), the salt file, GA4 token readings (`ga4._record` only records what GA4 says, it gates no call), and Bing and PageSpeed, which have no ledger.
 
 ## Accepted behavior
 
