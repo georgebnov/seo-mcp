@@ -77,7 +77,7 @@ The other dated sources have no such value here: `clarity`, the Bing traffic met
 
 ### An end date past the newest day
 
-Each source has its own newest day, so the server moves an end date for each source, in `get_seo_data` and in the date fields of `query_api`. The result shows the move: `date_moved` holds `asked_end_date` and `sent_end_date`, `reason` says so, and `applied` of `query_api` shows what went out. In `query_api` GA4, `date_moved` lists the moved `dateRanges`.
+Each source has its own newest day, so the server moves an end date for each source, in `get_seo_data` and in the date fields of `query_api`. The result shows the move: `date_moved` holds `asked_end_date` and `sent_end_date`, `reason` says so, and `applied` of `get_seo_data` and `query_api` shows what went out, such as `today` for a GA4 end. In `query_api` GA4, `date_moved` lists the moved `dateRanges`.
 
 | Source | Newest day | Moved end |
 | --- | --- | --- |

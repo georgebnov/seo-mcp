@@ -62,7 +62,7 @@ Each source accepts only these parameters:
 
 A source that cannot apply a parameter does not run. Its status is unsupported, and
 unsupported_params and accepts say why. It never returns data without the filter. A source
-that ran shows the values that it used in applied.
+that ran shows the values that it used in applied: after a move, end_date is the sent date.
 An answer from the network or a saved answer shows from_cache, cached_at, cache_age_seconds, and
 cache_expires_at. Identical requests share 1 live call: a saved answer serves for 5 minutes (30
 seconds for a GA4 realtime report, the UTC day for clarity). With several requests in a source,

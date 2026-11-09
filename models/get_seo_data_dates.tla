@@ -9,10 +9,10 @@
 EXTENDS Naturals
 CONSTANTS Last, Newest, MaxDay
 VARIABLES pc, prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, status,
-          totals, partial, sent, first, startRow, read, delta, extra
+          totals, partial, sent, first, startRow, read, delta, extra, appliedEnd
 vars == <<pc, prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, status,
-          totals, partial, sent, first, startRow, read, delta, extra>>
-Gate == <<first, startRow, read, delta, extra>>
+          totals, partial, sent, first, startRow, read, delta, extra, appliedEnd>>
+Gate == <<first, startRow, read, delta, extra, appliedEnd>>
 Days == 1..MaxDay
 Min(a, b) == IF a < b THEN a ELSE b
 
@@ -21,13 +21,14 @@ Init ==
   /\ cov = "none" /\ fetchedLast = 0 /\ shownLast = 0 /\ reply = "none" /\ status = "none"
   /\ totals = "none" /\ partial = FALSE /\ sent = 0
   /\ first = 0 /\ startRow = FALSE /\ read = "none" /\ delta = "none" /\ extra = 0
+  /\ appliedEnd = 0
 
 \* The agent names a source and 2 dates. The property has its first day of data.
 Ask ==
   /\ pc = "asked" /\ pc' = "named"
   /\ prov' \in {"gsc", "ga4"} /\ start' \in Days /\ end' \in Days /\ first' \in Days
   /\ UNCHANGED <<sentEnd, moved, cov, fetchedLast, shownLast, reply, status, totals, partial, sent>>
-  /\ UNCHANGED <<startRow, read, delta, extra>>
+  /\ UNCHANGED <<startRow, read, delta, extra, appliedEnd>>
 Same == UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, status,
                     totals, partial, sent>> /\ UNCHANGED Gate
 \* params.period: start_date after end_date is BadInput for every source, before any source runs.
@@ -93,12 +94,14 @@ Result ==
   /\ partial' = (sentEnd > shownLast')
   \* GA4 or Search Console has no row on a day before First, and can have none on a real 0 day.
   /\ startRow' \in IF reply = "rows" /\ start >= first THEN BOOLEAN ELSE {FALSE}
+  \* core._asked: applied shows the sent end of date_moved, else the asked end.
+  /\ appliedEnd' = IF moved THEN sentEnd ELSE end
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, reply, sent>>
   /\ UNCHANGED <<first, read, delta, extra>>
 \* core._delta: unknown totals give no delta.
 Shown == IF totals = "none" THEN "null" ELSE "shown"
 Keep == UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLast, reply, status,
-                    totals, partial, sent, first, startRow>>
+                    totals, partial, sent, first, startRow, appliedEnd>>
 \* ga4._gap_at_start: a GA4 day report with a row on the first day of the range needs no read.
 \* A GA4 landing page report and each Search Console report have no day rows, so they read.
 NeedsRead == prov = "gsc" \/ ~startRow
@@ -146,4 +149,6 @@ RealZeroKeepsTheDelta ==
 \* A GA4 day report with a row on the first day sends no extra read, and no range sends 2.
 ExtraReadOnlyForAGap == (pc = "gated" /\ prov = "ga4" /\ startRow) => extra = 0
 AtMost1ExtraRead == extra <= 1
+\* The tool text: a source that ran shows the values that it used in applied.
+AppliedShowsTheSentEnd == Ok => appliedEnd = sentEnd
 ====
