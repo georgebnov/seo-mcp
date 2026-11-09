@@ -78,6 +78,15 @@ def _account(site: Site) -> dict[str, str]:
     return account
 
 
+def principal(site: Site) -> shared.Identity:
+    """The account that reads, by its email. The private key stays out of the identity.
+
+    A rotated key of 1 account has the same access, and a key that does not sign fails at the
+    token step, before any saved answer or failure.
+    """
+    return shared.identity("google_service_account", _account(site)["client_email"])
+
+
 async def token(site: Site, scope: str) -> str:
     account = _account(site)
     cached = _tokens.get((account["client_email"], scope))

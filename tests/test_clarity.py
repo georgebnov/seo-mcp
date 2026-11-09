@@ -6,6 +6,7 @@ import pytest
 
 from seo_mcp import core
 from seo_mcp.providers import clarity
+from test_query_api import clarity_auth
 
 TOKEN = "clarity-token-value-1234"
 SITE = {"secrets": {"clarity_token": {"env": "CLARITY_ENV"}}}
@@ -74,7 +75,7 @@ async def test_cache_of_an_older_day_is_not_served(write_config, fake_net):
     write_config(SITE)
     calls = fake_net(lambda _: httpx2.Response(200, json=LIVE))
     await get()
-    path = clarity.cache_path("www.example.com")
+    path = clarity.cache_path("www.example.com", clarity_auth())
     stored = json.loads(path.read_text())
     stored["cached_at"] = (datetime.now(UTC) - timedelta(days=1)).isoformat()
     path.write_text(json.dumps(stored))
@@ -85,8 +86,8 @@ async def test_cache_of_an_older_day_is_not_served(write_config, fake_net):
 async def test_broken_cache_is_ignored(write_config, fake_net):
     write_config(SITE)
     calls = fake_net(lambda _: httpx2.Response(200, json=LIVE))
-    path = clarity.cache_path("www.example.com")
-    path.parent.mkdir(parents=True)
+    path = clarity.cache_path("www.example.com", clarity_auth())
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("not json")
     assert (await get())["status"] == "ok"
     assert len(calls) == 1
@@ -96,7 +97,7 @@ async def test_cache_holds_no_token_and_is_private(write_config, fake_net):
     write_config(SITE)
     fake_net(lambda _: httpx2.Response(200, json=LIVE))
     await get()
-    path = clarity.cache_path("www.example.com")
+    path = clarity.cache_path("www.example.com", clarity_auth())
     assert TOKEN not in path.read_text()
     assert path.stat().st_mode & 0o077 == 0
 
@@ -107,7 +108,7 @@ async def test_a_failure_is_not_cached(write_config, fake_net):
     result = await get()
     assert result["status"] == "error"
     assert "rate limit" in result["reason"]
-    assert not clarity.cache_path("www.example.com").exists()
+    assert not clarity.cache_path("www.example.com", clarity_auth()).exists()
 
 
 async def test_403_names_a_cut_token_as_a_cause(write_config, fake_net):
@@ -148,5 +149,6 @@ async def test_a_site_with_no_project_field_keeps_its_cache_file(write_config, f
     write_config(SITE)
     fake_net(lambda _: httpx2.Response(200, json=LIVE))
     await get()
-    assert (clarity.cache_path("www.example.com")).name == "clarity-www.example.com-3d-URL.json"
-    assert clarity.cache_path("www.example.com").exists()
+    name = clarity.cache_path("www.example.com", clarity_auth()).name
+    assert name.startswith("clarity-www.example.com-3d-URL-k2-")
+    assert clarity.cache_path("www.example.com", clarity_auth()).exists()

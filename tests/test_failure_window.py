@@ -9,7 +9,7 @@ import pytest
 
 from seo_mcp import core, net, quota, shared
 from seo_mcp.providers import clarity, gsc
-from test_query_api import HOST, SITE
+from test_query_api import HOST, SITE, clarity_auth
 from test_quota import (
     DASHBOARD,
     INSIGHTS,
@@ -29,7 +29,7 @@ def count():
 
 def saved_file():
     body = {"query": DASHBOARD[1]["query"], "timezone": "UTC"}
-    return clarity._body_path(HOST, "dashboard", body)
+    return clarity._body_path(HOST, "dashboard", body, clarity_auth())
 
 
 def mark_file():
@@ -236,7 +236,7 @@ async def test_a_good_answer_ends_the_failure(live, fake_net):
     ],
 )
 async def test_a_broken_failure_mark_is_no_failure(live, stored):
-    mark_file().parent.mkdir(parents=True)
+    mark_file().parent.mkdir(parents=True, exist_ok=True)
     mark_file().write_text(json.dumps(stored))
     assert (await run("clarity", DASHBOARD))["status"] == "ok"
     assert count() == 1

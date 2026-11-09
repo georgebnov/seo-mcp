@@ -239,7 +239,7 @@ async def test_a_batch_with_1_sent_failure_keeps_the_window(live, fake_net):
 
 
 async def test_a_full_disk_does_not_lose_a_paid_answer(tmp_path):
-    target = tmp_path / "entry.json"
+    target = shared.Keyed(tmp_path / "entry.json")
     target.mkdir()
 
     async def send(_):
@@ -264,9 +264,10 @@ async def test_a_prune_reaches_entries_behind_many_lock_files(live, monkeypatch)
 async def test_a_longer_lifetime_does_not_extend_a_short_saved_answer(live):
     site = config.resolve(HOST)
     args = (site, pagespeed.ENDPOINTS, "GET", pagespeed.PSI_API)
-    await shared.request(*args, keep=30)
+    auth = shared.identity("google_api_key", None)
+    await shared.request(*args, keep=30, auth=auth)
     age_all(31)
-    await shared.request(*args, keep=300)
+    await shared.request(*args, keep=300, auth=auth)
     assert len(sent(live)) == 2
 
 

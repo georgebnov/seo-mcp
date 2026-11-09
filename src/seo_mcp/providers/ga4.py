@@ -197,7 +197,7 @@ async def _post(
         return reply
 
     keep = shared.REALTIME_SECONDS if pool == "realtime" else shared.ANSWER_SECONDS
-    path = shared.entry(site, "POST", url, body, explain)
+    path = shared.entry(site, "POST", url, body, explain, auth=_google.principal(site))
     return await shared.once(path, send, good=REPORT, until=shared.after(keep))
 
 
@@ -650,7 +650,14 @@ async def _metadata(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     url = f"https://{HOST}/v1beta/properties/{prop}/metadata"
     headers = {"Authorization": f"Bearer {token}"}
     reply = await shared.request(
-        site, ENDPOINTS, "GET", url, headers=headers, explain=True, good=METADATA
+        site,
+        ENDPOINTS,
+        "GET",
+        url,
+        headers=headers,
+        explain=True,
+        good=METADATA,
+        auth=_google.principal(site),
     )
 
     def brief(kind: str, item: dict[str, Any]) -> dict[str, Any]:
