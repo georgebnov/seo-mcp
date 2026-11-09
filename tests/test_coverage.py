@@ -487,6 +487,22 @@ async def test_a_saved_query_api_answer_never_shows_a_partial_day_complete(
     assert second["from_cache"] is False
 
 
+@pytest.mark.parametrize("text", [server.GET_SEO_DATA, server.QUERY_API], ids=["get", "query"])
+async def test_a_live_answer_shows_the_time_of_its_oldest_part(live, fake_net, monkeypatch, text):
+    """A live test: an answer with from_cache false showed an older cached_at with no reason."""
+    t0 = datetime(2026, 3, 18, 20, 0, tzinfo=UTC)
+    freeze(monkeypatch, t0)
+    search_console(fake_net, "2026-03-17")
+    await source("search_queries")
+    freeze(monkeypatch, t0 + timedelta(seconds=100))
+    result = await source("search_pages")
+    assert result["from_cache"] is False
+    assert result["cached_at"] == t0.isoformat()
+    flat = " ".join(text.lower().split())
+    assert "the oldest part gives cached_at and cache_age_seconds" in flat
+    assert "from_cache false can show" in flat
+
+
 async def test_a_saved_report_serves_while_the_day_does_not_move(live, fake_net, monkeypatch):
     t0 = datetime(2026, 3, 18, 20, 0, tzinfo=UTC)
     named = {"start_date": "2026-03-10", "end_date": "2026-03-18"}

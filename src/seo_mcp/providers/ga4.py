@@ -161,7 +161,9 @@ def _view(prop: str, pool: str) -> dict[str, Any]:
         "tokens_left": stored.get("tokens_left"),
         "tokens_left_this_hour": stored.get("tokens_left_this_hour"),
         "tokens_left_for_project_this_hour": stored.get("tokens_left_for_project_this_hour"),
-        "tokens_spent": stored.get("tokens_spent"),
+        # The reading is of the last live call. A saved answer, or a failure in its window,
+        # sent nothing, so it spent nothing.
+        "tokens_spent": 0 if shared.shown().get("from_cache") else stored.get("tokens_spent"),
         "seen_at": stored.get("seen_at"),
         "resets_at": _next_reset(),
         "reset_stated": True,

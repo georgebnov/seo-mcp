@@ -228,6 +228,10 @@ async def once(
         except net.ApiError as exc:
             if exc.sent or prepare is not _nothing:
                 _mark_failure(path, exc.status, exc.detail)
+                # A source can read a failure as an answer, such as a 404 of no data: it is
+                # live, and the same request waits for the window.
+                at = datetime.now(UTC)
+                _note(False, at, at + timedelta(seconds=FAILURE_WINDOW_SECONDS))
             raise
         except asyncio.CancelledError:
             # The source timeout ended a call in flight, and the API can have counted it.
