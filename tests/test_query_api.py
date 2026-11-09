@@ -368,6 +368,47 @@ async def test_ga4_limit_over_the_cap_names_offset(live):
     assert not live
 
 
+def pivot(**fields):
+    return {"fieldNames": ["pagePath"], **fields}
+
+
+@pytest.mark.parametrize("limit", [5000, "5000"])
+async def test_a_pivot_limit_over_the_cap_is_refused_with_nothing_sent(live, limit):
+    request = {"pivots": [pivot(limit=10), pivot(limit=limit)]}
+    data = await ask("ga4", "pivot_report", request)
+    assert data["status"] == "error"
+    assert str(api.MAX_ROWS) in data["reason"]
+    assert "offset" in data["reason"]
+    assert not live
+
+
+@pytest.mark.parametrize("limit", [0, -1, "ten", 2.5, True])
+async def test_a_pivot_limit_that_is_no_row_count_is_refused_with_nothing_sent(live, limit):
+    data = await ask("ga4", "pivot_report", {"pivots": [pivot(limit=limit)]})
+    assert data["status"] == "error"
+    assert not live
+
+
+@pytest.mark.parametrize("pivots", [pivot(limit=10), [pivot(limit=10), "pagePath"]])
+async def test_pivots_that_are_no_list_of_objects_are_refused_with_nothing_sent(live, pivots):
+    data = await ask("ga4", "pivot_report", {"pivots": pivots})
+    assert data["status"] == "error"
+    assert "pivots" in data["reason"]
+    assert not live
+
+
+async def test_each_pivot_limit_goes_out_as_run_report_sends_its_limit(live):
+    """The limit of run_report: a number in text is a number, and no limit is the cap."""
+    request = {"pivots": [pivot(limit="25", offset=5), pivot()]}
+    data = await ask("ga4", "pivot_report", request)
+    assert data["status"] == "ok", data["reason"]
+    body = json.loads(sent(live)[0].content)
+    went = [pivot(limit=25, offset=5), pivot(limit=api.MAX_ROWS)]
+    assert body["pivots"] == went
+    assert "limit" not in body
+    assert data["applied"]["pivots"] == went
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
     [("pivot_report", ":runPivotReport"), ("realtime_report", ":runRealtimeReport")],
