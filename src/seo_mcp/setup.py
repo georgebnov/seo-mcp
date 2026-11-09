@@ -344,6 +344,9 @@ def _ask_entry(sites: dict[str, Any], shared: dict[str, Any], host: str) -> dict
     repo = default if not typed or typed == REMOVE else typed
     if repo is None:
         return None
+    # The server resolves a relative path from its own folder, not from this one.
+    if not repo.startswith("~") and not Path(repo).is_absolute():
+        repo = str(_folder(repo))
     for name, hint in FIELD_HINTS.items():
         value = _ask_until(f"{name}: {hint} (now: {entry.get(name, 'none')}): ", _plain)
         if value == REMOVE:

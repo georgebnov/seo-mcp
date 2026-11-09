@@ -139,6 +139,15 @@ def test_a_new_site_never_takes_the_repo_path_of_another(
     assert "another site" in out
 
 
+def test_a_relative_repo_path_is_stored_in_full(sites_file, tmp_path, monkeypatch, capsys):
+    """The server resolves a repo path from its own folder, so "." would name another folder."""
+    repo = tmp_path / "site"
+    repo.mkdir()
+    monkeypatch.chdir(tmp_path)
+    run(monkeypatch, capsys, answers("www.example.com", "site", *SKIP_FIELDS, *SKIP_SECRETS, "y"))
+    assert list(json.loads(sites_file.read_text())["sites"]) == [str(repo.resolve())]
+
+
 def test_the_examples_file_still_loads(sites_file, monkeypatch, capsys):
     example = ROOT / "examples" / "sites.json"
     original = example.read_bytes()
