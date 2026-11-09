@@ -1,10 +1,12 @@
 ---- MODULE metered_call ----
 \* 1 metered Clarity call through clarity._cached, quota.spend, and net.request.
 \* The start state is any ledger and cache that earlier calls can leave.
+\* clarity.credential reads the token before shared.once, because the cache path holds the
+\* identity of the token. token is TRUE when the token is there.
 EXTENDS Naturals
 CONSTANT Limit
-VARIABLES pc, api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt
-vars == <<pc, api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
+VARIABLES pc, api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt, token
+vars == <<pc, api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt, token>>
 
 Ends == {"hit", "repeated", "badAnswer", "busy", "notConnected", "refused", "stored", "failed", "notSent", "dayBlocked"}
 
@@ -22,20 +24,26 @@ Init ==
   /\ count = sent
   /\ count0 = count /\ sent0 = sent /\ blocked0 = blocked
   /\ receipt = FALSE
+  /\ token \in BOOLEAN
 
-Same == UNCHANGED <<api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
+Same == UNCHANGED <<api, cache, ledger, blocked, count, sent, count0, sent0, blocked0, receipt, token>>
+\* shared.once marks the failure of a spent call, so a repeat inside the window spends nothing.
+Marked == /\ cache' = "failedInWindow"
+          /\ UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt, token>>
 
-TakeLock == pc = "start" /\ pc' = "lock" /\ Same
+\* clarity.credential: Site.secret raises NotConnected for a missing or empty token.
+TokenMissing == pc = "start" /\ ~token /\ pc' = "notConnected" /\ Same
+TokenRead == pc = "start" /\ token /\ pc' = "token" /\ Same
+\* shared._only_sender: the lock of the cache path, which holds the identity of the token.
+TakeLock == pc = "token" /\ pc' = "lock" /\ Same
 CacheHit == pc = "lock" /\ cache = "today" /\ pc' = "hit" /\ Same
-CacheOld == pc = "lock" /\ cache = "olderDay" /\ pc' = "token" /\ Same
-CacheNone == pc = "lock" /\ cache = "none" /\ pc' = "token" /\ Same
+CacheOld == pc = "lock" /\ cache = "olderDay" /\ pc' = "ledger" /\ Same
+CacheNone == pc = "lock" /\ cache = "none" /\ pc' = "ledger" /\ Same
 \* shared._recent_failure: the failure of the same request is under the window.
 \* shared._saved: an answer of today that an older server saved fails the shape check.
-CacheBad == pc = "lock" /\ cache = "badToday" /\ pc' = "token" /\ Same
+CacheBad == pc = "lock" /\ cache = "badToday" /\ pc' = "ledger" /\ Same
 FailureRepeat == pc = "lock" /\ cache = "failedInWindow" /\ pc' = "repeated" /\ Same
-FailureOld == pc = "lock" /\ cache = "failedBefore" /\ pc' = "token" /\ Same
-TokenMissing == pc = "token" /\ pc' = "notConnected" /\ Same
-TokenRead == pc = "token" /\ pc' = "ledger" /\ Same
+FailureOld == pc = "lock" /\ cache = "failedBefore" /\ pc' = "ledger" /\ Same
 
 \* quota.locked: a stuck process holds the ledger lock past the wait.
 LockBusy == pc = "ledger" /\ pc' = "busy" /\ Same
@@ -49,12 +57,12 @@ RefuseLimit ==
 Reserve ==
   /\ pc = "ledger" /\ ledger = "good" /\ ~blocked /\ count + 1 <= Limit
   /\ pc' = "reserved" /\ count' = count + 1 /\ receipt' = TRUE
-  /\ UNCHANGED <<api, cache, ledger, blocked, sent, count0, sent0, blocked0>>
+  /\ UNCHANGED <<api, cache, ledger, blocked, sent, count0, sent0, blocked0, token>>
 \* quota._read: a real older day restarts the count.
 ReserveNewDay ==
   /\ pc = "ledger" /\ ledger = "olderDay"
   /\ pc' = "reserved" /\ count' = 1 /\ receipt' = TRUE
-  /\ UNCHANGED <<api, cache, ledger, blocked, sent, count0, sent0, blocked0>>
+  /\ UNCHANGED <<api, cache, ledger, blocked, sent, count0, sent0, blocked0, token>>
 \* quota._read: a day that is no real date, or is after today, is a broken ledger.
 RefuseWrongDate == pc = "ledger" /\ ledger = "wrongDate" /\ pc' = "refused" /\ Same
 
@@ -62,32 +70,31 @@ RefuseWrongDate == pc = "ledger" /\ ledger = "wrongDate" /\ pc' = "refused" /\ S
 Send ==
   /\ pc = "reserved" /\ receipt
   /\ pc' = "flight" /\ sent' = sent + 1
-  /\ UNCHANGED <<api, cache, ledger, blocked, count, count0, sent0, blocked0, receipt>>
+  /\ UNCHANGED <<api, cache, ledger, blocked, count, count0, sent0, blocked0, receipt, token>>
 \* shared.once: the call counts, no request went out, and the failure window starts.
-ConnectFails ==
-  /\ pc = "reserved" /\ pc' = "notSent" /\ cache' = "failedInWindow"
-  /\ UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
+ConnectFails == pc = "reserved" /\ pc' = "notSent" /\ Marked
 
 Answer ==
   /\ pc = "flight" /\ pc' = "stored" /\ cache' = "today"
-  /\ UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
+  /\ UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt, token>>
 \* shared.once: HTTP 200 with a wrong shape, so the failure window starts and nothing is saved.
-BadShape ==
-  /\ pc = "flight" /\ pc' = "badAnswer" /\ cache' = "failedInWindow"
-  /\ UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt>>
+BadShape == pc = "flight" /\ pc' = "badAnswer" /\ Marked
+\* clarity._cached: quota.block writes the flag, then shared.once marks the failure.
 Export429 ==
   /\ pc = "flight" /\ api = "export" /\ pc' = "dayBlocked" /\ blocked' = TRUE
-  /\ UNCHANGED <<api, cache, ledger, count, sent, count0, sent0, blocked0, receipt>>
+  /\ cache' = "failedInWindow"
+  /\ UNCHANGED <<api, ledger, count, sent, count0, sent0, blocked0, receipt, token>>
 \* The ledger is stuck after the 429: the day does not stop, and the next call gets its own 429.
-Export429LockBusy == pc = "flight" /\ api = "export" /\ pc' = "failed" /\ Same
-Mcp429 == pc = "flight" /\ api = "mcp" /\ pc' = "failed" /\ Same
-OtherError == pc = "flight" /\ pc' = "failed" /\ Same
-TimesOut == pc = "flight" /\ pc' = "failed" /\ Same
+Export429LockBusy == pc = "flight" /\ api = "export" /\ pc' = "failed" /\ Marked
+Mcp429 == pc = "flight" /\ api = "mcp" /\ pc' = "failed" /\ Marked
+OtherError == pc = "flight" /\ pc' = "failed" /\ Marked
+\* shared.once: a CancelledError in flight marks the failure too.
+TimesOut == pc = "flight" /\ pc' = "failed" /\ Marked
 
 Done == pc \in Ends /\ UNCHANGED vars
 
 Next ==
-  TakeLock \/ CacheHit \/ CacheOld \/ CacheNone \/ CacheBad \/ FailureRepeat \/ FailureOld \/ TokenMissing \/ TokenRead
+  TokenMissing \/ TokenRead \/ TakeLock \/ CacheHit \/ CacheOld \/ CacheNone \/ CacheBad \/ FailureRepeat \/ FailureOld
   \/ LockBusy \/ RefuseBroken \/ RefuseBlocked \/ RefuseLimit \/ Reserve \/ ReserveNewDay
   \/ RefuseWrongDate \/ Send \/ ConnectFails \/ Answer \/ BadShape \/ Export429 \/ Export429LockBusy \/ Mcp429
   \/ OtherError \/ TimesOut \/ Done
@@ -119,4 +126,8 @@ ReservedBeforeTheNetwork == sent > sent0 => receipt
 BlockedDaySendsNothing == blocked0 => sent = sent0
 \* HTTP 429 of the Data Export API sets the blocked flag.
 Limit429SetsTheFlag == pc = "dayBlocked" => blocked
+\* A saved answer or a failure serves only with the token that the cache path names.
+NoTokenReadsNoAnswer == pc \in {"hit", "repeated"} => token
+\* Each failure of a spent call starts the failure window.
+SpentFailureKeepsTheWindow == pc \in {"failed", "dayBlocked", "badAnswer"} => cache = "failedInWindow"
 ====

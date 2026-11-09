@@ -1,6 +1,9 @@
 ---- MODULE parallel_callers ----
 \* 2 callers of 1 request on a cold cache, through shared.once. Each source and method uses it.
-\* The steps between the lock and the send have no await, so 1 step holds them.
+\* 1 step holds the lock, the check of the saved answer and the failure, and the spend: the cache
+\* of a slot changes only under its lock, and quota.spend reads and writes the ledger under the
+\* ledger lock. The send is a separate step: between quota.spend and the request, net.request
+\* awaits the connection, and another task or process can change the ledger.
 \* Each caller has a key, A or B. The path of the answer, the failure, and the lock holds the
 \* identity of the key (shared.entry, shared.named), so each key has its own slot. The ledger
 \* is of the resource (Clarity project, Search Console site), so both keys spend from 1 count.
@@ -45,26 +48,31 @@ TakeLockRefused(c) ==
   /\ (blocked \/ count + 1 > Limit)
   /\ pc' = [pc EXCEPT ![c] = "refused"]
   /\ UNCHANGED <<lock, cache, blocked, count, sent, firstOk, sentAfterBlock>> /\ Keep
-TakeLockSend(c) ==
+\* shared.once: prepare runs quota.spend under the lock of the slot, so 1 call is reserved.
+TakeLockSpend(c) ==
   LET s == Slot(c) IN
   /\ pc[c] = "waiting" /\ lock[s] = 0 /\ cache[s] = "cold" /\ ~failed[s]
   /\ ~blocked /\ count + 1 <= Limit
-  /\ pc' = [pc EXCEPT ![c] = "flight"]
+  /\ pc' = [pc EXCEPT ![c] = "spent"]
   /\ lock' = [lock EXCEPT ![s] = c] /\ count' = count + 1
+  /\ spentInWindow' = (spentInWindow \/ hadFailure[s])
+  /\ UNCHANGED <<key, cache, blocked, sent, firstOk, sentAfterBlock, failed, hadFailure>>
+\* shared.once: send runs net.request, and the request goes out.
+Send(c) ==
+  LET s == Slot(c) IN
+  /\ pc[c] = "spent"
+  /\ pc' = [pc EXCEPT ![c] = "flight"]
   /\ sent' = [sent EXCEPT ![s] = @ + 1]
   /\ sentAfterBlock' = (sentAfterBlock \/ blocked)
-  /\ spentInWindow' = (spentInWindow \/ hadFailure[s])
-  /\ UNCHANGED <<key, cache, blocked, firstOk, failed, hadFailure>>
+  /\ UNCHANGED <<lock, cache, blocked, count, firstOk>> /\ Keep
 \* The connection did not open: the call counts, no request went out, and the failure is kept.
-TakeLockNotSent(c) ==
+NotSent(c) ==
   LET s == Slot(c) IN
-  /\ pc[c] = "waiting" /\ lock[s] = 0 /\ cache[s] = "cold" /\ ~failed[s]
-  /\ ~blocked /\ count + 1 <= Limit
+  /\ pc[c] = "spent"
   /\ pc' = [pc EXCEPT ![c] = "notSent"]
-  /\ count' = count + 1
+  /\ lock' = [lock EXCEPT ![s] = 0]
   /\ failed' = [failed EXCEPT ![s] = TRUE] /\ hadFailure' = [hadFailure EXCEPT ![s] = TRUE]
-  /\ spentInWindow' = (spentInWindow \/ hadFailure[s])
-  /\ UNCHANGED <<key, lock, cache, blocked, sent, firstOk, sentAfterBlock>>
+  /\ UNCHANGED <<key, cache, blocked, count, sent, firstOk, sentAfterBlock, spentInWindow>>
 WaitTimesOut(c) ==
   /\ pc[c] = "waiting"
   /\ pc' = [pc EXCEPT ![c] = "timedOut"]
@@ -96,8 +104,8 @@ Done == (\A c \in Callers: pc[c] \in Ends) /\ UNCHANGED vars
 
 Next ==
   \/ \E c \in Callers:
-       TakeLockHit(c) \/ TakeLockRepeat(c) \/ TakeLockRefused(c) \/ TakeLockSend(c)
-       \/ TakeLockNotSent(c) \/ WaitTimesOut(c)
+       TakeLockHit(c) \/ TakeLockRepeat(c) \/ TakeLockRefused(c) \/ TakeLockSpend(c)
+       \/ Send(c) \/ NotSent(c) \/ WaitTimesOut(c)
        \/ Answer(c) \/ Fails(c) \/ Limit429(c)
   \/ Done
 
