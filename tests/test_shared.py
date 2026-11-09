@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx2
 import pytest
 
-from seo_mcp import config, core, quota, shared
+from seo_mcp import config, core, net, quota, shared
 from seo_mcp.providers import clarity, gsc, pagespeed
 from test_query_api import HOST, SITE
 from test_quota import (
@@ -413,11 +413,18 @@ async def test_a_failure_file_holds_no_secret(live, fake_net):
     assert "google-key-value-1234" not in text
 
 
-async def test_a_saved_request_still_needs_a_listed_endpoint(live, monkeypatch):
-    await sources("page_speed")
-    monkeypatch.setattr("seo_mcp.providers.pagespeed.ENDPOINTS", ())
-    data = (await sources("page_speed"))["sources"]["page_speed"]
-    assert data["status"] == "error"
+async def test_a_saved_request_still_needs_a_listed_endpoint(live):
+    site = config.resolve(HOST)
+    auth = shared.identity("google_api_key", "google-key-value-1234")
+    call = ("GET", pagespeed.PSI_API)
+    asked = {"params": [("url", f"https://{HOST}/")], "auth": auth}
+    assert await shared.request(site, pagespeed.ENDPOINTS, *call, **asked)
+    count = len(live)
+    with pytest.raises(net.NotAllowed):
+        await shared.request(site, (), *call, **asked)
+    # The answer is still saved: the list, not a cache miss, refused the call.
+    assert await shared.request(site, pagespeed.ENDPOINTS, *call, **asked)
+    assert len(live) == count
 
 
 async def test_a_source_of_2_requests_is_from_cache_only_when_both_are(live):
