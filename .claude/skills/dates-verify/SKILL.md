@@ -72,4 +72,6 @@ Sync commit: `47ec7aa`. The model and mutants describe `src/` as of this commit.
 
 ## Findings
 
-None at the first run: each rule holds at `47ec7aa`, and each mutant is caught.
+- Each rule holds at `47ec7aa`. No code breaks a rule.
+- A test gap: the code mutant of RealZeroKeepsTheDelta (`first <= start` to `first < start` in `core._uncollected`) was MISSED by all of `tests/test_collected.py`. No test had a range that starts on the first day of data. `test_a_range_that_starts_on_the_first_event_keeps_the_delta` now covers it.
+- AtMost1ExtraRead has a model mutant only. In the code, `shared.once` makes a 2nd read of the same fixed body send nothing, so no 1-line break of the code sends 2.

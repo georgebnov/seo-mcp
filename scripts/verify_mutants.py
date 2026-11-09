@@ -180,6 +180,167 @@ QUOTA: tuple[Mutant, ...] = (
         ),
         "the token is read after the saved answer, as before #49",
     ),
+    Model(
+        "CountNeverBelowRequestsSent",
+        "metered_call",
+        (
+            (
+                "/\\ pc' = \"reserved\" /\\ count' = count + 1",
+                "/\\ pc' = \"reserved\" /\\ count' = count",
+            ),
+        ),
+        "the ledger gives a receipt and counts nothing",
+    ),
+    Code(
+        "CountNeverBelowRequestsSent",
+        "src/seo_mcp/quota.py",
+        (('"used": used + count}', '"used": used}'),),
+        ("tests/test_quota.py::test_a_429_of_the_export_api_blocks_the_day_with_no_false_count",),
+        "quota.spend writes the old count",
+    ),
+    Model(
+        "BrokenLedgerSendsNothing",
+        "metered_call",
+        (
+            (
+                '/\\ pc = "ledger" /\\ ledger = "olderDay"',
+                '/\\ pc = "ledger" /\\ ledger \\in {"olderDay", "brokenText"}',
+            ),
+        ),
+        "a ledger that does not parse reads as a new day",
+    ),
+    Code(
+        "BrokenLedgerSendsNothing",
+        "src/seo_mcp/quota.py",
+        (("        raise Refused(_broken(ledger, file))\n", "        return 0, False\n"),),
+        ("tests/test_quota.py::test_a_ledger_with_a_bad_count_fails_closed",),
+        "quota._read reads a bad count as 0",
+    ),
+    Model(
+        "BusyLedgerSendsNothing",
+        "metered_call",
+        (
+            (
+                'LockBusy == pc = "ledger" /\\ pc\' = "busy" /\\ Same',
+                'LockBusy == pc = "ledger" /\\ pc\' = "busy" /\\ count\' = count + 1 /\\ sent\' = '
+                "sent + 1 /\\ UNCHANGED <<api, cache, ledger, blocked, count0, sent0, blocked0, "
+                "receipt, token>>",
+            ),
+        ),
+        "a call goes out past a ledger that another process holds",
+    ),
+    Code(
+        "BusyLedgerSendsNothing",
+        "src/seo_mcp/quota.py",
+        (
+            (
+                "if not await take_lock(lock, LOCK_WAIT_SECONDS):",
+                "if not await take_lock(lock, LOCK_WAIT_SECONDS) and False:",
+            ),
+        ),
+        ("tests/test_lock_timeout.py::test_a_stuck_ledger_refuses_and_sends_nothing",),
+        "quota.locked goes on without the ledger lock",
+    ),
+    Model(
+        "CacheHitSpendsNothing",
+        "metered_call",
+        (
+            (
+                'CacheHit == pc = "lock" /\\ cache = "today" /\\ pc\' = "hit" /\\ Same',
+                'CacheHit == pc = "lock" /\\ cache = "today" /\\ pc\' = "hit" /\\ '
+                "count' = count + 1 /\\ UNCHANGED <<api, cache, ledger, blocked, sent, count0, "
+                "sent0, blocked0, receipt, token>>",
+            ),
+        ),
+        "a saved answer still spends",
+    ),
+    Code(
+        "CacheHitSpendsNothing",
+        "src/seo_mcp/shared.py",
+        (
+            (
+                '            _note(True, saved["at"], saved["expires_at"])\n',
+                "            await prepare()\n",
+            ),
+        ),
+        ("tests/test_quota.py::test_a_cached_answer_shows_the_count_and_spends_none",),
+        "shared.once spends before it gives the saved answer",
+    ),
+    Model(
+        "HitHasAGoodShape",
+        "metered_call",
+        (
+            (
+                'CacheBad == pc = "lock" /\\ cache = "badToday" /\\ pc\' = "ledger"',
+                'CacheBad == pc = "lock" /\\ cache = "badToday" /\\ pc\' = "hit"',
+            ),
+        ),
+        "a saved answer of a wrong shape serves",
+    ),
+    Code(
+        "HitHasAGoodShape",
+        "src/seo_mcp/shared.py",
+        (('and good(stored["answer"])', "and True"),),
+        ("tests/test_bad_answer.py::test_a_bad_answer_that_an_old_server_saved_is_not_served",),
+        "shared._saved serves an answer of any shape",
+    ),
+    Model(
+        "BadAnswerIsNotSaved",
+        "metered_call",
+        (
+            (
+                'BadShape == pc = "flight" /\\ pc\' = "badAnswer" /\\ Marked',
+                'BadShape == pc = "flight" /\\ pc\' = "badAnswer" /\\ cache\' = "today" /\\ '
+                "UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt, "
+                "token>>",
+            ),
+        ),
+        "an HTTP 200 of a wrong shape is saved",
+    ),
+    Code(
+        "BadAnswerIsNotSaved",
+        "src/seo_mcp/shared.py",
+        (("            if not good(reply):\n", "            if False:\n"),),
+        ("tests/test_bad_answer.py::test_a_bad_answer_of_each_method_is_never_saved",),
+        "shared.once saves an answer of any shape",
+    ),
+    Model(
+        "SpentFailureKeepsTheWindow",
+        "metered_call",
+        (
+            (
+                'Mcp429 == pc = "flight" /\\ api = "mcp" /\\ pc\' = "failed" /\\ Marked',
+                'Mcp429 == pc = "flight" /\\ api = "mcp" /\\ pc\' = "failed" /\\ Same',
+            ),
+        ),
+        "a failed call that went out starts no failure window",
+    ),
+    Code(
+        "SpentFailureKeepsTheWindow",
+        "src/seo_mcp/shared.py",
+        (("            if exc.sent or prepare is not _nothing:\n", "            if False:\n"),),
+        ("tests/test_failure_window.py::test_a_repeat_after_the_call_ended_spends_nothing",),
+        "shared.once marks no failure",
+    ),
+    Model(
+        "FirstAnswerIsShared",
+        "parallel_callers",
+        (('cache\' = [cache EXCEPT ![s] = "saved"]', "cache' = cache"),),
+        "the first answer is not saved, so the other caller of the key sends again",
+    ),
+    Code(
+        "FirstAnswerIsShared",
+        "src/seo_mcp/shared.py",
+        (
+            (
+                '            quota.write_json(path, {"cached_at": at.isoformat(), "answer": '
+                "scrub(reply)})\n",
+                "            pass\n",
+            ),
+        ),
+        ("tests/test_shared.py::test_parallel_identical_calls_share_1_request",),
+        "shared.once does not save the answer",
+    ),
 )
 
 DATES_MODEL = "get_seo_data_dates"
@@ -348,6 +509,30 @@ DATES: tuple[Mutant, ...] = (
         ),
         ("tests/test_collected.py::test_the_live_case_gives_no_delta_and_names_the_first_day",),
         "core._gate_delta keeps the delta of a range with no data",
+    ),
+    Model(
+        "RealZeroKeepsTheDelta",
+        DATES_MODEL,
+        (("/\\ first <= start THEN Shown", "/\\ first < start THEN Shown"),),
+        "a range that starts on the first day of data loses its delta",
+    ),
+    Code(
+        "RealZeroKeepsTheDelta",
+        "src/seo_mcp/core.py",
+        (
+            (
+                "    if first is None or first <= start:\n",
+                "    if first is None or first < start:\n",
+            ),
+        ),
+        ("tests/test_collected.py::test_a_range_that_starts_on_the_first_event_keeps_the_delta",),
+        "core._uncollected names a range that starts on the first day of data",
+    ),
+    Model(
+        "AtMost1ExtraRead",
+        DATES_MODEL,
+        (("extra' = extra + 1", "extra' = extra + 2"),),
+        "1 range sends 2 reads of the first day of data",
     ),
     Model(
         "ExtraReadOnlyForAGap",

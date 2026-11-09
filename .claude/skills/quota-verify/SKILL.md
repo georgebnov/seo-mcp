@@ -71,6 +71,7 @@ Sync commit: `47ec7aa`. The models and mutants describe `src/` as of this commit
 ## Scope
 
 - `Limit` is 1 in `metered_call` and 2 in `parallel_callers`. The models have 1 UTC day, 2 callers, and 2 keys. 2 different requests of 1 key act as 2 keys: 2 paths, 1 ledger.
+- Each rule has a model mutant and a code mutant, with 2 exceptions. NoSendAfterTheLimitAnswer has none: it breaks today. NoTokenReadsNoAnswer has a model mutant only: the order of `clarity.credential` and `shared.once` has no 1-line break.
 - `metered_call` spends 1 call. `gsc.index_status` spends 1 call for each URL in 1 spend: the model does not cover the batch size.
 - `parallel_callers` has no busy ledger lock and no failed `quota.block`. `metered_call` has both.
 - Not covered: the midnight edge between `spend` and `block` (only tests cover `receipt.day`), the prune of old entries, the salt file, GA4 token readings (`ga4._record` only records what GA4 says, it gates no call), and Bing and PageSpeed, which have no ledger.
