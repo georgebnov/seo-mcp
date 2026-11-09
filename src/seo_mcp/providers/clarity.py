@@ -5,7 +5,6 @@ import json
 import re
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -67,10 +66,6 @@ def credential(site: Site) -> tuple[str, shared.Identity]:
     """Read the token 1 time, so that the headers and the cache key name the same token."""
     token = site.secret("clarity_token")
     return token, shared.identity("clarity_token", token)
-
-
-def ledger_path(project_id: str) -> Path:
-    return quota.path(LEDGER, project_id)
 
 
 def _all_objects(items: Any) -> bool:

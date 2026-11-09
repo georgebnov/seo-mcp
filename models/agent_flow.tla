@@ -1,7 +1,8 @@
 ---- MODULE agent_flow ----
 \* The discovery steps of #20 and #23. The tool text names each API, query_api(api=X)
 \* lists the fields (GA4: the standard dimensions and metrics), and metadata is a real request.
-\* The agent side, from live-data.md and the task recipes. The agent has a real choice at the
+\* The agent side, from references/live-data.md of the seo skill (not in this repo) and the
+\* task recipes. The agent has a real choice at the
 \* stop rule, and the server enforces the rule when the agent ignores it.
 EXTENDS Naturals
 VARIABLES pc, count, spent, sample, netCalls

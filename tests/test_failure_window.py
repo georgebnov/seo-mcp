@@ -277,6 +277,27 @@ async def test_a_429_of_the_export_api_still_blocks_the_day(live, fake_net):
     assert len(metered_requests(calls)) == 1
 
 
+async def test_after_the_429_no_new_call_spends(live, monkeypatch):
+    """2 calls that reserved before the 429 both go out. A call after the 429 spends nothing."""
+    gate = Gate()
+    net.transport = gate
+    paths = [("live_insights", {"numOfDays": days}) for days in (1, 2, 3)]
+    one = asyncio.create_task(run("clarity", paths[0]))
+    first = await asyncio.wait_for(gate.entered.get(), 5)
+    two = asyncio.create_task(run("clarity", paths[1]))
+    second = await asyncio.wait_for(gate.entered.get(), 5)
+    first.set_result(httpx2.Response(429))
+    assert (await one)["blocked_by_api"] is True
+    second.set_result(httpx2.Response(429))
+    assert "HTTP 429" in (await two)["reason"]
+    # A call that the ledger lets through waits at the gate: stop it soon.
+    monkeypatch.setattr(core, "SOURCE_TIMEOUT_SECONDS", 1)
+    late = await run("clarity", paths[2])
+    assert "HTTP 429" in late["reason"]
+    assert len(gate.requests) == 2
+    assert count() == late["calls_used_today"] == 2
+
+
 async def test_at_the_limit_a_repeat_shows_the_failure_and_spends_nothing(live, fake_net):
     calls = clarity_fails(fake_net)
     set_ledger(clarity.LEDGER, HOST, used=9)
