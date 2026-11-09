@@ -12,14 +12,12 @@ from seo_mcp.api import Api, Method, Quota, Run, answer, row_limit, whole
 from seo_mcp.config import Site
 from seo_mcp.params import (
     DATES,
-    SLACK_DAYS,
     BadInput,
     Params,
-    bounds,
-    days_ago,
-    iso_day,
     moved,
     moved_note,
+    newest,
+    resolve,
     today,
     too_late,
 )
@@ -35,16 +33,14 @@ ENDPOINTS = (
 )
 WINDOW_DAYS = 28
 # No field of the API marks a day complete. The help page says that processing can take 24-48
-# hours, so the last hit of a day is done at the start of the 3rd day after it. A relative date
-# goes out as text, and GA4 reads it in the property zone, so the server needs no zone.
+# hours, so the last hit of a day is done at the start of the 3rd day after it. Each date goes
+# out as YYYY-MM-DD of params.today: the server sends no relative date and reads no zone.
 LAG_DAYS = 3
-LAST_COMPLETE = f"{LAG_DAYS}daysAgo"
 ESTIMATE_HOW = (
-    f"An estimate: {LAST_COMPLETE}, which GA4 reads in the property zone. The GA4 help says that "
-    "processing can take 24-48 hours, and the API has no field for this. For a YYYY-MM-DD end, "
-    "partial_days holds each day that can be partial in some zone, from the UTC date of the "
-    "answer."
+    f"An estimate: {LAG_DAYS} days before today (the local date of the server). The GA4 help "
+    "says that processing can take 24-48 hours, and the API has no field for this."
 )
+BAD_DATE = "{name} must be YYYY-MM-DD, NdaysAgo, yesterday, or today."
 NO_ZONE = "The property zone: the reply names none."
 THIN_SESSIONS = 100
 MAX_DAILY_ROWS = 100
@@ -64,7 +60,6 @@ METRICS = tuple(EMPTY_TOTALS)
 # started as App + Web in 2019, so this floor misses no GA4 event; a refused read gives no delta.
 FIRST_EVENT_FLOOR = "2019-01-01"
 FIRST_EVENT = {
-    "dateRanges": [{"startDate": FIRST_EVENT_FLOOR, "endDate": "today"}],
     "dimensions": [{"name": "date"}],
     "metrics": [{"name": "eventCount"}],
     "orderBys": [{"dimension": {"dimensionName": "date"}, "desc": False}],
@@ -197,61 +192,40 @@ async def _post(
         return reply
 
     keep = shared.REALTIME_SECONDS if pool == "realtime" else shared.ANSWER_SECONDS
-    path = shared.entry(site, "POST", url, body, explain, auth=_google.principal(site))
+    # The day goes into the key: the coverage of a saved answer is of the day of its call.
+    day = today().isoformat()
+    path = shared.entry(site, "POST", url, body, explain, day, auth=_google.principal(site))
     return await shared.once(path, send, good=REPORT, until=shared.after(keep))
 
 
-def _check_order(name: str, start_text: Any, end_text: Any, utc_day: date) -> None:
-    """Refuse a range with a relative date only when its start is after its end in every zone.
+def _last_complete() -> date:
+    return today() - timedelta(days=LAG_DAYS)
 
-    GA4 reads 2 relative dates in 1 zone, so their N values give the order. With 1 YYYY-MM-DD
-    date, the property day can be U-1, U, or U+1: a range that is valid in 1 of them goes out.
+
+def _sent_dates(name: str, start_text: Any, end_text: Any) -> tuple[str, str, bool]:
+    """Give the plain start and end to send, and whether the end moved to the newest day.
+
+    A relative date becomes the plain date of today(), so GA4 never reads one in its own zone.
     """
-    first, last = days_ago(start_text), days_ago(end_text)
-    if first is not None and last is not None:
-        if first < last:
-            raise BadInput(
-                f"{name} must not be after the end date: the start is fewer days ago than "
-                "the end. The server sent nothing."
-            )
-        return
-    begin, finish = bounds(start_text, utc_day), bounds(end_text, utc_day)
-    if begin and finish and begin[0] > finish[1]:
-        raise BadInput(
-            f"{name} must not be after the end date: the start is after the end in every time "
-            "zone of the property. The server sent nothing."
-        )
-
-
-def _newest_end(name: str, start_text: Any, end_text: Any) -> Any:
-    """Give the end to send. The server reads no zone, and the day of the property is P.
-
-    P is the UTC date U, U-1, or U+1. An end of U+1 or later is on or after P, so "today" is
-    exactly the earlier of the end and P: GA4 reads it in the property zone, and no valid day
-    is cut. A start of U or later can be after P, so "today" could reverse the range: then the
-    end stops at U+1, the newest day of any zone. An end of U or earlier goes out as it is.
-    """
-    start, end = iso_day(start_text), iso_day(end_text)
-    if start and end and start > end:
-        raise BadInput(f"{name} must not be after the end date.")
-    utc_day = today()
-    _check_order(name, start_text, end_text, utc_day)
-    furthest = utc_day + timedelta(days=SLACK_DAYS)
-    if start and start > furthest:
-        raise too_late(name, furthest)
-    if not end or end < furthest:
-        return end_text
-    if start and start >= utc_day:
-        return furthest.isoformat()
-    return "today"
+    start, end = resolve(start_text), resolve(end_text)
+    if start is None or end is None:
+        field = "startDate" if start is None else "endDate"
+        raise BadInput(BAD_DATE.format(name=f"dateRanges {field}"))
+    if start > end:
+        raise BadInput(f"{name} must not be after the end date. The server sent nothing.")
+    latest = newest()
+    if start > latest:
+        raise too_late(name, latest)
+    return start.isoformat(), min(end, latest).isoformat(), end > latest
 
 
 def _window(params: Params) -> dict[str, str]:
     if params.start and params.end:
-        start, end = params.start.isoformat(), params.end.isoformat()
-        return {"startDate": start, "endDate": _newest_end("start_date", start, end)}
-    days = params.last_days or WINDOW_DAYS
-    return {"startDate": f"{days + LAG_DAYS - 1}daysAgo", "endDate": f"{LAG_DAYS}daysAgo"}
+        start, end, _ = _sent_dates("start_date", params.start.isoformat(), params.end.isoformat())
+        return {"startDate": start, "endDate": end}
+    end_day = _last_complete()
+    first = end_day - timedelta(days=(params.last_days or WINDOW_DAYS) - 1)
+    return {"startDate": first.isoformat(), "endDate": end_day.isoformat()}
 
 
 def _days(params: Params) -> int:
@@ -278,47 +252,9 @@ def _zone(reply: dict[str, Any]) -> str:
     return name if isinstance(name, str) else NO_ZONE
 
 
-def _first_partial(end: str, day: date) -> str | None:
-    """The first day that can be partial, in the terms of the end, or None for a complete range.
-
-    A relative end is exact: GA4 reads both in 1 zone. For a YYYY-MM-DD end the property day is
-    U-1 at the earliest, so a day after U-1-3 can be partial in some zone.
-    """
-    ago = days_ago(end)
-    if ago is not None:
-        return f"{LAG_DAYS - 1}daysAgo" if ago < LAG_DAYS else None
-    first = day - timedelta(days=LAG_DAYS)
-    found = iso_day(end)
-    return first.isoformat() if found and found >= first else None
-
-
-def _partial(start: str, end: str, day: date) -> dict[str, str] | None:
-    first = _first_partial(end, day)
-    if first is None:
-        return None
-    start_ago, first_ago = days_ago(start), days_ago(first)
-    if start_ago is not None and first_ago is not None:
-        before = start_ago > first_ago
-    else:
-        begin, other = bounds(start, day), bounds(first, day)
-        before = bool(begin and other and begin[1] < other[0])
-    # A start that can be inside the partial days starts them: more days partial, never fewer.
-    return {"from": first if before else start, "to": end}
-
-
-def _coverage(reply: dict[str, Any], window: Any) -> dict[str, Any] | None:
-    if not isinstance(window, dict):
-        return None
-    start, end = window.get("startDate"), window.get("endDate")
-    day = _google.answer_day()
-    if not (isinstance(start, str) and isinstance(end, str)):
-        return None
-    if not (bounds(start, day) and bounds(end, day)):
-        return None
-    partial = _partial(start, end, day)
-    return _google.described(
-        start, end, LAST_COMPLETE, "estimate", ESTIMATE_HOW, _zone(reply), partial
-    )
+def _coverage(reply: dict[str, Any], window: dict[str, str]) -> dict[str, Any]:
+    start, end = date.fromisoformat(window["startDate"]), date.fromisoformat(window["endDate"])
+    return _google.coverage(start, end, _last_complete(), "estimate", ESTIMATE_HOW, _zone(reply))
 
 
 def _day(row: Any) -> str | None:
@@ -331,10 +267,12 @@ def _day(row: Any) -> str | None:
 async def _first_event(site: Site, prop: str, token: str) -> dict[str, Any]:
     """Give the first day of any event, and how the read went: found, none, or failed.
 
-    The body is fixed, so each range and each GA4 source of 1 call share 1 saved answer.
+    The body changes only with the day, so each range and each GA4 source of 1 call share 1
+    saved answer.
     """
     try:
-        reply = await _post(site, prop, "runReport", FIRST_EVENT, token)
+        span = {"startDate": FIRST_EVENT_FLOOR, "endDate": newest().isoformat()}
+        reply = await _post(site, prop, "runReport", {"dateRanges": [span], **FIRST_EVENT}, token)
     except (net.ApiError, Refused):
         return {"first_data_day": None, "first_data_read": "failed"}
     rows = reply.get("rows") or []
@@ -390,7 +328,7 @@ async def _report(
         name: float(cell["value"]) for name, cell in zip(names, total_cells, strict=False)
     }
     coverage = _coverage(reply, window)
-    partial = coverage["partial_days"] if coverage else None
+    partial = coverage["partial_days"]
     notes = [] if rows else ["GA4 reports no organic sessions in the window."]
     if not rows and not totals:
         # No row on a partial day can mean that GA4 has not processed it yet, so it is no 0.
@@ -401,7 +339,7 @@ async def _report(
     extra: dict[str, Any] = {"page_match": PAGE_MATCH} if params.page else {}
     if _gap_at_start(dimension, rows, params):
         extra |= await _first_event(site, prop, token)
-    if params.end and coverage and window["endDate"] != params.end.isoformat():
+    if params.end and window["endDate"] != params.end.isoformat():
         extra["date_moved"] = moved(params.end, coverage["end_date"])
         notes.append(moved_note(extra["date_moved"]))
     return ok(
@@ -588,11 +526,14 @@ def _flat(reply: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, A
     return [_flat_row(row, dimensions, metrics) for row in rows]
 
 
-def _sent_range(item: Any) -> Any:
+def _sent_range(item: Any) -> tuple[dict[str, Any], bool]:
+    """Give the range with plain dates, and whether its end moved to the newest day."""
     if not isinstance(item, dict):
-        return item
-    end = _newest_end("dateRanges startDate", item.get("startDate"), item.get("endDate"))
-    return {**item, "endDate": end} if "endDate" in item else item
+        raise BadInput("Each of dateRanges must be an object with startDate and endDate.")
+    start, end, cut = _sent_dates(
+        "dateRanges startDate", item.get("startDate"), item.get("endDate")
+    )
+    return {**item, "startDate": start, "endDate": end}, cut
 
 
 def _reader(call: str, paging: bool, limits: bool = True) -> Run:
@@ -601,8 +542,9 @@ def _reader(call: str, paging: bool, limits: bool = True) -> Run:
         body = dict(request)
         asked = request.get("dateRanges")
         ranges = asked if isinstance(asked, list) else []
+        sent = [_sent_range(item) for item in ranges]
         if ranges:
-            body["dateRanges"] = [_sent_range(item) for item in ranges]
+            body["dateRanges"] = [item for item, _ in sent]
         offset = 0
         if limits:
             body["limit"] = row_limit(
@@ -624,11 +566,9 @@ def _reader(call: str, paging: bool, limits: bool = True) -> Run:
         if ranges:
             extra["coverage"] = [_coverage(reply, item) for item in body["dateRanges"]]
             shifts = [
-                moved(item["endDate"], shown["end_date"])
-                for item, sent, shown in zip(
-                    ranges, body["dateRanges"], extra["coverage"], strict=True
-                )
-                if shown and item != sent
+                moved(item["endDate"], went["endDate"])
+                for item, (went, cut) in zip(ranges, sent, strict=True)
+                if cut
             ]
             notes = [moved_note(item) for item in shifts]
             if shifts:
@@ -736,7 +676,8 @@ APIS = {
                 "FULL_REGEXP",
                 "PARTIAL_REGEXP",
             ],
-            "dates": "YYYY-MM-DD, NdaysAgo, yesterday, or today.",
+            "dates": "YYYY-MM-DD, NdaysAgo, yesterday, or today. The server sends each as "
+            "YYYY-MM-DD of its local date, and an end after yesterday goes out as yesterday.",
             "row_limit": "1 to 1000 for each call here. Read more rows with offset.",
         },
         gaps=(

@@ -5,13 +5,14 @@ import json
 import re
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from datetime import UTC, date, datetime
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from seo_mcp import NAME, net, quota, shared, tasks
 from seo_mcp.api import Api, Method, Quota, answer, as_rows, one_of, whole
 from seo_mcp.config import Site
-from seo_mcp.params import BadInput, Params, moved, moved_note, today, too_late
+from seo_mcp.params import BadInput, Params, moved, moved_note, too_late
 from seo_mcp.results import Refused, Unsupported, ok
 
 API = "https://www.clarity.ms/export-data/api/v1/project-live-insights"
@@ -43,6 +44,13 @@ LIMIT_REASON = (
 FEWER_INSIGHTS = "fewer dimensions, a dimension with fewer values, or a smaller numOfDays"
 FEWER_PAGE_DAYS = "a smaller last_days"
 LEDGER = quota.Ledger("clarity-calls", "Clarity project", DAILY_CALLS)
+
+
+def utc_day() -> date:
+    """The Clarity day. Clarity resets its calls at its own day boundary, and the ledger and the
+    cache of quota.py and shared.py count the UTC day, so this day stays UTC. It is not a date
+    rule of Search Console or GA4."""
+    return datetime.now(UTC).date()
 
 
 def cache_path(
@@ -455,7 +463,7 @@ def _check_date(filters: dict[str, Any]) -> tuple[str, str]:
     if start > end:
         raise BadInput("filters.date start must not be after end.")
     # The end of the UTC day, not the time now: a repeat must be the same request, or it spends.
-    latest = f"{today().isoformat()}T23:59:59.999Z"
+    latest = f"{utc_day().isoformat()}T23:59:59.999Z"
     if start > latest:
         raise too_late("filters.date start", latest)
     return start, min(end, latest)

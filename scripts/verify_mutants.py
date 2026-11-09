@@ -382,7 +382,14 @@ DATES: tuple[Mutant, ...] = (
         "src/seo_mcp/providers/gsc.py",
         (("    if start > latest:\n", "    if False:\n"),),
         ("tests/test_coverage.py::test_a_start_past_the_newest_day_is_refused",),
-        "gsc._newest_end sends a start past the UTC date",
+        "gsc._newest_end sends a start past today minus 1",
+    ),
+    Code(
+        "StartAfterEndSendsNothing",
+        "src/seo_mcp/providers/ga4.py",
+        (("    if start > latest:\n", "    if False:\n"),),
+        ("tests/test_plain_dates.py::test_a_start_of_today_or_later_is_refused_with_nothing_sent",),
+        "ga4._sent_dates sends a start past today minus 1 (the D5 case)",
     ),
     Model(
         "FutureEndMovesAndSaysSo",
@@ -390,12 +397,37 @@ DATES: tuple[Mutant, ...] = (
         (("sentEnd' = Min(end, Newest)", "sentEnd' = end"),),
         "an end past the newest day goes out as it is",
     ),
+    Model(
+        "FutureEndMovesAndSaysSo",
+        DATES_MODEL,
+        (("moved' = (end > Newest)", "moved' = FALSE"),),
+        "a moved end gives no date_moved",
+    ),
     Code(
         "FutureEndMovesAndSaysSo",
         "src/seo_mcp/providers/gsc.py",
         (("    return min(end, latest)\n", "    return end\n"),),
-        ("tests/test_coverage.py::test_a_search_console_end_past_today_moves_to_today",),
-        "gsc._newest_end sends an end past the UTC date",
+        ("tests/test_coverage.py::test_a_search_console_end_past_yesterday_moves_to_yesterday",),
+        "gsc._newest_end sends an end past today minus 1",
+    ),
+    Code(
+        "FutureEndMovesAndSaysSo",
+        "src/seo_mcp/params.py",
+        (("NEWEST_LAG_DAYS = 1\n", "NEWEST_LAG_DAYS = 0\n"),),
+        ("tests/test_plain_dates.py::test_an_end_of_today_moves_to_yesterday",),
+        "params.newest gives today, so an end of today goes out",
+    ),
+    Code(
+        "FutureEndMovesAndSaysSo",
+        "src/seo_mcp/providers/ga4.py",
+        (
+            (
+                "    return start.isoformat(), min(end, latest).isoformat(), end > latest\n",
+                "    return start.isoformat(), end.isoformat(), end > latest\n",
+            ),
+        ),
+        ("tests/test_plain_dates.py::test_a_ga4_relative_date_goes_out_as_a_plain_date",),
+        "ga4._sent_dates sends a converted end of today",
     ),
     Model(
         "AppliedShowsTheSentEnd",
@@ -472,8 +504,8 @@ DATES: tuple[Mutant, ...] = (
         "src/seo_mcp/providers/gsc.py",
         (
             (
-                '    return known[0].isoformat() if known[1] == "api" else "estimate"',
-                '    return "estimate"',
+                '    return known[0].isoformat() if known[1] == "api" else f"estimate {today()',
+                '    return f"estimate {today()',
             ),
         ),
         ("tests/test_coverage.py::test_a_saved_report_of_a_partial_day_never_shows_it_complete",),

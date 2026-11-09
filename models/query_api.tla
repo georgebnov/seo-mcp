@@ -9,7 +9,7 @@ Google == {"gsc", "ga4"}
 Discovery == {"catalog", "taskLookup", "recipeRows", "noTask", "fields"}
 Ends == {"catalog", "recipeRows", "noTask", "fields", "inputError", "rows", "apiMessage", "fixedError"}
 \* The dates of the request. "startAfterEndRelative": GA4 only, at least 1 date is relative
-\* (today, yesterday, NdaysAgo), and the start is after the end in every zone.
+\* (today, yesterday, NdaysAgo), and the start is after the end once both are plain dates.
 DateKinds == {"none", "inRange", "futureEnd", "startPastNewest", "startAfterEndIso", "startAfterEndRelative"}
 StartAfterEnd == {"startPastNewest", "startAfterEndIso", "startAfterEndRelative"}
 
@@ -45,16 +45,16 @@ FieldsGood ==
   /\ UNCHANGED <<api, sent, wrote, scrubbed, fromCache, dates, moved, reply, read, covRead>>
 SiteBad == pc = "methodKnown" /\ pc' = "inputError" /\ Keep
 ValueWrong == pc = "siteKnown" /\ pc' = "inputError" /\ Keep
-\* params.period, gsc._newest_end, ga4._newest_end, clarity._check_date: 2 YYYY-MM-DD dates in the
+\* params.period, gsc._newest_end, ga4._sent_dates, clarity._check_date: 2 YYYY-MM-DD dates in the
 \* wrong order, or a start past the newest day, raise BadInput before the token and the request.
-\* ga4._check_order: a GA4 start that is after the end in every zone, with a relative date, too.
+\* ga4._sent_dates turns a relative GA4 date into a plain date of params.today first.
 DatesRefused ==
   /\ pc = "siteKnown" /\ dates' \in StartAfterEnd
   /\ (dates' = "startAfterEndRelative" => api = "ga4")
   /\ pc' = "inputError"
   /\ UNCHANGED <<api, sent, wrote, scrubbed, saved, fromCache, moved, reply, read, covRead>>
-\* A range that is valid in some zone goes out. A future end goes out as the newest day, and the
-\* result has date_moved.
+\* A valid range goes out as plain dates. A future end goes out as the newest day (today minus 1
+\* for Search Console and GA4), and the result has date_moved.
 DatesPass ==
   /\ pc = "siteKnown"
   /\ dates' \in {"none", "inRange", "futureEnd"}

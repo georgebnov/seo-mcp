@@ -2,14 +2,13 @@
 
 import json
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from google.auth import crypt, jwt
 
 from seo_mcp import net, secrets, shared
 from seo_mcp.config import Site
-from seo_mcp.params import today
 from seo_mcp.results import NotConnected
 
 OAUTH_URL = "https://oauth2.googleapis.com/token"
@@ -25,16 +24,6 @@ REFRESH_MARGIN_SECONDS = 60
 UNKNOWN_REASON = "No day of the range is complete, so the total is unknown."
 
 _tokens: dict[tuple[str, str], tuple[str, float]] = {}
-
-
-def answer_day() -> date:
-    """The day rule at the time of the oldest answer of this source.
-
-    A saved answer keeps the days of its own call. With several answers, the oldest gives the
-    earlier day, so an estimate marks more days partial, never fewer.
-    """
-    at = shared.shown().get("cached_at")
-    return today(datetime.fromisoformat(at) if at else None)
 
 
 def described(
