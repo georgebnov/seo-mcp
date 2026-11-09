@@ -539,5 +539,5 @@ def test_the_server_needs_no_timezone_data():
     for file in (Path(__file__).parent.parent / "src").rglob("*.py"):
         assert "zoneinfo" not in file.read_text(), (
             f"{file.name}: a host with no timezone data cannot start the server. The server "
-            "works in days: send a relative date, or use params.today()."
+            "works in plain dates: use params.today()."
         )

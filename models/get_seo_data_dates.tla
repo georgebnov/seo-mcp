@@ -2,8 +2,8 @@
 \* 1 dated source of get_seo_data (search_queries of Search Console, or ga4_organic):
 \* params.parse, gsc._report or ga4._report, shared.once, and the coverage of _google.
 \* A day is a number. Last is the last complete day of the API now, and Newest is the newest day
-\* that the server allows (Search Console: the UTC date; GA4: the UTC date plus 1, sent as today).
-\* The model does not hold the zone of a GA4 property: the server reads none.
+\* that the server allows: params.newest, today minus 1, for both sources. Today is the local date
+\* of the machine, read 1 time for each call (params.one_day). No hour and no zone take part.
 \* The range is 1 side of a date comparison. First is the first day of data of the property:
 \* GA4 or Search Console collected nothing before it. The other side has data on each day.
 EXTENDS Naturals
@@ -34,14 +34,13 @@ Same == UNCHANGED <<prov, start, end, sentEnd, moved, cov, fetchedLast, shownLas
 \* params.period: start_date after end_date is BadInput for every source, before any source runs.
 DatesBackwards == pc = "named" /\ start > end /\ pc' = "paramError" /\ Same
 DatesInOrder == pc = "named" /\ start <= end /\ pc' = "checked" /\ Same
-\* gsc._newest_end, ga4._newest_end: a start past the newest day raises too_late before the token.
+\* gsc._newest_end, ga4._sent_dates: a start past the newest day raises too_late before the token.
 StartTooLate == pc = "checked" /\ start > Newest /\ pc' = "tooLate" /\ Same
 \* An end past the newest day goes out as the newest day, and the result gets date_moved.
-\* ga4._newest_end sends an end on the newest day as today when the start is before the UTC date
-\* (Newest - 1), so that end also gets date_moved.
+\* GA4 gets plain dates too (ga4._sent_dates), so both sources move the same way.
 EndSet ==
   /\ pc = "checked" /\ start <= Newest /\ pc' = "endSet"
-  /\ sentEnd' = Min(end, Newest) /\ moved' = (end > Newest \/ (prov = "ga4" /\ end = Newest /\ start + 1 < Newest))
+  /\ sentEnd' = Min(end, Newest) /\ moved' = (end > Newest)
   /\ UNCHANGED <<prov, start, end, cov, fetchedLast, shownLast, reply, status, totals, partial, sent>>
   /\ UNCHANGED Gate
 \* gsc._last_complete: the coverage read (its own saved entry, 5 minutes) gives
@@ -50,8 +49,8 @@ CoverageFromApi ==
   /\ pc = "endSet" /\ prov = "gsc" /\ pc' = "covered" /\ cov' = "api" /\ shownLast' = Last
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, fetchedLast, reply, status, totals, partial, sent>>
   /\ UNCHANGED Gate
-\* The coverage read fails or has no value (Search Console), or the source is GA4 (3daysAgo):
-\* an estimate, which the code takes again from the day of the oldest answer (answer_day).
+\* The coverage read fails or has no value (Search Console: Newest - 3), or the source is GA4
+\* (today - 3): an estimate from today (gsc._estimate, ga4._last_complete).
 CoverageEstimate ==
   /\ pc = "endSet" /\ pc' = "covered" /\ cov' = "estimate"
   /\ UNCHANGED <<prov, start, end, sentEnd, moved, fetchedLast, shownLast, reply, status, totals, partial, sent>>
@@ -63,8 +62,9 @@ SendReport ==
   /\ UNCHANGED Gate
 \* shared.once: a saved answer of the same body. Another source or agent read the coverage first,
 \* so the 2 entries end at different times. With an API day, that day is in the key of the report
-\* (gsc._report basis), so a saved answer has the day of the coverage. With an estimate, it can
-\* be from before the API moved its last complete day.
+\* (gsc._report basis), so a saved answer has the day of the coverage. With an estimate, today is
+\* in the key (gsc._basis, ga4._post), so a saved answer is of the same day, but it can be from
+\* before the API moved its last complete day.
 SavedReport ==
   /\ pc = "covered" /\ pc' = "answered"
   /\ fetchedLast' = IF cov = "api" THEN shownLast ELSE Last - 1

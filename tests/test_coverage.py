@@ -459,18 +459,19 @@ async def test_a_saved_search_console_estimate_serves_only_on_its_own_day(
 
 async def test_a_saved_report_of_a_partial_day_never_shows_it_complete(live, fake_net, monkeypatch):
     t0 = datetime(2026, 3, 18, 20, 0, tzinfo=UTC)
-    named = {"start_date": "2026-03-10", "end_date": "2026-03-18"}
+    # The range ends after both API days, so both reports send dataState all: only the key differs.
+    named = {"start_date": "2026-03-10", "end_date": NEWEST}
     freeze(monkeypatch, t0)
-    search_console(fake_net, "2026-03-17", days=["2026-03-17"])
+    search_console(fake_net, "2026-03-16", days=["2026-03-16"])
     await source("search_pages")
     freeze(monkeypatch, t0 + timedelta(seconds=200))
     first = await source("search_queries", **named)
-    assert first["coverage"]["partial_days"]["from"] == "2026-03-17"
+    assert first["coverage"]["partial_days"]["from"] == "2026-03-16"
     # Google moves its day: the coverage entry ends at t0+300 s, and the report entry is still good.
     freeze(monkeypatch, t0 + timedelta(seconds=350))
-    calls = search_console(fake_net, "2026-03-18", days=["2026-03-17"])
+    calls = search_console(fake_net, "2026-03-17", days=["2026-03-16"])
     second = await source("search_queries", **named)
-    assert second["coverage"]["last_complete_day"] == "2026-03-17"
+    assert second["coverage"]["last_complete_day"] == "2026-03-16"
     assert len(reports(calls)) == 2, "Rows of a partial day must not serve as complete."
     assert second["from_cache"] is False
 
