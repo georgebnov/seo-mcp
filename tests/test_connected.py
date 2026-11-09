@@ -268,6 +268,14 @@ def test_only_the_gated_registry_reaches_a_provider():
     )
 
 
+def test_a_missing_file_with_json_key_first_names_the_file(live):
+    """A reference can list json_key before file. The reason still names the file."""
+    missing = {"json_key": "key", "file": "/no/such/key.json"}
+    edit(lambda body, entry: body["secrets"].update(bing_api_key=missing))
+    (row,) = core.list_sites()["rows"]
+    assert row["missing"]["bing"] == ["the file that bing_api_key names does not exist"]
+
+
 def test_a_site_with_all_names_is_connected(write_config, monkeypatch):
     monkeypatch.setenv("CLARITY_ENV", "x")
     write_config(SITE, {"bing_api_key": {"env": "CLARITY_ENV"}})

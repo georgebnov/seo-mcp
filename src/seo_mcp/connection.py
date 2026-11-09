@@ -112,7 +112,8 @@ def gaps(site: Site, provider: str) -> list[Gap]:
             continue
         there = found(site, source)
         if not there:
-            kind = next(iter(source))
+            # A file reference can also hold json_key, in any order.
+            kind = next(kind for kind in PLACES if kind in source)
             result.append(Gap(NOT_FOUND if there is False else NOT_CHECKED, name, kind))
     return result
 
