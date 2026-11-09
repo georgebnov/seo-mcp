@@ -8,7 +8,13 @@ A read-only stdio MCP server. Python, uv, ruff, mypy, pytest. Run `just check` b
 - Results, errors, and logs never hold a secret. A reason is fixed text, never exception text or an upstream body. 1 exception: on HTTP 400, `query_api` shows the `error.message` field of a Google API. `net.request(explain=True)` asks for it. The text is scrubbed, then cut.
 - Scrub first, then cut text.
 - The repo holds no private data: no real site, property id, home path, or key. `scripts/private_scan.py` checks files and git history.
-- Tests mock only the network edge (`net.transport`).
+- Tests fake only the network edge (`net.transport`). A test can also set these inputs, and nothing else:
+  - The clock: `params._clock`, and `datetime` in a module, replaced by a `datetime` subclass in the test file that overrides only `now()`.
+  - The environment and the working folder: `monkeypatch.setenv`, `delenv`, and `chdir`. The config file and the cache folder come from env vars.
+  - The standard input: `sys.stdin`.
+  - The time and size limits: `core.SOURCE_TIMEOUT_SECONDS`, `quota.LOCK_WAIT_SECONDS`, and `shared.PRUNE_BATCH`.
+  - The import of a real script of `scripts/`: `sys.path` and `sys.modules`. A test can empty `_google._tokens`.
+  - `tests/test_fakes.py` fails on each other fake. A new input goes on its `ALLOWED` list and on this list.
 - Keep it small. One file for each provider: `pagespeed.py` holds PageSpeed and the Chrome UX Report, and `_google.py` holds the shared Google sign-in. Add no dependency: use the standard library or a dependency that `pyproject.toml` already has.
 - The server has 3 tools: `list_sites`, `get_seo_data`, and `query_api`. `tests/test_stdio.py` pins them. Do not add a tool: add a source, or add a method to `APIS` for `query_api`.
 - Setup is a terminal command, `seo-mcp setup`, that the user runs. It is not an MCP tool.
