@@ -38,6 +38,12 @@ MISS_REASON = (
     f"Clarity has no row for this page. An answer has at most {API_ROWS} rows for each metric, "
     "so this is not proof of zero traffic."
 )
+LIMIT_REASON = (
+    f"The Clarity docs limit an answer to {API_ROWS:,} rows with no paging, and Clarity gave "
+    "{rows:,} rows for this request, so it can have more rows. The docs do not say if the limit "
+    "counts each metric or the whole answer. The API has no URL or row filter. To read fewer "
+    "rows, ask fewer dimensions, a dimension with fewer values, or a smaller numOfDays."
+)
 LEDGER = quota.Ledger("clarity-calls", "Clarity project", DAILY_CALLS)
 
 
@@ -413,7 +419,11 @@ async def _live_insights(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     days = whole("numOfDays", request["numOfDays"], 1, WINDOW_DAYS)
     metrics = await _insights(site, days, _dimensions(request))
     rows = [row for metric in metrics for row in _rows(metric)]
-    return answer(rows, more_rows="no", applied=request)
+    # The docs do not say if the limit counts each metric or the whole answer. The sum covers both.
+    full = len(rows) >= API_ROWS
+    more = "possible" if full else "no"
+    reason = LIMIT_REASON.format(rows=len(rows)) if full else None
+    return answer(rows, more_rows=more, reason=reason, applied=request)
 
 
 def _check_date(filters: dict[str, Any]) -> tuple[str, str]:

@@ -1,5 +1,6 @@
 """The full path: query_api sends 1 official read query and keeps the server read-only."""
 
+import ast
 import asyncio
 import fcntl
 import json
@@ -763,6 +764,71 @@ async def test_a_dashboard_answer_with_no_top_list_has_all_rows(live, fake_net):
     data = await ask("clarity", "dashboard_query", {"query": "q"})
     assert data["more_rows"] == "no"
     assert data["reason"] is None
+
+
+def insight_rows(metric: str, count: int) -> dict[str, object]:
+    pages = [
+        {"totalSessionCount": "1", "Url": f"https://www.example.com/{n}"} for n in range(count)
+    ]
+    return {"metricName": metric, "information": pages}
+
+
+@pytest.mark.parametrize(
+    "metrics",
+    [
+        [insight_rows("Traffic", clarity.API_ROWS)],
+        [insight_rows("Traffic", 600), insight_rows("Dead Click Count", 400)],
+    ],
+    ids=["1 metric at the limit", "2 metrics at the limit together"],
+)
+async def test_live_insights_at_the_row_limit_can_hide_rows(live, fake_net, metrics):
+    fake_net(lambda _: httpx2.Response(200, json=metrics))
+    data = await ask("clarity", "live_insights", {"numOfDays": 3, "dimension1": "URL"})
+    assert data["rows_returned"] == clarity.API_ROWS
+    assert data["more_rows"] == "possible"
+    assert "1,000 rows" in data["reason"]
+    assert "Clarity gave 1,000 rows" in data["reason"]
+    assert "numOfDays" in data["reason"]
+
+
+async def test_live_insights_below_the_row_limit_has_all_rows(live, fake_net):
+    metrics = [insight_rows("Traffic", clarity.API_ROWS - 1)]
+    fake_net(lambda _: httpx2.Response(200, json=metrics))
+    data = await ask("clarity", "live_insights", {"numOfDays": 3, "dimension1": "URL"})
+    assert data["more_rows"] == "no"
+    assert data["reason"] is None
+
+
+CLARITY_SOURCE = Path(clarity.__file__)
+
+
+def fixed_no_with_rows(source: str) -> list[int]:
+    """Give the lines of answer calls with a fixed more_rows "no" and rows that are not []."""
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call) and ast.unparse(node.func) == "answer"):
+            continue
+        fixed = {k.arg: k.value for k in node.keywords}.get("more_rows")
+        empty = bool(node.args) and ast.unparse(node.args[0]) == "[]"
+        if isinstance(fixed, ast.Constant) and fixed.value == "no" and not empty:
+            lines.append(node.lineno)
+    return lines
+
+
+# Each Clarity API cuts an answer, and none gives a total, so no row answer says "no" blindly.
+def test_no_clarity_answer_with_rows_has_a_fixed_more_rows_no():
+    lines = fixed_no_with_rows(CLARITY_SOURCE.read_text(encoding="utf-8"))
+    assert not lines, (
+        f"{CLARITY_SOURCE.name} lines {lines}: an answer with rows has more_rows='no' as fixed "
+        "text. Compute more_rows from the row limit of that Clarity API, as _live_insights and "
+        "_dashboard_query do, and give a reason when it is 'possible'."
+    )
+
+
+def test_the_more_rows_scan_finds_a_fixed_no():
+    assert fixed_no_with_rows('answer(rows, more_rows="no")') == [1]
+    assert fixed_no_with_rows('answer([], more_rows="no")') == []
+    assert fixed_no_with_rows("answer(rows, more_rows=more)") == []
 
 
 async def test_a_removed_method_is_unknown_and_spends_nothing(live):
