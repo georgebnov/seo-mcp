@@ -25,6 +25,8 @@ class Site:
     repo_path: Path
     fields: dict[str, str] = field(default_factory=dict)
     secrets: dict[str, dict[str, str]] = field(default_factory=dict)
+    # connection.found fills it: a site loads again for each tool call, so each call probes again.
+    probes: dict[str, bool | None] = field(default_factory=dict, compare=False, repr=False)
 
     def field(self, name: str) -> str:
         if name not in self.fields:
