@@ -10,8 +10,8 @@
 EXTENDS Naturals
 CONSTANT Limit
 \* failed is the file of the failure. hadFailure is what happened, with or without that file.
-VARIABLES key, pc, lock, cache, blocked, count, sent, firstOk, sentAfterBlock, failed, hadFailure, spentInWindow
-vars == <<key, pc, lock, cache, blocked, count, sent, firstOk, sentAfterBlock, failed, hadFailure, spentInWindow>>
+VARIABLES key, pc, lock, cache, blocked, count, sent, firstOk, spentAfterBlock, failed, hadFailure, spentInWindow
+vars == <<key, pc, lock, cache, blocked, count, sent, firstOk, spentAfterBlock, failed, hadFailure, spentInWindow>>
 Callers == {1, 2}
 Keys == {"A", "B"}
 Ends == {"hit", "answered", "refused", "failed", "notSent", "repeated", "dayBlocked", "timedOut"}
@@ -25,7 +25,7 @@ Init ==
   /\ pc = [c \in Callers |-> "waiting"]
   /\ lock = [k \in Keys |-> 0] /\ cache = [k \in Keys |-> "cold"] /\ blocked = FALSE
   /\ count = 0 /\ sent = [k \in Keys |-> 0] /\ firstOk = [k \in Keys |-> FALSE]
-  /\ sentAfterBlock = FALSE
+  /\ spentAfterBlock = FALSE
   /\ failed = [k \in Keys |-> FALSE] /\ hadFailure = [k \in Keys |-> FALSE]
   /\ spentInWindow = FALSE
 
@@ -35,19 +35,19 @@ TakeLockHit(c) ==
   LET s == Slot(c) IN
   /\ pc[c] = "waiting" /\ lock[s] = 0 /\ cache[s] = "saved"
   /\ pc' = [pc EXCEPT ![c] = "hit"]
-  /\ UNCHANGED <<lock, cache, blocked, count, sent, firstOk, sentAfterBlock>> /\ Keep
+  /\ UNCHANGED <<lock, cache, blocked, count, sent, firstOk, spentAfterBlock>> /\ Keep
 \* shared._recent_failure: the file of the failure is under the window, so nothing is spent.
 TakeLockRepeat(c) ==
   LET s == Slot(c) IN
   /\ pc[c] = "waiting" /\ lock[s] = 0 /\ cache[s] = "cold" /\ failed[s]
   /\ pc' = [pc EXCEPT ![c] = "repeated"]
-  /\ UNCHANGED <<lock, cache, blocked, count, sent, firstOk, sentAfterBlock>> /\ Keep
+  /\ UNCHANGED <<lock, cache, blocked, count, sent, firstOk, spentAfterBlock>> /\ Keep
 TakeLockRefused(c) ==
   LET s == Slot(c) IN
   /\ pc[c] = "waiting" /\ lock[s] = 0 /\ cache[s] = "cold" /\ ~failed[s]
   /\ (blocked \/ count + 1 > Limit)
   /\ pc' = [pc EXCEPT ![c] = "refused"]
-  /\ UNCHANGED <<lock, cache, blocked, count, sent, firstOk, sentAfterBlock>> /\ Keep
+  /\ UNCHANGED <<lock, cache, blocked, count, sent, firstOk, spentAfterBlock>> /\ Keep
 \* shared.once: prepare runs quota.spend under the lock of the slot, so 1 call is reserved.
 TakeLockSpend(c) ==
   LET s == Slot(c) IN
@@ -56,15 +56,16 @@ TakeLockSpend(c) ==
   /\ pc' = [pc EXCEPT ![c] = "spent"]
   /\ lock' = [lock EXCEPT ![s] = c] /\ count' = count + 1
   /\ spentInWindow' = (spentInWindow \/ hadFailure[s])
-  /\ UNCHANGED <<key, cache, blocked, sent, firstOk, sentAfterBlock, failed, hadFailure>>
-\* shared.once: send runs net.request, and the request goes out.
+  /\ spentAfterBlock' = (spentAfterBlock \/ blocked)
+  /\ UNCHANGED <<key, cache, blocked, sent, firstOk, failed, hadFailure>>
+\* shared.once: send runs net.request, and the request goes out. A call that spent before
+\* the 429 of another path still goes out after quota.block, and gets the error of the API.
 Send(c) ==
   LET s == Slot(c) IN
   /\ pc[c] = "spent"
   /\ pc' = [pc EXCEPT ![c] = "flight"]
   /\ sent' = [sent EXCEPT ![s] = @ + 1]
-  /\ sentAfterBlock' = (sentAfterBlock \/ blocked)
-  /\ UNCHANGED <<lock, cache, blocked, count, firstOk>> /\ Keep
+  /\ UNCHANGED <<lock, cache, blocked, count, firstOk, spentAfterBlock>> /\ Keep
 \* The connection did not open: the call counts, no request went out, and the failure is kept.
 NotSent(c) ==
   LET s == Slot(c) IN
@@ -72,25 +73,25 @@ NotSent(c) ==
   /\ pc' = [pc EXCEPT ![c] = "notSent"]
   /\ lock' = [lock EXCEPT ![s] = 0]
   /\ failed' = [failed EXCEPT ![s] = TRUE] /\ hadFailure' = [hadFailure EXCEPT ![s] = TRUE]
-  /\ UNCHANGED <<key, cache, blocked, count, sent, firstOk, sentAfterBlock, spentInWindow>>
+  /\ UNCHANGED <<key, cache, blocked, count, sent, firstOk, spentAfterBlock, spentInWindow>>
 WaitTimesOut(c) ==
   /\ pc[c] = "waiting"
   /\ pc' = [pc EXCEPT ![c] = "timedOut"]
-  /\ UNCHANGED <<lock, cache, blocked, count, sent, firstOk, sentAfterBlock>> /\ Keep
+  /\ UNCHANGED <<lock, cache, blocked, count, sent, firstOk, spentAfterBlock>> /\ Keep
 Answer(c) ==
   LET s == Slot(c) IN
   /\ pc[c] = "flight"
   /\ pc' = [pc EXCEPT ![c] = "answered"]
   /\ lock' = [lock EXCEPT ![s] = 0] /\ cache' = [cache EXCEPT ![s] = "saved"]
   /\ firstOk' = [firstOk EXCEPT ![s] = (sent[s] = 1)]
-  /\ UNCHANGED <<blocked, count, sent, sentAfterBlock>> /\ Keep
+  /\ UNCHANGED <<blocked, count, sent, spentAfterBlock>> /\ Keep
 Fails(c) ==
   LET s == Slot(c) IN
   /\ pc[c] = "flight"
   /\ pc' = [pc EXCEPT ![c] = "failed"]
   /\ lock' = [lock EXCEPT ![s] = 0]
   /\ failed' = [failed EXCEPT ![s] = TRUE] /\ hadFailure' = [hadFailure EXCEPT ![s] = TRUE]
-  /\ UNCHANGED <<key, cache, blocked, count, sent, firstOk, sentAfterBlock, spentInWindow>>
+  /\ UNCHANGED <<key, cache, blocked, count, sent, firstOk, spentAfterBlock, spentInWindow>>
 \* The 429 blocks the day of the ledger, so it blocks both keys.
 Limit429(c) ==
   LET s == Slot(c) IN
@@ -98,7 +99,7 @@ Limit429(c) ==
   /\ pc' = [pc EXCEPT ![c] = "dayBlocked"]
   /\ lock' = [lock EXCEPT ![s] = 0] /\ blocked' = TRUE
   /\ failed' = [failed EXCEPT ![s] = TRUE] /\ hadFailure' = [hadFailure EXCEPT ![s] = TRUE]
-  /\ UNCHANGED <<key, cache, count, sent, firstOk, sentAfterBlock, spentInWindow>>
+  /\ UNCHANGED <<key, cache, count, sent, firstOk, spentAfterBlock, spentInWindow>>
 
 Done == (\A c \in Callers: pc[c] \in Ends) /\ UNCHANGED vars
 
@@ -120,8 +121,9 @@ FirstAnswerIsShared == \A k \in Keys: firstOk[k] => sent[k] = 1
 CountNeverBelowRequestsSent == count >= Sent
 \* The server never sends a metered call past the limit, with any number of keys.
 NeverPastTheLimit == Sent <= Limit
-\* After the daily limit answer, no caller sends again on that day.
-NoSendAfterTheLimitAnswer == ~sentAfterBlock
+\* After the daily limit answer, quota.spend refuses each new spend on that day. A call that
+\* spent before the answer can still go out and get the error of the API, and that is accepted.
+NoSpendAfterTheLimitAnswer == ~spentAfterBlock
 \* A repeat of a failed request inside the window spends nothing, also after a connection failure.
 RepeatInWindowSpendsNothing == ~spentInWindow
 \* A saved answer or a failure serves only a caller of the key that made it.
