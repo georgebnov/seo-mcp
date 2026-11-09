@@ -429,8 +429,11 @@ async def test_all_sources_refused_gives_a_top_status_of_unsupported(live):
 async def test_refused_and_not_connected_gives_not_connected(write_config, fake_net):
     write_config()
     fake_net(answer)
-    data = await ask(["sitemaps", "search_pages"], query="shoes", last_days=7)
-    assert data["sources"]["sitemaps"]["status"] == "unsupported"
+    # PageSpeed needs no field and no key, so it is connected and refuses the query. Search
+    # Console is not connected, and that comes before its parameters.
+    data = await ask(["page_speed", "search_pages"], query="shoes", last_days=7)
+    assert data["sources"]["page_speed"]["status"] == "unsupported"
+    assert data["sources"]["search_pages"]["status"] == "not_connected"
     assert data["status"] == "not_connected"
 
 

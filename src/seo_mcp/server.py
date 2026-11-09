@@ -1,5 +1,6 @@
 """The stdio server. Claude Code starts it for each session."""
 
+import asyncio
 import logging
 import sys
 from typing import Any
@@ -20,13 +21,19 @@ server = MCPServer(
 
 
 @server.tool(annotations=READ_ONLY)
-def list_sites() -> dict[str, Any]:
+async def list_sites() -> dict[str, Any]:
     """List the sites in the sites file, what each one has connected, and its quota.
 
+    connected shows true or false for each provider. A site is connected to a provider only when
+    the sites file has each field of the provider and each secret reference names an env, a file,
+    or a Keychain item that exists. missing says what each false provider lacks. The server
+    never calls a provider that is false for the site: its sources and methods give status
+    not_connected with the reason, send nothing, and spend no quota.
     quota shows, for each connected API, the used count, the limit, and what is left. It makes
     no network call and spends no quota, so read it before an expensive call.
     """
-    return core.list_sites()
+    # The check can run `security` to find a Keychain name, so it runs off the event loop.
+    return await asyncio.to_thread(core.list_sites)
 
 
 # George: an agent read a lower position, or a position delta, as good or bad. Both tools that

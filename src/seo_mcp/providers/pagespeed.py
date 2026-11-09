@@ -126,6 +126,7 @@ async def chrome_field_data(site: Site, params: Params) -> dict[str, Any]:
 
 SOURCES = {"page_speed": page_speed, "chrome_field_data": chrome_field_data}
 ACCEPTS = {name: frozenset({"page"}) for name in SOURCES}
+PROVIDER_OF = {"page_speed": "pagespeed", "chrome_field_data": "crux"}
 
 STRATEGIES = ("MOBILE", "DESKTOP")
 PSI_CATEGORIES = ("ACCESSIBILITY", "BEST_PRACTICES", "PERFORMANCE", "SEO")
@@ -265,7 +266,6 @@ APIS = {
                 "150 queries each minute for each Google Cloud project. The docs state no "
                 "daily limit, so the server keeps no daily count.",
             ),
-            frozenset({"google_api_key"}),
         ),
         methods={
             "record": Method(

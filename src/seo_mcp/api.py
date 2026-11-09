@@ -25,7 +25,6 @@ class Method(NamedTuple):
 class Quota(NamedTuple):
     docs: str
     limits: tuple[str, ...]
-    needs: frozenset[str] = NO_FIELDS
     now: Callable[[Site], dict[str, Any]] | None = None
 
 

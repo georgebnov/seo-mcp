@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 from typing import NamedTuple
 
@@ -26,6 +27,7 @@ NOT_CHECKED = "not checked"
 ORDER = (MISSING_FIELD, MISSING_REFERENCE, NOT_FOUND, NOT_CHECKED)
 KEYCHAIN_TIMEOUT_SECONDS = 10
 KEYCHAIN_NO_ITEM = 44
+_probing = threading.Lock()
 
 
 class Needs(NamedTuple):
@@ -88,11 +90,15 @@ def _probe(source: dict[str, str]) -> bool | None:
 
 
 def found(site: Site, source: dict[str, str]) -> bool | None:
-    """True, False, or None (not checked). 1 site object is 1 tool call: it probes each once."""
+    """True, False, or None (not checked). 1 site object is 1 tool call: it probes each once.
+
+    The sources of 1 call check in parallel threads, so the lock lets 1 thread probe a name.
+    """
     key = json.dumps(source, sort_keys=True)
-    if key not in site.probes:
-        site.probes[key] = _probe(source)
-    return site.probes[key]
+    with _probing:
+        if key not in site.probes:
+            site.probes[key] = _probe(source)
+        return site.probes[key]
 
 
 def gaps(site: Site, provider: str) -> list[Gap]:
