@@ -148,6 +148,14 @@ def test_a_relative_repo_path_is_stored_in_full(sites_file, tmp_path, monkeypatc
     assert list(json.loads(sites_file.read_text())["sites"]) == [str(repo.resolve())]
 
 
+def test_a_kept_relative_repo_path_stays_as_it_is(sites_file, monkeypatch, capsys):
+    sites_file.parent.mkdir()
+    sites_file.write_text(json.dumps({"sites": {"code/one": {"host": "one.example.com"}}}))
+    stdin = answers("one.example.com", "", "", "12345678", "", "", *SKIP_SECRETS, "y")
+    run(monkeypatch, capsys, stdin)
+    assert list(json.loads(sites_file.read_text())["sites"]) == ["code/one"]
+
+
 def test_the_examples_file_still_loads(sites_file, monkeypatch, capsys):
     example = ROOT / "examples" / "sites.json"
     original = example.read_bytes()
