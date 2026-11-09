@@ -43,9 +43,11 @@ OLD_DATA = (
 )
 RECORDING_AGE = (
     f"Clarity keeps recordings for {RECORDING_DAYS} days ({RETENTION_DOCS}), so the window "
-    f"is at most {RECORDING_DAYS} days. Empty rows do not prove zero activity. After a change "
-    "to the site, ask the task again with start_date set to the day of the change: then both "
-    "steps show only the site of today."
+    f"is at most {RECORDING_DAYS} days. Empty rows do not prove zero activity. Set start_date "
+    "only when the layout or the elements of the studied page changed, such as a moved button "
+    "or a new form. New content on other pages, such as a new blog post, does not reset the "
+    "window. After such a change, ask the task again with start_date set to that day: then "
+    "both steps show only the new design of the page."
 )
 OTHER_HOSTS = (
     "Rows can hold other hosts, such as localhost, when the tag ran there. Keep only the "
@@ -564,7 +566,7 @@ def _row(name: str, recipe: Recipe, site: str, marks: dict[str, str]) -> dict[st
 def build(
     name: str, site: str, api: str, today: date | None = None, start: date | None = None
 ) -> dict[str, Any]:
-    """start is the first day that the agent wants, such as the day of a change to the site."""
+    """start is the first day that the agent wants, such as the day of a new page design."""
     task = TASKS[name]
     marks, window = _marks(name, task, today or params.today(), start)
     recipes = [recipe for recipe in task.recipes if api in ("", recipe.api)]

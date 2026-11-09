@@ -1,6 +1,7 @@
 """An agent asks for a thing by name and gets the call. Each call here runs for real."""
 
 import json
+import re
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -503,3 +504,38 @@ async def test_a_partial_day_window_still_sends_the_sample(live, fake_net):
     sample = await core.query_api(**args)
     assert sample["status"] == "ok"
     assert clarity_paths(calls)[-1] == "/mcp/recordings/sample"
+
+
+# The site gets new content each day, such as a blog post. A reset of the window on each change
+# leaves too few days to show a click, so only a change to the design of the studied page counts.
+DESIGN_CHANGE = (
+    "Set start_date only when the layout or the elements of the studied page changed, such as a "
+    "moved button or a new form. New content on other pages, such as a new blog post, does not "
+    "reset the window."
+)
+# Text that tells an agent to reset the window on any change to the site.
+ANY_CHANGE = re.compile(r"change to the site|day of the (last )?change\b", re.IGNORECASE)
+
+
+def flat(text: str) -> str:
+    """Joins the parts of a split Python string and the lines of a paragraph."""
+    return " ".join(re.sub(r'"\s*\n\s*f?"', "", text).split())
+
+
+async def test_a_click_task_resets_its_window_only_after_a_design_change():
+    for name, _ in sampled_recipes():
+        data = await core.query_api(task=name)
+        limits = data["rows"][0]["limits"]
+        assert any(DESIGN_CHANGE in limit for limit in limits), name
+    assert DESIGN_CHANGE in flat(server.QUERY_API)
+
+
+def test_no_text_resets_the_window_on_any_change_to_the_site():
+    root = README.parent
+    files = [README, root / "CHANGELOG.md", *sorted((root / "src").rglob("*.py"))]
+    for path in files:
+        found = ANY_CHANGE.search(flat(path.read_text()))
+        assert not found, (
+            f"{path.relative_to(root)} says {found.group(0)!r}: an agent resets start_date only "
+            "after a design change of the studied page. Use the text of DESIGN_CHANGE."
+        )
