@@ -267,6 +267,18 @@ async def _first_data(site: Site, headers: dict[str, str]) -> dict[str, Any]:
     return {"first_data_day": min(known).isoformat(), "first_data_read": "found"}
 
 
+def _basis(known: Known) -> str:
+    """A saved report serves only under the API day that it was fetched with: else a day that
+    was partial in its rows can show as complete. An estimate is taken again from the day of
+    the answer (_shown), so it needs no day in the key."""
+    return known[0].isoformat() if known[1] == "api" else "estimate"
+
+
+def _shown(known: Known, how: str = ESTIMATE_HOW) -> Known:
+    """A saved report keeps the estimate of its own call, also after midnight."""
+    return known if known[1] == "api" else (*_estimate(_google.answer_day())[:2], how)
+
+
 def _coverage(window: dict[str, str], known: Known, state: str) -> dict[str, Any]:
     start, end = date.fromisoformat(window["start"]), date.fromisoformat(window["end"])
     return _google.coverage(start, end, *known, ZONE, data_state=state)
@@ -327,18 +339,12 @@ async def _report(
     known = await _last_complete(site, headers)
     window = named or _default(params, known[0])
     state = _state(window, known[0])
-    # A saved report serves only under the API day that it was fetched with: else a day that
-    # was partial in its rows can show as complete. An estimate is taken again from the day of
-    # the answer below, so it needs no day in the key.
-    basis = known[0].isoformat() if known[1] == "api" else "estimate"
+    basis = _basis(known)
     rows, totals = await asyncio.gather(
         _rows(site, dimensions, headers, window, params, state, basis),
         _rows(site, [], headers, window, params, state, basis),
     )
-    if known[1] == "estimate":
-        # A saved report keeps the estimate of its own call, also after midnight.
-        known = _estimate(_google.answer_day())
-    coverage = _coverage(window, known, state)
+    coverage = _coverage(window, _shown(known), state)
     # No row on a partial day can mean that Google has not counted it yet, so it is no 0.
     unknown = not totals and window["start"] > coverage["last_complete_day"]
     total = None if unknown else totals[0] if totals else {"clicks": 0, "impressions": 0}
@@ -554,11 +560,14 @@ async def _search_analytics(site: Site, request: dict[str, Any]) -> dict[str, An
     limit = row_limit("rowLimit", request.get("rowLimit"), "startRow")
     sent = _newest_end("startDate", start, end) if start and end else end
     body = {**request, "rowLimit": limit, "endDate": str(sent)}
-    reply = await _analytics(site, body, await _headers(site), explain=True)
+    headers = await _headers(site)
+    # The coverage read of get_seo_data, so that the 2 tools give the same days the same answer.
+    shared_read = await _last_complete(site, headers)
+    reply = await _analytics(site, body, headers, explain=True, basis=_basis(shared_read))
     rows = _flat(body, reply)
-    # 1 method sends 1 query, so the value comes only from this reply.
+    # The docs give the value in a reply only for dataState all, grouped by date or by hour.
     last = _reported(reply)
-    known = (last, "api", API_HOW) if last else (*_estimate(_google.answer_day())[:2], ASK_HOW)
+    known = (last, "api", API_HOW) if last else _shown(shared_read, ASK_HOW)
     window = {"start": request["startDate"], "end": body["endDate"]}
     coverage = _coverage(window, known, str(request.get("dataState", "final")))
     shift = _shift(end, body["endDate"])
