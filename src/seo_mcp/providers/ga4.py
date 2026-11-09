@@ -58,6 +58,19 @@ EMPTY_TOTALS: dict[str, float | None] = {
     "keyEvents": 0.0,
 }
 METRICS = tuple(EMPTY_TOTALS)
+# The first day on which the property reports any event, of any channel. GA4 leaves out a row
+# whose metrics are all 0, and a day with 0 organic sessions can be a real 0: this day is the
+# best fact that tells "no data collected" from a real 0. The docs give no earliest date. GA4
+# started as App + Web in 2019, so this floor misses no GA4 event; a refused read gives no delta.
+FIRST_EVENT_FLOOR = "2019-01-01"
+FIRST_EVENT = {
+    "dateRanges": [{"startDate": FIRST_EVENT_FLOOR, "endDate": "today"}],
+    "dimensions": [{"name": "date"}],
+    "metrics": [{"name": "eventCount"}],
+    "orderBys": [{"dimension": {"dimensionName": "date"}, "desc": False}],
+    "limit": 1,
+    "returnPropertyQuota": True,
+}
 ORGANIC = {
     "filter": {
         "fieldName": "sessionDefaultChannelGroup",
@@ -306,6 +319,41 @@ def _coverage(reply: dict[str, Any], window: Any) -> dict[str, Any] | None:
     )
 
 
+def _day(row: Any) -> str | None:
+    """The YYYY-MM-DD day of a row of the date dimension, or None for a row of another shape."""
+    with suppress(KeyError, IndexError, TypeError, ValueError):
+        return datetime.strptime(row["dimensionValues"][0]["value"], "%Y%m%d").date().isoformat()
+    return None
+
+
+async def _first_event(site: Site, prop: str, token: str) -> dict[str, Any]:
+    """Give the first day of any event, and how the read went: found, none, or failed.
+
+    The body is fixed, so each range and each GA4 source of 1 call share 1 saved answer.
+    """
+    try:
+        reply = await _post(site, prop, "runReport", FIRST_EVENT, token)
+    except (net.ApiError, Refused):
+        return {"first_data_day": None, "first_data_read": "failed"}
+    rows = reply.get("rows") or []
+    if not rows:
+        return {"first_data_day": None, "first_data_read": "none"}
+    first = _day(rows[0])
+    return {"first_data_day": first, "first_data_read": "found" if first else "failed"}
+
+
+def _gap_at_start(dimension: str, rows: list[dict[str, Any]], params: Params) -> bool:
+    """A range of a date comparison with no row on its first day can start before GA4 data.
+
+    A landing page report has no day rows, so it cannot show that the first day has data.
+    """
+    if not (params.compared and params.start):
+        return False
+    return dimension != "date" or params.start.strftime("%Y%m%d") not in {
+        row["date"] for row in rows
+    }
+
+
 async def _report(
     site: Site, dimension: str, limit: int, fetch: int, params: Params
 ) -> dict[str, Any]:
@@ -349,6 +397,8 @@ async def _report(
         notes += [_google.UNKNOWN_REASON] if unknown else []
     thin = ((totals or {}).get("sessions") or 0) < THIN_SESSIONS
     extra: dict[str, Any] = {"page_match": PAGE_MATCH} if params.page else {}
+    if _gap_at_start(dimension, rows, params):
+        extra |= await _first_event(site, prop, token)
     if params.end and coverage and window["endDate"] != params.end.isoformat():
         extra["date_moved"] = moved(params.end, coverage["end_date"])
         notes.append(moved_note(extra["date_moved"]))

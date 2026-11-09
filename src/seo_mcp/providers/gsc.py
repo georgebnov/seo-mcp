@@ -17,6 +17,7 @@ from seo_mcp.params import (
     SLACK_DAYS,
     BadInput,
     Params,
+    iso_day,
     moved,
     moved_note,
     page_url,
@@ -235,6 +236,37 @@ async def _last_complete(site: Site, headers: dict[str, str]) -> Known:
     return _estimate(day)
 
 
+async def _first_data(site: Site, headers: dict[str, str]) -> dict[str, Any]:
+    """Give the first day with any impression in the kept history, and how the read went.
+
+    The docs: "Data collection for a property starts as soon anyone adds the property to their
+    Search Console account". A day with no impression has no row, so a missing row is no proof:
+    only the first day of the whole property is. The body changes only with the UTC date, so
+    each range and each source of 1 call share 1 saved answer.
+    """
+    day = today()
+    body = {
+        "startDate": _oldest_day(day).isoformat(),
+        "endDate": day.isoformat(),
+        "dimensions": ["date"],
+        "rowLimit": FETCH_ROWS,
+        "dataState": "all",
+    }
+    try:
+        reply = await _analytics(site, body, headers)
+    except (net.ApiError, Refused):
+        return {"first_data_day": None, "first_data_read": "failed"}
+    rows = reply.get("rows") or []
+    if not rows:
+        return {"first_data_day": None, "first_data_read": "none"}
+    # Google sorts the rows by clicks, so the first day is the smallest key, not row 0.
+    days = [iso_day((row.get("keys") or [None])[0]) for row in rows]
+    known = [day for day in days if day]
+    if len(known) < len(days):
+        return {"first_data_day": None, "first_data_read": "failed"}
+    return {"first_data_day": min(known).isoformat(), "first_data_read": "found"}
+
+
 def _coverage(window: dict[str, str], known: Known, state: str) -> dict[str, Any]:
     start, end = date.fromisoformat(window["start"]), date.fromisoformat(window["end"])
     return _google.coverage(start, end, *known, ZONE, data_state=state)
@@ -280,6 +312,8 @@ async def _report(
     seen = min(total["impressions"], shown) if total else shown
     rows = keep(rows) if keep else sorted(rows, key=_by_traffic, reverse=True)
     shift = _shift(params.end, window["end"])
+    # The rows have no day, so a range of a date comparison always checks its first day of data.
+    first = await _first_data(site, headers) if params.compared else {}
     gaps = _gaps(params) + _partial_note(coverage)
     notes = gaps + ([_google.UNKNOWN_REASON] if unknown else [])
     notes += [MISS_REASON] if not rows and (params.page or params.query) else []
@@ -293,6 +327,7 @@ async def _report(
         coverage=coverage,
         **({"incomplete": True} if gaps else {}),
         **shift,
+        **first,
     )
 
 

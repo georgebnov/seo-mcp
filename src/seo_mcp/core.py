@@ -117,6 +117,44 @@ def _delta(result: dict[str, Any], other: dict[str, Any]) -> dict[str, float | N
     return delta
 
 
+def _uncollected(side: str, result: dict[str, Any], params: Params) -> str | None:
+    """Say why a range can hold days on which the source collected no data, or give None.
+
+    A source reads its first day of data only for a range of a date comparison with no row on
+    its first day (first_data_read). The server moves no range: the agent picks new dates.
+    """
+    read, first = result.get("first_data_read"), result.get("first_data_day")
+    if read is None or params.start is None:
+        return None
+    start = params.start.isoformat()
+    if read == "failed":
+        return f"The server could not check the first day of data of the {side} range."
+    if read == "none":
+        return f"The source reports no event on any day, so the {side} range has no data."
+    if first is None or first <= start:
+        return None
+    return (
+        f"The {side} range starts on {start}, but the first day with any data is {first}. "
+        f"Ask 2 ranges that start on or after {first}."
+    )
+
+
+def _gate_delta(result: dict[str, Any], primary: Params, comparison: Params) -> None:
+    """George: the comparison needs to be same dates. A range with no collected data gives none."""
+    notes = [
+        note
+        for side, done, params in (
+            ("main", result, primary),
+            ("comparison", result["comparison"], comparison),
+        )
+        if (note := _uncollected(side, done, params))
+    ]
+    if notes:
+        result["delta"] = None
+        notes.append("So delta is null.")
+        result["reason"] = " ".join(filter(None, [result["reason"], *notes]))
+
+
 async def _asked(
     name: str, site: Site, primary: Params, comparison: Params | None, asked: set[str]
 ) -> dict[str, Any]:
@@ -137,6 +175,8 @@ async def _asked(
         if result["status"] == rest[0]["status"] == "ok" and "totals" in result:
             result["delta"] = _delta(result, rest[0])
             _warn_of_unequal_ranges(result, rest[0])
+            if comparison:
+                _gate_delta(result, primary, comparison)
     return result
 
 

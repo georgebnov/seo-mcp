@@ -47,6 +47,10 @@ def body_of(request) -> dict:
     return json.loads(request.content)
 
 
+def is_first_data_read(body: dict) -> bool:
+    return body.get("metrics") == [{"name": "eventCount"}]
+
+
 def reports(calls) -> list[dict]:
     """The report bodies, without the read that finds the last complete day."""
     bodies = [body_of(call) for call in api_calls(calls)]
@@ -448,7 +452,16 @@ async def test_a_source_that_takes_no_date_refuses_a_comparison_of_periods(live)
     assert not api_calls(live)
 
 
-async def test_compare_two_periods(live):
+async def test_compare_two_periods(live, fake_net):
+    # The fake rows hold no day, so no range shows a row on its first day: each range then
+    # needs the first day of GA4 data, and 1 shared read gives it.
+    def first_event_2024(request):
+        if request.url.path.endswith("runReport") and is_first_data_read(body_of(request)):
+            row = {"dimensionValues": [{"value": "20240101"}], "metricValues": [{"value": "1"}]}
+            return httpx2.Response(200, json={"kind": "analyticsData#runReport", "rows": [row]})
+        return answer(request)
+
+    live = fake_net(first_event_2024)
     data = await ask(
         ["ga4_organic"],
         start_date="2026-01-01",
@@ -462,7 +475,8 @@ async def test_compare_two_periods(live):
     assert result["comparison"]["window"]["startDate"] == "2025-01-01"
     assert result["comparison"]["applied"]["start_date"] == "2025-01-01"
     assert result["delta"] == {"sessions": 0.0}
-    assert len(api_calls(live)) == 2
+    assert result["comparison"]["first_data_day"] == "2024-01-01"
+    assert len(api_calls(live)) == 3
 
 
 async def test_compare_two_pages_on_search_console(live):

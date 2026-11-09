@@ -34,6 +34,8 @@ class Params:
     last_days: int | None = None
     page: str | None = None
     query: str | None = None
+    # A date comparison: a source then checks that each range holds collected data. Not shown.
+    compared: bool = False
 
     def applied(self) -> dict[str, Any]:
         values = {
@@ -187,6 +189,7 @@ def parse(
     if other_start:
         if not start:
             raise BadInput("compare_start_date needs start_date and end_date.")
+        primary = replace(primary, compared=True)
         comparison = replace(primary, start=other_start, end=other_end)
     if compare_page is not None:
         if primary.page is None:
