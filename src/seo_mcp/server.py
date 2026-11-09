@@ -41,6 +41,8 @@ compare_start_date and compare_end_date ask for a 2nd period, and need start_dat
 compare_page asks for a 2nd page, and needs page. Use 1 comparison in a call.
 A comparison adds comparison (the same fields) and delta (main value minus comparison value).
 If a date move makes the 2 ranges different in length, range_days and reason say so.
+When search_queries rows sum to less than totals, reason gives the cut rows and the
+queries that Google hides (anonymized queries), in clicks and impressions.
 
 Each source accepts only these parameters:
 {core.describe_sources()}
