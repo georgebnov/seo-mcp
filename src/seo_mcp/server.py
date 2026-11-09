@@ -1,12 +1,13 @@
 """The stdio server. Claude Code starts it for each session."""
 
 import logging
+import sys
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp_types import ToolAnnotations
 
-from seo_mcp import NAME, core, tasks
+from seo_mcp import NAME, core, setup, tasks
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=True)
 
@@ -173,7 +174,10 @@ async def query_api(
     return await core.query_api(site, api, method, request, task, start_date)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    args = sys.argv[1:] if argv is None else argv
+    if args:
+        raise SystemExit(setup.main(args))
     # httpx2 logs each URL at INFO level, and the Bing API needs its key in the URL.
     logging.getLogger("httpx2").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
