@@ -180,9 +180,376 @@ QUOTA: tuple[Mutant, ...] = (
         ),
         "the token is read after the saved answer, as before #49",
     ),
+    Model(
+        "CountNeverBelowRequestsSent",
+        "metered_call",
+        (
+            (
+                "/\\ pc' = \"reserved\" /\\ count' = count + 1",
+                "/\\ pc' = \"reserved\" /\\ count' = count",
+            ),
+        ),
+        "the ledger gives a receipt and counts nothing",
+    ),
+    Code(
+        "CountNeverBelowRequestsSent",
+        "src/seo_mcp/quota.py",
+        (('"used": used + count}', '"used": used}'),),
+        ("tests/test_quota.py::test_a_429_of_the_export_api_blocks_the_day_with_no_false_count",),
+        "quota.spend writes the old count",
+    ),
+    Model(
+        "BrokenLedgerSendsNothing",
+        "metered_call",
+        (
+            (
+                '/\\ pc = "ledger" /\\ ledger = "olderDay"',
+                '/\\ pc = "ledger" /\\ ledger \\in {"olderDay", "brokenText"}',
+            ),
+        ),
+        "a ledger that does not parse reads as a new day",
+    ),
+    Code(
+        "BrokenLedgerSendsNothing",
+        "src/seo_mcp/quota.py",
+        (("        raise Refused(_broken(ledger, file))\n", "        return 0, False\n"),),
+        ("tests/test_quota.py::test_a_ledger_with_a_bad_count_fails_closed",),
+        "quota._read reads a bad count as 0",
+    ),
+    Model(
+        "BusyLedgerSendsNothing",
+        "metered_call",
+        (
+            (
+                'LockBusy == pc = "ledger" /\\ pc\' = "busy" /\\ Same',
+                'LockBusy == pc = "ledger" /\\ pc\' = "busy" /\\ count\' = count + 1 /\\ sent\' = '
+                "sent + 1 /\\ UNCHANGED <<api, cache, ledger, blocked, count0, sent0, blocked0, "
+                "receipt, token>>",
+            ),
+        ),
+        "a call goes out past a ledger that another process holds",
+    ),
+    Code(
+        "BusyLedgerSendsNothing",
+        "src/seo_mcp/quota.py",
+        (
+            (
+                "if not await take_lock(lock, LOCK_WAIT_SECONDS):",
+                "if not await take_lock(lock, LOCK_WAIT_SECONDS) and False:",
+            ),
+        ),
+        ("tests/test_lock_timeout.py::test_a_stuck_ledger_refuses_and_sends_nothing",),
+        "quota.locked goes on without the ledger lock",
+    ),
+    Model(
+        "CacheHitSpendsNothing",
+        "metered_call",
+        (
+            (
+                'CacheHit == pc = "lock" /\\ cache = "today" /\\ pc\' = "hit" /\\ Same',
+                'CacheHit == pc = "lock" /\\ cache = "today" /\\ pc\' = "hit" /\\ '
+                "count' = count + 1 /\\ UNCHANGED <<api, cache, ledger, blocked, sent, count0, "
+                "sent0, blocked0, receipt, token>>",
+            ),
+        ),
+        "a saved answer still spends",
+    ),
+    Code(
+        "CacheHitSpendsNothing",
+        "src/seo_mcp/shared.py",
+        (
+            (
+                '            _note(True, saved["at"], saved["expires_at"])\n',
+                "            await prepare()\n",
+            ),
+        ),
+        ("tests/test_quota.py::test_a_cached_answer_shows_the_count_and_spends_none",),
+        "shared.once spends before it gives the saved answer",
+    ),
+    Model(
+        "HitHasAGoodShape",
+        "metered_call",
+        (
+            (
+                'CacheBad == pc = "lock" /\\ cache = "badToday" /\\ pc\' = "ledger"',
+                'CacheBad == pc = "lock" /\\ cache = "badToday" /\\ pc\' = "hit"',
+            ),
+        ),
+        "a saved answer of a wrong shape serves",
+    ),
+    Code(
+        "HitHasAGoodShape",
+        "src/seo_mcp/shared.py",
+        (('and good(stored["answer"])', "and True"),),
+        ("tests/test_bad_answer.py::test_a_bad_answer_that_an_old_server_saved_is_not_served",),
+        "shared._saved serves an answer of any shape",
+    ),
+    Model(
+        "BadAnswerIsNotSaved",
+        "metered_call",
+        (
+            (
+                'BadShape == pc = "flight" /\\ pc\' = "badAnswer" /\\ Marked',
+                'BadShape == pc = "flight" /\\ pc\' = "badAnswer" /\\ cache\' = "today" /\\ '
+                "UNCHANGED <<api, ledger, blocked, count, sent, count0, sent0, blocked0, receipt, "
+                "token>>",
+            ),
+        ),
+        "an HTTP 200 of a wrong shape is saved",
+    ),
+    Code(
+        "BadAnswerIsNotSaved",
+        "src/seo_mcp/shared.py",
+        (("            if not good(reply):\n", "            if False:\n"),),
+        ("tests/test_bad_answer.py::test_a_bad_answer_of_each_method_is_never_saved",),
+        "shared.once saves an answer of any shape",
+    ),
+    Model(
+        "SpentFailureKeepsTheWindow",
+        "metered_call",
+        (
+            (
+                'Mcp429 == pc = "flight" /\\ api = "mcp" /\\ pc\' = "failed" /\\ Marked',
+                'Mcp429 == pc = "flight" /\\ api = "mcp" /\\ pc\' = "failed" /\\ Same',
+            ),
+        ),
+        "a failed call that went out starts no failure window",
+    ),
+    Code(
+        "SpentFailureKeepsTheWindow",
+        "src/seo_mcp/shared.py",
+        (("            if exc.sent or prepare is not _nothing:\n", "            if False:\n"),),
+        ("tests/test_failure_window.py::test_a_repeat_after_the_call_ended_spends_nothing",),
+        "shared.once marks no failure",
+    ),
+    Model(
+        "FirstAnswerIsShared",
+        "parallel_callers",
+        (('cache\' = [cache EXCEPT ![s] = "saved"]', "cache' = cache"),),
+        "the first answer is not saved, so the other caller of the key sends again",
+    ),
+    Code(
+        "FirstAnswerIsShared",
+        "src/seo_mcp/shared.py",
+        (
+            (
+                '            quota.write_json(path, {"cached_at": at.isoformat(), "answer": '
+                "scrub(reply)})\n",
+                "            pass\n",
+            ),
+        ),
+        ("tests/test_shared.py::test_parallel_identical_calls_share_1_request",),
+        "shared.once does not save the answer",
+    ),
 )
 
-AREAS: dict[str, tuple[Mutant, ...]] = {"quota": QUOTA}
+DATES_MODEL = "get_seo_data_dates"
+DATES: tuple[Mutant, ...] = (
+    Model(
+        "StartAfterEndSendsNothing",
+        DATES_MODEL,
+        (('DatesInOrder == pc = "named" /\\ start <= end', 'DatesInOrder == pc = "named"'),),
+        "a start after the end goes on to the source",
+    ),
+    Code(
+        "StartAfterEndSendsNothing",
+        "src/seo_mcp/params.py",
+        (("    if start > end:\n", "    if False:\n"),),
+        ("tests/test_coverage.py::test_a_start_after_the_end_is_still_refused",),
+        "params.period lets a start after the end through",
+    ),
+    Model(
+        "StartAfterEndSendsNothing",
+        DATES_MODEL,
+        (('pc = "checked" /\\ start <= Newest /\\ pc\'', 'pc = "checked" /\\ pc\''),),
+        "a start past the newest day goes out",
+    ),
+    Code(
+        "StartAfterEndSendsNothing",
+        "src/seo_mcp/providers/gsc.py",
+        (("    if start > latest:\n", "    if False:\n"),),
+        ("tests/test_coverage.py::test_a_start_past_the_newest_day_is_refused",),
+        "gsc._newest_end sends a start past the UTC date",
+    ),
+    Model(
+        "FutureEndMovesAndSaysSo",
+        DATES_MODEL,
+        (("sentEnd' = Min(end, Newest)", "sentEnd' = end"),),
+        "an end past the newest day goes out as it is",
+    ),
+    Code(
+        "FutureEndMovesAndSaysSo",
+        "src/seo_mcp/providers/gsc.py",
+        (("    return min(end, latest)\n", "    return end\n"),),
+        ("tests/test_coverage.py::test_a_search_console_end_past_today_moves_to_today",),
+        "gsc._newest_end sends an end past the UTC date",
+    ),
+    Model(
+        "AppliedShowsTheSentEnd",
+        DATES_MODEL,
+        (("appliedEnd' = IF moved THEN sentEnd ELSE end", "appliedEnd' = end"),),
+        "applied shows the asked end after a move",
+    ),
+    Code(
+        "AppliedShowsTheSentEnd",
+        "src/seo_mcp/core.py",
+        (
+            (
+                'done["applied"]["end_date"] = done["date_moved"]["sent_end_date"]',
+                'done["applied"]["end_date"] = done["applied"]["end_date"]',
+            ),
+        ),
+        ("tests/test_coverage.py::test_applied_shows_the_end_date_that_went_out",),
+        "core._asked keeps the asked end in applied",
+    ),
+    Model(
+        "UnfinishedDayIsNeverZero",
+        DATES_MODEL,
+        (('ELSE IF start <= shownLast\' THEN "zero" ELSE "none"', 'ELSE "zero"'),),
+        "no rows on only partial days give 0 totals",
+    ),
+    Code(
+        "UnfinishedDayIsNeverZero",
+        "src/seo_mcp/providers/gsc.py",
+        (('    unknown = not totals and window["start"] > ', "    unknown = False and "),),
+        (
+            "tests/test_coverage.py::test_a_range_of_only_partial_days_with_no_rows_has_unknown_totals",
+        ),
+        "gsc._report gives 0 totals for only partial days",
+    ),
+    Model(
+        "CompleteDayWithNoRowsIsZero",
+        DATES_MODEL,
+        (('ELSE IF start <= shownLast\' THEN "zero" ELSE "none"', 'ELSE "none"'),),
+        "no rows on complete days give unknown totals",
+    ),
+    Code(
+        "CompleteDayWithNoRowsIsZero",
+        "src/seo_mcp/providers/gsc.py",
+        (('    unknown = not totals and window["start"] > ', "    unknown = not totals or "),),
+        ("tests/test_coverage.py::test_each_covered_source_shows_a_drop_to_a_real_0",),
+        "gsc._report gives unknown totals for a real 0",
+    ),
+    Model(
+        "PartialDaysAreMarked",
+        DATES_MODEL,
+        (("partial' = (sentEnd > shownLast')", "partial' = FALSE"),),
+        "the days after the last complete day are not marked partial",
+    ),
+    Code(
+        "PartialDaysAreMarked",
+        "src/seo_mcp/providers/_google.py",
+        (("    partial = {", "    partial = None and {"),),
+        ("tests/test_coverage.py::test_a_day_past_the_last_complete_day_is_partial",),
+        "_google.coverage marks no partial day",
+    ),
+    Model(
+        "PartialDayNeverShownComplete",
+        DATES_MODEL,
+        (
+            (
+                'fetchedLast\' = IF cov = "api" THEN shownLast ELSE Last - 1',
+                "fetchedLast' = Last - 1",
+            ),
+        ),
+        "a saved report of an older API day serves under a newer day",
+    ),
+    Code(
+        "PartialDayNeverShownComplete",
+        "src/seo_mcp/providers/gsc.py",
+        (
+            (
+                '    return known[0].isoformat() if known[1] == "api" else "estimate"',
+                '    return "estimate"',
+            ),
+        ),
+        ("tests/test_coverage.py::test_a_saved_report_of_a_partial_day_never_shows_it_complete",),
+        "gsc._basis leaves the API day out of the report key",
+    ),
+    Model(
+        "NoDocumentedFieldIsNeverOk",
+        DATES_MODEL,
+        (('Good(r) == r \\in {"rows", "noRows"}', "Good(r) == TRUE"),),
+        "{} or other text is an ok answer",
+    ),
+    Code(
+        "NoDocumentedFieldIsNeverOk",
+        "src/seo_mcp/providers/gsc.py",
+        (
+            (
+                'REPORT = shared.has_any("rows", "responseAggregationType", "metadata")',
+                "REPORT = shared.is_object",
+            ),
+        ),
+        (
+            "tests/test_bad_answer.py::test_a_search_console_reply_of_no_known_field_is_a_failure",
+            "tests/test_bad_answer.py::test_an_empty_object_is_not_an_empty_answer",
+        ),
+        "gsc.REPORT passes any object",
+    ),
+    Model(
+        "DeltaNeverComparesNoData",
+        DATES_MODEL,
+        (
+            (
+                'delta\' = IF read\' = "found" /\\ first <= start THEN Shown ELSE "null"',
+                "delta' = Shown",
+            ),
+        ),
+        "a range that starts before the first day of data keeps its delta",
+    ),
+    Code(
+        "DeltaNeverComparesNoData",
+        "src/seo_mcp/core.py",
+        (
+            (
+                '    result["delta"] = None\n    first = _found_day(sides)',
+                "    first = _found_day(sides)",
+            ),
+        ),
+        ("tests/test_collected.py::test_the_live_case_gives_no_delta_and_names_the_first_day",),
+        "core._gate_delta keeps the delta of a range with no data",
+    ),
+    Model(
+        "RealZeroKeepsTheDelta",
+        DATES_MODEL,
+        (("/\\ first <= start THEN Shown", "/\\ first < start THEN Shown"),),
+        "a range that starts on the first day of data loses its delta",
+    ),
+    Code(
+        "RealZeroKeepsTheDelta",
+        "src/seo_mcp/core.py",
+        (
+            (
+                "    if first is None or first <= start:\n",
+                "    if first is None or first < start:\n",
+            ),
+        ),
+        ("tests/test_collected.py::test_a_range_that_starts_on_the_first_event_keeps_the_delta",),
+        "core._uncollected names a range that starts on the first day of data",
+    ),
+    Model(
+        "AtMost1ExtraRead",
+        DATES_MODEL,
+        (("extra' = extra + 1", "extra' = extra + 2"),),
+        "1 range sends 2 reads of the first day of data",
+    ),
+    Model(
+        "ExtraReadOnlyForAGap",
+        DATES_MODEL,
+        (('NeedsRead == prov = "gsc" \\/ ~startRow', "NeedsRead == TRUE"),),
+        "a GA4 day report with a row on its first day reads the first day again",
+    ),
+    Code(
+        "ExtraReadOnlyForAGap",
+        "src/seo_mcp/providers/ga4.py",
+        (('    return dimension != "date" or params.start', "    return True or params.start"),),
+        ("tests/test_collected.py::test_a_normal_comparison_sends_no_extra_read",),
+        "ga4._gap_at_start asks for the first event each time",
+    ),
+)
+
+AREAS: dict[str, tuple[Mutant, ...]] = {"quota": QUOTA, "dates": DATES}
 
 
 def _edit(path: Path, edits: tuple[tuple[str, str], ...]) -> None:

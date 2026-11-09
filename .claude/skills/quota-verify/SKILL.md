@@ -50,11 +50,11 @@ Each model action names its code in a comment above it. The main map:
 
 Atomic steps: 1 model step holds the path lock, the check of the saved answer and the failure, and the spend. That is sound because the cache of a path changes only under its lock, and `quota.spend` reads and writes the ledger under the ledger lock with no await inside. The send is its own step: `net.request` awaits the connection after the spend, and another task or process can block the day in between.
 
-Sync commit: `433834a`. The models and mutants describe `src/` as of this commit. Move it forward only after you confirm that each model step still matches its code at the new commit.
+Sync commit: `47ec7aa`. The models and mutants describe `src/` as of this commit. Move it forward only after you confirm that each model step still matches its code at the new commit.
 
 ## Steps
 
-1. **Does the change touch the covered code?** Run `git diff 433834a -- src/seo_mcp/shared.py src/seo_mcp/quota.py src/seo_mcp/net.py src/seo_mcp/providers/clarity.py src/seo_mcp/providers/gsc.py`. Name each touched function from "Coverage", or none. If none, stop.
+1. **Does the change touch the covered code?** Run `git diff 47ec7aa -- src/seo_mcp/shared.py src/seo_mcp/quota.py src/seo_mcp/net.py src/seo_mcp/providers/clarity.py src/seo_mcp/providers/gsc.py`. Name each touched function from "Coverage", or none. If none, stop.
 2. **Run the models.** Run `just models <scratch folder>`. Done when it prints "Each break is in the known list, and each other rule holds."
 3. **Read each result** with the `statechart` skill. For a break, read the shortest path in `<scratch folder>/<model>/report.md`. Show `<scratch folder>/parallel_callers/chart.mmd` as a `mermaid` block when George asks how parallel calls move. `metered_call` has more than 500 states, so it has no chart: read its report.
 4. **Run the mutants.** Run `uv run python scripts/verify_mutants.py quota` (about 1 minute). Done when it prints "Each mutant is caught." Read each other line by its first word:
@@ -71,6 +71,7 @@ Sync commit: `433834a`. The models and mutants describe `src/` as of this commit
 ## Scope
 
 - `Limit` is 1 in `metered_call` and 2 in `parallel_callers`. The models have 1 UTC day, 2 callers, and 2 keys. 2 different requests of 1 key act as 2 keys: 2 paths, 1 ledger.
+- Each rule has a model mutant and a code mutant, with 2 exceptions. NoSendAfterTheLimitAnswer has none: it breaks today. NoTokenReadsNoAnswer has a model mutant only: the order of `clarity.credential` and `shared.once` has no 1-line break.
 - `metered_call` spends 1 call. `gsc.index_status` spends 1 call for each URL in 1 spend: the model does not cover the batch size.
 - `parallel_callers` has no busy ledger lock and no failed `quota.block`. `metered_call` has both.
 - Not covered: the midnight edge between `spend` and `block` (only tests cover `receipt.day`), the prune of old entries, the salt file, GA4 token readings (`ga4._record` only records what GA4 says, it gates no call), and Bing and PageSpeed, which have no ledger.

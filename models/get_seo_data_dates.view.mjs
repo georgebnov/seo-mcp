@@ -15,7 +15,11 @@ export const state = (v) => {
       : "The last complete day is an estimate";
   }
   if (v.pc === "answered") {
-    return v.fetchedLast < 2 ? "A saved report from before the API moved serves" : "The API answers HTTP 200";
+    // A saved report sends nothing. The view reads no constant, so the chart config can be smaller.
+    if (v.sent > 0) return "The API answers HTTP 200";
+    return v.cov === "api"
+      ? "A saved report of the same API day serves"
+      : "A saved report from before the API moved serves";
   }
   if (v.pc === "result") {
     if (v.status === "error") return "Status error: the answer has a wrong shape, nothing saved";

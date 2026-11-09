@@ -139,6 +139,18 @@ async def test_real_0_days_after_the_first_event_keep_the_delta(live, fake_net, 
     assert len(probes(calls)) == 1
 
 
+async def test_a_range_that_starts_on_the_first_event_keeps_the_delta(live, fake_net, monkeypatch):
+    """GA4 collected on the first day of the range, so its missing row is a real 0."""
+    freeze(monkeypatch, ANSWERED)
+    days = {"20260920": 4, "20261010": 9}
+    calls = fake_net(replies(property_with(days, first_event="20260912")))
+    data = await core.get_seo_data(HOST, ["ga4_organic"], **MAIN, **COMPARE)
+    result = data["sources"]["ga4_organic"]
+    assert result["comparison"]["first_data_day"] == COMPARE["compare_start_date"]
+    assert result["delta"]["sessions"] == 5
+    assert len(probes(calls)) == 1
+
+
 async def test_a_normal_comparison_sends_no_extra_read(live, fake_net, monkeypatch):
     freeze(monkeypatch, ANSWERED)
     days = {"20260912": 4, "20261010": 9}
