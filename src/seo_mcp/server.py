@@ -28,6 +28,14 @@ def list_sites() -> dict[str, Any]:
     return core.list_sites()
 
 
+# George: an agent read a lower position, or a position delta, as good or bad. Both tools that
+# return position carry this text.
+POSITION = """Search Console position: The average highest place of your link across all queries
+with impressions. A lower number is not always better, and it moves when new queries appear.
+A position change alone is not good or bad. Judge the change by clicks first, then by the
+click rate and impressions of the same rows."""
+
+
 GET_SEO_DATA = f"""Get the SEO data of a site in 1 call.
 
 Each source has status, reason, and thin_data.
@@ -40,6 +48,7 @@ page is a path such as /pricing or a full https URL on the site. query is 1 exac
 compare_start_date and compare_end_date ask for a 2nd period, and need start_date and end_date.
 compare_page asks for a 2nd page, and needs page. Use 1 comparison in a call.
 A comparison adds comparison (the same fields) and delta (main value minus comparison value).
+{POSITION}
 In a date comparison, a range can start before the first day of data of the source (GA4 or
 Search Console collected nothing then): delta is null, first_data_day names that day, and reason
 asks for ranges that start on or after it. The server moves no range.
@@ -123,6 +132,7 @@ request is the official JSON of the method. The server fills the site, the prope
 key: do not send them. A field that the method does not have is an error, never dropped.
 A row limit is at most 1000: read more rows with startRow or offset. more_rows is yes, no, or
 possible. If the API refuses a Google query, reason holds the message of the API.
+{POSITION}
 Each live clarity call spends 1 of 10 calls for the project each day. The same request on the
 same UTC day comes from the cache. After a saved 0 dashboard count of a click task, a clarity
 recordings call for the same click and days gives status skipped and spends nothing.
