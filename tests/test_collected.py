@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 import httpx2
 import pytest
 
-from seo_mcp import core, providers
+from seo_mcp import core, providers, tasks
 from seo_mcp.providers import ga4
 from test_coverage import QUERY, freeze, is_first_data_read
 from test_query_api import HOST, ga4_kind
@@ -340,3 +340,38 @@ async def test_each_dated_source_gives_the_pair_to_ask(live, fake_net, monkeypat
     )
     assert result["delta"] is None, f"{name}: {fix}"
     assert PAIR in (result["reason"] or ""), f"{name}: {fix} reason: {result['reason']}"
+
+
+def _compare_steps():
+    """Each get_seo_data step of a task that compares 2 periods."""
+    return [
+        pytest.param(name, recipe.api, at, id=f"{name}-{recipe.api}")
+        for name, task in tasks.TASKS.items()
+        if task.compare
+        for recipe in task.recipes
+        for at, step in enumerate(recipe.steps)
+        if step.tool == "get_seo_data" and "compare_start_date" in step.args
+    ]
+
+
+@pytest.mark.parametrize(("name", "api", "at"), _compare_steps())
+async def test_a_task_comparison_before_the_first_day_says_what_to_ask(
+    live, fake_net, monkeypatch, name, api, at
+):
+    """A live test: the task gave a GA4 comparison from 2026-09-11, and GA4 began on 10-08.
+
+    Discovery makes no call, so it cannot know the first day. The step then must say that delta
+    is null, that first_data_day names the day, and which dates to ask next.
+    """
+    freeze(monkeypatch, ANSWERED)
+    fake_net(replies(property_with({}, gsc_first="2026-10-08")))
+    step = tasks.build(name, HOST, api, today=ANSWERED.date())["rows"][0]["steps"][at]
+    args = {**step["args"], "page": f"https://{HOST}/"}
+    data = await core.get_seo_data(**args)
+    (result,) = data["sources"].values()
+    assert result["delta"] is None
+    assert result["comparison"]["first_data_day"] == "2026-10-08"
+    read = " ".join(step["read"].split())
+    fix = f"{name} {api}: the read text of the step must say this, see tasks.FIRST_DAY_READ."
+    for words in ("first_data_day", "delta is null", "reason", "no pair fits", "could not check"):
+        assert words in read, f"{fix} It misses: {words!r}"

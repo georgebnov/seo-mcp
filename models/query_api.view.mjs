@@ -42,6 +42,7 @@ const labels = {
   ValueWrong: "a value is wrong for the method",
   DatesRefused: "2 YYYY-MM-DD dates are in the wrong order, or the start is past the newest day",
   LocalRefusal: "the ledger refuses the call",
+  CoverageRead: "Search Console search_analytics reads the coverage of get_seo_data first",
   SavedAnswer: "a saved answer of the same request is inside its time",
   SharedFailure: "the same request failed inside the window",
   ReadQuery: "the server fills the site and the key and sends 1 listed read request",

@@ -224,7 +224,8 @@ async def test_search_analytics_sends_the_full_query(live):
         "dataState": "all",
     }
     data = await ask("search_console", "search_analytics", request)
-    assert json.loads(sent(live)[0].content) == request
+    # The coverage read of the site goes out first.
+    assert json.loads(sent(live)[-1].content) == request
     assert data["rows"][0]["query"] == "key-query"
     assert data["rows"][0]["clicks"] == 1
     assert data["applied"] == request
@@ -239,7 +240,7 @@ async def test_search_analytics_full_page_may_have_more_rows(live):
 
 async def test_search_analytics_default_limit_is_shown(live):
     data = await ask("search_console", "search_analytics", RANGE)
-    assert json.loads(sent(live)[0].content)["rowLimit"] == api.MAX_ROWS
+    assert json.loads(sent(live)[-1].content)["rowLimit"] == api.MAX_ROWS
     assert data["applied"]["rowLimit"] == api.MAX_ROWS
 
 
