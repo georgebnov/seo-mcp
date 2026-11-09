@@ -191,7 +191,7 @@ NAMED = re.compile(r"site\.(field|secret|optional_secret)\(\"(\w+)\"\)")
     "module", [m for m in providers.MODULES if m.APIS], ids=lambda m: m.__name__
 )
 def test_status_knows_each_name_that_a_provider_reads(module):
-    """A provider that reads a new field or secret must add it to setup.NEEDS, or status lies."""
+    """A provider that reads a new field or secret adds it to connection.NEEDS, or status lies."""
     text = Path(module.__file__).read_text()
     if "_google." in text:
         text += (SOURCE / "_google.py").read_text()
@@ -199,7 +199,7 @@ def test_status_knows_each_name_that_a_provider_reads(module):
     known = set().union(*(setup.NEEDS[api].names() for api in module.APIS))
     assert used == known, (
         f"{Path(module.__file__).name} reads {sorted(used)}, but setup.NEEDS for "
-        f"{sorted(module.APIS)} names {sorted(known)}. Fix setup.NEEDS in src/seo_mcp/setup.py."
+        f"{sorted(module.APIS)} names {sorted(known)}. Fix NEEDS in src/seo_mcp/connection.py."
     )
 
 
