@@ -78,12 +78,13 @@ async def test_a_call_that_fails_still_shows_what_it_spent(live, fake_net):
     assert (data["calls_used_today"], data["calls_left"]) == (1, 9)
 
 
-async def test_a_timeout_still_shows_what_it_spent(live, fake_net, monkeypatch):
-    async def slow(*_args, **_kwargs):
-        await asyncio.sleep(1)
+async def test_a_timeout_still_shows_what_it_spent(live, monkeypatch):
+    class Slow(httpx2.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            await asyncio.sleep(1)
 
     monkeypatch.setattr(core, "SOURCE_TIMEOUT_SECONDS", 0.01)
-    monkeypatch.setattr(net.httpx2.AsyncClient, "request", slow)
+    net.transport = Slow()
     data = await run("clarity", INSIGHTS)
     assert "timed out" in data["reason"]
     assert data["calls_used_today"] == 1
