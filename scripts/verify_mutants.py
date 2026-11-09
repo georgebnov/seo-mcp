@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
-from check_models import ROOT, report_breaks, run_model
+from check_models import ROOT, RunFailed, report_breaks, run_model
 
 
 class Model(NamedTuple):
@@ -640,11 +640,18 @@ def _edit(path: Path, edits: tuple[tuple[str, str], ...]) -> None:
 def _model(mutant: Model, work: Path) -> str:
     folder = work / "models"
     shutil.copytree(ROOT / "models", folder)
-    base = report_breaks(mutant.model, run_model(mutant.model, work / "base", folder))
+    # A refused run is an error of this mutant, never a catch, and the other mutants still run.
+    try:
+        base = report_breaks(mutant.model, run_model(mutant.model, work / "base", folder))
+    except RunFailed as exc:
+        return f"error: the model with no mutant: {exc}"
     if (mutant.model, mutant.rule) in base:
         return f"BROKEN: {mutant.rule} breaks in the model with no mutant"
     _edit(folder / f"{mutant.model}.tla", mutant.edits)
-    report = run_model(mutant.model, work / "out", folder)
+    try:
+        report = run_model(mutant.model, work / "out", folder)
+    except RunFailed as exc:
+        return f"error: the mutant: {exc}"
     if "## Rules that hold" not in report:
         return "error: TLC did not finish on the mutant. See the report."
     return (
@@ -677,12 +684,10 @@ def _code(mutant: Code, work: Path) -> str:
     return "caught" if code == 1 else "MISSED" if code == 0 else f"error: pytest exit {code}\n{log}"
 
 
-def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in AREAS:
-        print(f"Usage: verify_mutants.py AREA. AREA is 1 of: {', '.join(AREAS)}.")
-        return 2
+def run(mutants: tuple[Mutant, ...]) -> int:
+    """Try each mutant, print 1 line for each, and give 1 if a mutant is not caught."""
     failed = 0
-    for mutant in AREAS[sys.argv[1]]:
+    for mutant in mutants:
         where = mutant.model if isinstance(mutant, Model) else mutant.file
         with tempfile.TemporaryDirectory() as folder:
             try:
@@ -697,6 +702,13 @@ def main() -> int:
             print(log)
     print("Each mutant is caught." if not failed else f"{failed} lines are not caught. Read them.")
     return 1 if failed else 0
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or sys.argv[1] not in AREAS:
+        print(f"Usage: verify_mutants.py AREA. AREA is 1 of: {', '.join(AREAS)}.")
+        return 2
+    return run(AREAS[sys.argv[1]])
 
 
 if __name__ == "__main__":
