@@ -42,26 +42,47 @@ def compare(found: set[tuple[str, str]], known: set[tuple[str, str]]) -> list[st
     return new + old
 
 
+class RunFailed(Exception):
+    """The statechart command wrote no report of its own."""
+
+
 def run_model(model: str, out: Path, folder: Path = MODELS) -> str:
-    """Run 1 model of folder with its config and view, and give its report."""
+    """Run 1 model of folder with its config and view, and give its report.
+
+    Only exit 0 (each rule holds) and exit 1 (a rule breaks) write a report. On each other exit,
+    a report in the folder is from another run, for example a run that shares the folder.
+    """
     command = os.environ.get(COMMAND_ENV) or str(Path(COMMAND).expanduser())
     arguments = [f"{model}.tla", "--config", f"{model}.cfg", "--view", f"{model}.view.mjs"]
-    subprocess.run(  # noqa: S603
+    done = subprocess.run(  # noqa: S603
         [command, *arguments, "--out", str(out / model)],
         cwd=folder,
         stdout=subprocess.DEVNULL,
         check=False,
     )
+    if done.returncode not in (0, 1):
+        raise RunFailed(
+            f"{model}: statechart exited {done.returncode} and wrote no report. "
+            "See its error above."
+        )
     return (out / model / "report.md").read_text(encoding="utf-8")
 
 
-def main() -> int:
-    out = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(tempfile.mkdtemp())
+def main(args: list[str]) -> int:
+    out = Path(args[0]).resolve() if args else Path(tempfile.mkdtemp())
+    if out.is_dir() and any(out.iterdir()):
+        print(f"{out} is not empty. Give a new or empty folder.", file=sys.stderr)
+        return 2
     known = known_breaks(KNOWN.read_text(encoding="utf-8"))
     found: set[tuple[str, str]] = set()
     problems: list[str] = []
     for spec in sorted(MODELS.glob("*.tla")):
-        report = run_model(spec.stem, out)
+        try:
+            report = run_model(spec.stem, out)
+        except RunFailed as error:
+            problems.append(str(error))
+            known = {(model, rule) for model, rule in known if model != spec.stem}
+            continue
         breaks = report_breaks(spec.stem, report)
         found |= breaks
         holds = HOLDS.search(report)
@@ -77,4 +98,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
