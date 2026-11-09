@@ -366,6 +366,13 @@ SKIP_REASON = (
 )
 ZERO = re.compile(r"0+")
 TOP = re.compile(r"\btop\b")
+TOP_N = re.compile(r"\btop (\d+)\b")
+# The endpoint takes only the question text: the Clarity MCP server has no row count field.
+TOP_REASON = (
+    "Clarity shows only the top {top} rows for this question, and this answer has {top}, so "
+    "pages below the top {top} can have counts too. The endpoint has no row count field. To "
+    "read 1 page, name its full URL in the question."
+)
 MAX_RECORDINGS = 250
 DEFAULT_RECORDINGS = tasks.SAMPLE_SESSIONS
 # A full session row is about 1.8 KB, mostly page speed, titles, and referrers with ad tokens:
@@ -652,7 +659,19 @@ async def _dashboard_query(site: Site, request: dict[str, Any]) -> dict[str, Any
     code = reply.get("dataErrorType") if isinstance(reply, dict) else None
     reason = f"Clarity gave data error type {code} for this question." if code else None
     answered = reply.get("query") if isinstance(reply, dict) else None
-    return answer(rows, more_rows="no", reason=reason, answered_question=answered, applied=body)
+    top = _top(answered)
+    more = "possible" if top is not None and len(rows) >= top else "no"
+    if more == "possible":
+        reason = " ".join(filter(None, (reason, TOP_REASON.format(top=top))))
+    return answer(rows, more_rows=more, reason=reason, answered_question=answered, applied=body)
+
+
+def _top(answered: Any) -> int | None:
+    """Give the smallest N of a "top N" list in the question that Clarity rewrote, or None."""
+    if not isinstance(answered, str):
+        return None
+    sizes = [int(size) for size in TOP_N.findall(answered.lower())]
+    return min(sizes) if sizes else None
 
 
 def now(site: Site) -> dict[str, Any]:

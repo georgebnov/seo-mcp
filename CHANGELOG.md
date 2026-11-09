@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix a Clarity `dashboard_query` answer cut to a top list that showed `more_rows` `no`: 10 rows of "the top 10 pages by dead clicks" looked like all pages. When `answered_question` names a top N list and the answer has N rows, `more_rows` is now `possible`, and `reason` says that pages below the top N can have counts too, and how to read 1 page.
 - Explain a `search_queries` result whose rows sum to less than `totals`: it showed 0 clicks in each row with 17 clicks in `totals`, and no reason. Now `reason` gives the clicks and impressions of the rows past the first 25 and how to get them, and the clicks and impressions of the anonymized queries that Google leaves out of the rows.
 - Fix a Clarity click task answer that was too large for the tool output of an agent: 50 recordings over 90 days made 68,321 characters. The click tasks now look back 28 days, inside the 30 days that Clarity keeps recordings, and ask for the 20 newest sessions. `recordings` asks for 20 by default, not 100. Each row keeps only `timestamp`, `link`, and each page `url` (with no query, so no `fbclid`) with its events, and an answer stops at about 40,000 characters of rows.
 - Add `start_date` to `query_api` with `task`: each step of the task starts on that day, such as the day of the last change to the site.
