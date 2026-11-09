@@ -50,7 +50,7 @@ Each model action names its code in a comment above it. The main map:
 
 Atomic steps: 1 model step holds the path lock, the check of the saved answer and the failure, and the spend. That is sound because the cache of a path changes only under its lock, and `quota.spend` reads and writes the ledger under the ledger lock with no await inside. The send is its own step: `net.request` awaits the connection after the spend, and another task or process can block the day in between.
 
-Sync commit: `61bbe1b`. The models and mutants describe `src/` as of this commit. Move it forward only after you confirm that each model step still matches its code at the new commit.
+Sync commit: `65ddd56`. The models and mutants describe `src/` as of this commit. Move it forward only after you confirm that each model step still matches its code at the new commit.
 
 ## Steps
 
