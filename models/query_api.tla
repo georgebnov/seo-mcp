@@ -3,8 +3,8 @@
 \* It holds the date check of a dated method (gsc._search_analytics, ga4._sent_range,
 \* clarity._check_date) and the shape check of an HTTP 200 (shared.once with good=).
 EXTENDS Naturals
-VARIABLES pc, api, sent, wrote, scrubbed, saved, fromCache, dates, moved, reply
-vars == <<pc, api, sent, wrote, scrubbed, saved, fromCache, dates, moved, reply>>
+VARIABLES pc, api, sent, wrote, scrubbed, saved, fromCache, dates, moved, reply, read
+vars == <<pc, api, sent, wrote, scrubbed, saved, fromCache, dates, moved, reply, read>>
 Google == {"gsc", "ga4"}
 Discovery == {"catalog", "taskLookup", "recipeRows", "noTask", "fields"}
 Ends == {"catalog", "recipeRows", "noTask", "fields", "inputError", "rows", "apiMessage", "fixedError"}
@@ -18,15 +18,15 @@ Init ==
   \* the discovery states do not repeat for each later choice.
   /\ pc = "asked" /\ api = "unset" /\ sent = 0 /\ wrote = 0 /\ scrubbed = FALSE
   /\ saved = "unknown" /\ fromCache = FALSE
-  /\ dates = "unset" /\ moved = FALSE /\ reply = "none"
+  /\ dates = "unset" /\ moved = FALSE /\ reply = "none" /\ read = "unset"
 
-Keep == UNCHANGED <<api, sent, wrote, scrubbed, saved, fromCache, dates, moved, reply>>
+Keep == UNCHANGED <<api, sent, wrote, scrubbed, saved, fromCache, dates, moved, reply, read>>
 TaskWithMethod == pc = "asked" /\ pc' = "inputError" /\ Keep
 NoApiNoTask == pc = "asked" /\ pc' = "catalog" /\ Keep
 TaskAsked == pc = "asked" /\ pc' = "taskLookup" /\ Keep
 ApiNamed ==
   /\ pc = "asked" /\ pc' = "apiKnown" /\ api' \in {"gsc", "ga4", "other"}
-  /\ UNCHANGED <<sent, wrote, scrubbed, saved, fromCache, dates, moved, reply>>
+  /\ UNCHANGED <<sent, wrote, scrubbed, saved, fromCache, dates, moved, reply, read>>
 ApiUnknown == pc = "asked" /\ pc' = "inputError" /\ Keep
 TaskOnApi == pc = "apiKnown" /\ pc' = "taskLookup" /\ Keep
 TaskMatches == pc = "taskLookup" /\ pc' = "recipeRows" /\ Keep
@@ -38,7 +38,7 @@ FieldWrong == pc = "methodKnown" /\ pc' = "inputError" /\ Keep
 FieldsGood ==
   /\ pc = "methodKnown" /\ pc' = "siteKnown"
   /\ saved' \in {"none", "fresh", "expired", "failedInWindow"}
-  /\ UNCHANGED <<api, sent, wrote, scrubbed, fromCache, dates, moved, reply>>
+  /\ UNCHANGED <<api, sent, wrote, scrubbed, fromCache, dates, moved, reply, read>>
 SiteBad == pc = "methodKnown" /\ pc' = "inputError" /\ Keep
 ValueWrong == pc = "siteKnown" /\ pc' = "inputError" /\ Keep
 \* params.period, gsc._newest_end, ga4._newest_end, clarity._check_date: 2 YYYY-MM-DD dates in the
@@ -48,53 +48,57 @@ DatesRefused ==
   /\ pc = "siteKnown" /\ dates' \in StartAfterEnd
   /\ (dates' = "startAfterEndRelative" => api = "ga4")
   /\ pc' = "inputError"
-  /\ UNCHANGED <<api, sent, wrote, scrubbed, saved, fromCache, moved, reply>>
+  /\ UNCHANGED <<api, sent, wrote, scrubbed, saved, fromCache, moved, reply, read>>
 \* A range that is valid in some zone goes out. A future end goes out as the newest day, and the
 \* result has date_moved.
 DatesPass ==
   /\ pc = "siteKnown"
   /\ dates' \in {"none", "inRange", "futureEnd"}
   /\ pc' = "datesSet" /\ moved' = (dates' = "futureEnd")
-  /\ UNCHANGED <<api, sent, wrote, scrubbed, saved, fromCache, reply>>
+  /\ UNCHANGED <<api, sent, wrote, scrubbed, saved, fromCache, reply, read>>
 LocalRefusal == pc = "datesSet" /\ pc' = "inputError" /\ Keep
 \* shared.once: a saved answer of the same request, inside its stated time. _saved checks the shape.
 SavedAnswer ==
   /\ pc = "datesSet" /\ saved = "fresh" /\ pc' = "rows" /\ fromCache' = TRUE /\ scrubbed' = TRUE
   /\ reply' = "data"
-  /\ UNCHANGED <<api, sent, wrote, saved, dates, moved>>
+  /\ UNCHANGED <<api, sent, wrote, saved, dates, moved, read>>
 SharedFailure ==
   /\ pc = "datesSet" /\ saved = "failedInWindow" /\ pc' = "fixedError" /\ scrubbed' = TRUE
-  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, reply>>
+  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, reply, read>>
+\* The read that goes out. Only Search Console has the 2 sitemap reads.
 ReadQuery ==
   /\ pc = "datesSet" /\ saved \in {"none", "expired"} /\ pc' = "flight" /\ sent' = sent + 1
+  /\ read' \in IF api = "gsc" THEN {"sitemapList", "sitemapGet", "otherRead"} ELSE {"otherRead"}
   /\ UNCHANGED <<api, wrote, scrubbed, saved, fromCache, dates, moved, reply>>
 \* An HTTP 200 with a documented field: rows, or a documented empty such as {"kind": ...}.
+\* gsc.SITEMAP needs path, so 1 sitemap is always data.
 Rows ==
-  /\ pc = "flight" /\ pc' = "rows" /\ scrubbed' = TRUE /\ reply' \in {"data", "noData"}
-  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved>>
-\* Search Console sitemaps and sitemap (shared.documented) pass {}: Google leaves out an empty
-\* sitemap list, and the docs mark no field of a sitemap as always there. {} is their documented empty.
+  /\ pc = "flight" /\ pc' = "rows" /\ scrubbed' = TRUE
+  /\ reply' \in IF read = "sitemapGet" THEN {"data"} ELSE {"data", "noData"}
+  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, read>>
+\* Search Console sitemaps (gsc.SITEMAP_LIST, shared.documented) passes {}: Google leaves out an
+\* empty sitemap list. {} is its documented empty.
 EmptySitemapIsNoData ==
-  /\ pc = "flight" /\ api = "gsc" /\ pc' = "rows" /\ scrubbed' = TRUE /\ reply' = "noData"
-  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved>>
-\* shared.holds and shared.has_any refuse {}: Search Console search_analytics and url_inspection,
-\* GA4 reports and metadata. net.BAD_SHAPE, and the window starts.
+  /\ pc = "flight" /\ read = "sitemapList" /\ pc' = "rows" /\ scrubbed' = TRUE /\ reply' = "noData"
+  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, read>>
+\* shared.holds and shared.has_any refuse {}: Search Console search_analytics, url_inspection, and
+\* sitemap, GA4 reports and metadata. net.BAD_SHAPE, and the window starts.
 EmptyObjectFails ==
   /\ pc = "flight" /\ pc' = "fixedError" /\ scrubbed' = TRUE /\ reply' = "emptyObject"
-  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved>>
+  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, read>>
 OtherTextFails ==
   /\ pc = "flight" /\ pc' = "fixedError" /\ scrubbed' = TRUE /\ reply' = "otherText"
-  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved>>
+  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, read>>
 \* net.request(explain=True) reads error.message only for a Google API on HTTP 400.
 Google400 ==
   /\ pc = "flight" /\ api \in Google /\ pc' = "apiMessage" /\ scrubbed' = TRUE
-  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, reply>>
+  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, reply, read>>
 Other400 ==
   /\ pc = "flight" /\ api = "other" /\ pc' = "fixedError" /\ scrubbed' = TRUE
-  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, reply>>
+  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, reply, read>>
 OtherFailure ==
   /\ pc = "flight" /\ pc' = "fixedError" /\ scrubbed' = TRUE
-  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, reply>>
+  /\ UNCHANGED <<api, sent, wrote, saved, fromCache, dates, moved, reply, read>>
 Done == pc \in Ends /\ UNCHANGED vars
 
 Next ==
@@ -133,4 +137,6 @@ StartAfterEndSendsNothing == dates \in StartAfterEnd => sent = 0
 FutureEndMovesAndSaysSo == (pc = "rows" /\ dates = "futureEnd") => moved
 \* George: an answer with no documented field is never ok.
 NoDocumentedFieldIsNeverOk == pc = "rows" => reply \in {"data", "noData"}
+\* George: a sitemap that does not exist is HTTP 404, so 1 sitemap of {} is never ok.
+EmptySitemapRecordIsNeverOk == (pc = "rows" /\ read = "sitemapGet") => reply = "data"
 ====
