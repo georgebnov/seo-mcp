@@ -576,6 +576,39 @@ async def test_clarity_full_answer_is_not_complete_for_a_page(write_config, fake
     assert result["complete"] is False
 
 
+def page_metric(name: str, count: int) -> dict[str, object]:
+    rows = [{"totalSessionCount": "1", "Url": f"{OTHER}/{n}"} for n in range(count)]
+    return {"metricName": name, "information": rows}
+
+
+async def clarity_page(write_config, fake_net, monkeypatch, metrics) -> dict:
+    monkeypatch.setenv("CLARITY_ENV", "clarity-token-value-1234")
+    write_config(SITE)
+    fake_net(lambda _: httpx2.Response(200, json=metrics))
+    return (await ask(["clarity"], page="/a"))["sources"]["clarity"]
+
+
+# The docs do not say if the limit counts each metric or the whole answer. The sum covers both.
+async def test_clarity_metrics_at_the_row_limit_together_are_not_complete_for_a_page(
+    write_config, fake_net, monkeypatch
+):
+    metrics = [page_metric("Traffic", 600), page_metric("Dead Click Count", 400)]
+    result = await clarity_page(write_config, fake_net, monkeypatch, metrics)
+    assert result["complete"] is False
+    assert "Clarity gave 1,000 rows" in result["reason"]
+    assert "last_days" in result["reason"]
+    assert "not proof" in result["reason"]
+
+
+async def test_clarity_metrics_below_the_row_limit_together_are_complete_for_a_page(
+    write_config, fake_net, monkeypatch
+):
+    metrics = [page_metric("Traffic", 600), page_metric("Dead Click Count", 399)]
+    result = await clarity_page(write_config, fake_net, monkeypatch, metrics)
+    assert result["complete"] is True
+    assert "Clarity gave" not in result["reason"]
+
+
 async def test_clarity_compare_pages_spends_one_call(live):
     data = await ask(["clarity"], page="/a", compare_page="/b")
     assert len(api_calls(live)) == 1

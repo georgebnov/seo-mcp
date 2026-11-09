@@ -825,6 +825,44 @@ def test_no_clarity_answer_with_rows_has_a_fixed_more_rows_no():
     )
 
 
+ROW_LIMIT_RULE = "_row_limit"
+
+
+def own_row_limit_checks(source: str) -> list[int]:
+    """Give the lines of comparisons with API_ROWS or 1000 outside the 1 row limit rule."""
+    lines = []
+    for function in ast.walk(ast.parse(source)):
+        if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if function.name == ROW_LIMIT_RULE:
+            continue
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Compare):
+                continue
+            names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+            numbers = {n.value for n in ast.walk(node) if isinstance(n, ast.Constant)}
+            if "API_ROWS" in names or 1000 in numbers:
+                lines.append(node.lineno)
+    return lines
+
+
+# The docs do not say if the limit counts each metric or the whole answer, so each path sums.
+def test_each_clarity_row_limit_check_goes_through_one_rule():
+    lines = own_row_limit_checks(CLARITY_SOURCE.read_text(encoding="utf-8"))
+    assert not lines, (
+        f"{CLARITY_SOURCE.name} lines {lines}: a path compares rows with the row limit itself. "
+        f"Call {ROW_LIMIT_RULE}(metrics, ...), which sums the rows of all metrics, and use its "
+        "reason."
+    )
+
+
+def test_the_row_limit_scan_finds_an_own_check():
+    each = "def f(m):\n    return any(len(x) >= API_ROWS for x in m)"
+    assert own_row_limit_checks(each) == [2]
+    assert own_row_limit_checks("def f(m):\n    return len(m) > 1000") == [2]
+    assert own_row_limit_checks(f"def {ROW_LIMIT_RULE}(m):\n    return len(m) >= API_ROWS") == []
+
+
 def test_the_more_rows_scan_finds_a_fixed_no():
     assert fixed_no_with_rows('answer(rows, more_rows="no")') == [1]
     assert fixed_no_with_rows('answer([], more_rows="no")') == []

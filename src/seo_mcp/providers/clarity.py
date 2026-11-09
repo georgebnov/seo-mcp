@@ -34,16 +34,15 @@ DAILY_CALLS = 10
 # The API cuts an answer at this many rows and has no paging.
 API_ROWS = 1000
 PAGE_MATCH = "The API has no URL filter. The server keeps the URL rows of this page, any scheme."
-MISS_REASON = (
-    f"Clarity has no row for this page. An answer has at most {API_ROWS} rows for each metric, "
-    "so this is not proof of zero traffic."
-)
+MISS_REASON = "Clarity has no row for this page, so this is not proof of zero traffic."
 LIMIT_REASON = (
     f"The Clarity docs limit an answer to {API_ROWS:,} rows with no paging, and Clarity gave "
     "{rows:,} rows for this request, so it can have more rows. The docs do not say if the limit "
     "counts each metric or the whole answer. The API has no URL or row filter. To read fewer "
-    "rows, ask fewer dimensions, a dimension with fewer values, or a smaller numOfDays."
+    "rows, ask {fewer}."
 )
+FEWER_INSIGHTS = "fewer dimensions, a dimension with fewer values, or a smaller numOfDays"
+FEWER_PAGE_DAYS = "a smaller last_days"
 LEDGER = quota.Ledger("clarity-calls", "Clarity project", DAILY_CALLS)
 
 
@@ -165,11 +164,21 @@ def _rows(metric: dict[str, Any]) -> list[dict[str, Any]]:
     return [{"metric": metric.get("metricName"), **item} for item in items]
 
 
+def _row_limit(metrics: list[dict[str, Any]], fewer: str) -> str | None:
+    """Give the reason when the answer can be cut at the row limit, or None.
+
+    The docs do not say if the limit counts each metric or the whole answer. The sum covers both.
+    """
+    rows = sum(len(metric.get("information") or []) for metric in metrics)
+    return LIMIT_REASON.format(rows=rows, fewer=fewer) if rows >= API_ROWS else None
+
+
 def _page_fields(metrics: list[dict[str, Any]], found: bool) -> dict[str, Any]:
-    capped = any(len(metric.get("information") or []) >= API_ROWS for metric in metrics)
-    fields: dict[str, Any] = {"page_match": PAGE_MATCH, "complete": not capped}
-    if not found:
-        fields["reason"] = MISS_REASON
+    limit = _row_limit(metrics, FEWER_PAGE_DAYS)
+    fields: dict[str, Any] = {"page_match": PAGE_MATCH, "complete": limit is None}
+    reason = " ".join(filter(None, (None if found else MISS_REASON, limit)))
+    if reason:
+        fields["reason"] = reason
     return fields
 
 
@@ -419,10 +428,8 @@ async def _live_insights(site: Site, request: dict[str, Any]) -> dict[str, Any]:
     days = whole("numOfDays", request["numOfDays"], 1, WINDOW_DAYS)
     metrics = await _insights(site, days, _dimensions(request))
     rows = [row for metric in metrics for row in _rows(metric)]
-    # The docs do not say if the limit counts each metric or the whole answer. The sum covers both.
-    full = len(rows) >= API_ROWS
-    more = "possible" if full else "no"
-    reason = LIMIT_REASON.format(rows=len(rows)) if full else None
+    reason = _row_limit(metrics, FEWER_INSIGHTS)
+    more = "no" if reason is None else "possible"
     return answer(rows, more_rows=more, reason=reason, applied=request)
 
 
