@@ -468,6 +468,25 @@ async def test_a_saved_report_of_a_partial_day_never_shows_it_complete(live, fak
     assert second["from_cache"] is False
 
 
+async def test_a_saved_query_api_answer_never_shows_a_partial_day_complete(
+    live, fake_net, monkeypatch
+):
+    t0 = datetime(2026, 3, 18, 20, 0, tzinfo=UTC)
+    request = {"startDate": "2026-03-10", "endDate": "2026-03-18", "dimensions": ["page"]}
+    freeze(monkeypatch, t0)
+    search_console(fake_net, "2026-03-17", days=["2026-03-17"])
+    await source("search_pages")
+    freeze(monkeypatch, t0 + timedelta(seconds=200))
+    await search_analytics(request)
+    # Google moves its day: the coverage entry ends at t0+300 s, and the query entry is still good.
+    freeze(monkeypatch, t0 + timedelta(seconds=350))
+    calls = search_console(fake_net, "2026-03-18", days=["2026-03-17"])
+    second = await search_analytics(request)
+    assert second["coverage"]["last_complete_day"] == "2026-03-17"
+    assert len(reports(calls)) == 1, "Rows of a partial day must not serve as complete."
+    assert second["from_cache"] is False
+
+
 async def test_a_saved_report_serves_while_the_day_does_not_move(live, fake_net, monkeypatch):
     t0 = datetime(2026, 3, 18, 20, 0, tzinfo=UTC)
     named = {"start_date": "2026-03-10", "end_date": "2026-03-18"}
@@ -506,17 +525,36 @@ async def search_analytics(request):
     return await core.query_api(HOST, "search_console", "search_analytics", request)
 
 
-async def test_query_api_sends_1_query_and_marks_an_estimate(live, fake_net, monkeypatch):
+async def test_query_api_marks_an_estimate_when_no_read_gives_the_day(live, fake_net, monkeypatch):
     freeze(monkeypatch, MORNING)
     calls = search_console(fake_net)
     data = await search_analytics({"startDate": "2026-03-10", "endDate": "2026-03-18"})
-    assert len(bodies(calls)) == 1
+    # The coverage read of get_seo_data, then the query.
+    assert len(bodies(calls)) == 2
     coverage = data["coverage"]
     assert coverage["last_complete_day"] == ESTIMATE
     assert coverage["last_complete_day_source"] == "estimate"
     assert "dataState all" in coverage["last_complete_day_how"]
     assert coverage["data_state"] == "final"
     assert coverage["partial_days"] == {"from": "2026-03-15", "to": "2026-03-18"}
+
+
+DAY_FIELDS = ("last_complete_day", "last_complete_day_source", "partial_days")
+
+
+async def test_both_tools_give_the_same_coverage_of_the_same_days(live, fake_net, monkeypatch):
+    """A live test: get_seo_data gave the API day, and query_api an estimate of the same days."""
+    freeze(monkeypatch, MORNING)
+    search_console(fake_net, "2026-03-16")
+    seo = await source("search_pages", start_date="2026-02-16", end_date=FIXED_END)
+    request = {"startDate": "2026-02-16", "endDate": FIXED_END, "dimensions": ["page"]}
+    api = await search_analytics(request)
+    assert {key: api["coverage"][key] for key in DAY_FIELDS} == {
+        key: seo["coverage"][key] for key in DAY_FIELDS
+    }
+    assert api["coverage"]["last_complete_day_source"] == "api"
+    assert "incomplete" not in api
+    assert "incomplete" not in seo
 
 
 async def test_query_api_reads_the_documented_value_of_the_reply(live, fake_net, monkeypatch):
@@ -1076,3 +1114,26 @@ def test_the_rule_of_a_real_0_is_in_the_text(text):
     assert "real 0" in flat
     assert "partial" in flat
     assert "date_moved" in flat
+
+
+def _calls(function: ast.AST) -> set[str]:
+    return {ast.unparse(node.func) for node in ast.walk(function) if isinstance(node, ast.Call)}
+
+
+def test_each_search_console_coverage_starts_from_the_shared_read():
+    """A live test: query_api read only its own reply, and gave the same days an estimate.
+
+    Each function that builds a Search Console coverage also reads gsc._last_complete, the read
+    that get_seo_data uses, so that the 2 tools give the same days the same answer.
+    """
+    path = SOURCE / "providers" / "gsc.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    wrong = [
+        f"{path.name}:{node.lineno} {node.name}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
+        and "_coverage" in _calls(node)
+        and "_last_complete" not in _calls(node)
+    ]
+    fix = "Read the day with _last_complete before _coverage, and use _shown for an estimate:"
+    assert not wrong, f"{fix} {wrong}"
