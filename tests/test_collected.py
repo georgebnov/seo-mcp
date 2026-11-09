@@ -243,3 +243,100 @@ async def test_each_dated_source_checks_its_first_day_of_data(live, fake_net, mo
     sides = {"main": result, "comparison": result.get("comparison", {})}
     missing = sorted(side for side, done in sides.items() if "first_data_read" not in done)
     assert not missing, f"{name}: {fix} {missing}"
+
+
+# The reason gives the exact pair to ask next: both starts move forward by the same days, to
+# the first day of data, and both ends stay. Delta is main minus comparison, so either range
+# can be the later one.
+OCTOBER = {"start_date": "2026-10-01", "end_date": "2026-10-28"}
+SEPTEMBER = {"compare_start_date": "2026-09-01", "compare_end_date": "2026-09-28"}
+PAIR = (
+    "ask start_date 2026-10-04 to end_date 2026-10-28 (main range) against "
+    "compare_start_date 2026-09-04 to compare_end_date 2026-09-28 (comparison range)"
+)
+
+
+async def search_pages(fake_net, monkeypatch, first, **dates):
+    freeze(monkeypatch, ANSWERED)
+    fake_net(replies(property_with({}, gsc_first=first)))
+    return (await core.get_seo_data(HOST, ["search_pages"], **dates))["sources"]["search_pages"]
+
+
+async def test_a_comparison_start_before_the_first_day_gives_the_pair(live, fake_net, monkeypatch):
+    result = await search_pages(fake_net, monkeypatch, "2026-09-04", **OCTOBER, **SEPTEMBER)
+    assert result["delta"] is None
+    assert PAIR in result["reason"]
+    assert "move both starts 3 days" in result["reason"]
+
+
+async def test_a_main_start_before_the_first_day_gives_the_pair(live, fake_net, monkeypatch):
+    dates = {
+        "start_date": "2026-09-01",
+        "end_date": "2026-09-28",
+        "compare_start_date": "2026-10-01",
+        "compare_end_date": "2026-10-28",
+    }
+    result = await search_pages(fake_net, monkeypatch, "2026-09-04", **dates)
+    assert result["delta"] is None
+    assert (
+        "ask start_date 2026-09-04 to end_date 2026-09-28 (main range) against "
+        "compare_start_date 2026-10-04 to compare_end_date 2026-10-28 (comparison range)"
+    ) in result["reason"]
+
+
+async def test_a_range_with_no_day_after_the_first_day_gives_no_pair(live, fake_net, monkeypatch):
+    dates = {**OCTOBER, "compare_start_date": "2026-08-01", "compare_end_date": "2026-08-20"}
+    result = await search_pages(fake_net, monkeypatch, "2026-09-04", **dates)
+    assert result["delta"] is None
+    assert "The comparison range has no day on or after 2026-09-04" in result["reason"]
+    assert "ask start_date" not in result["reason"]
+
+
+async def test_a_range_shorter_than_the_move_gives_no_pair(live, fake_net, monkeypatch):
+    # Both starts move 9 days, so the 9 day main range has no day left.
+    dates = {"start_date": "2026-10-20", "end_date": "2026-10-28", **SEPTEMBER}
+    result = await search_pages(fake_net, monkeypatch, "2026-09-10", **dates)
+    assert result["delta"] is None
+    assert "main range is shorter than that, so no pair fits" in result["reason"]
+    assert "ask start_date" not in result["reason"]
+
+
+async def test_a_failed_first_day_read_gives_no_pair(live, fake_net, monkeypatch):
+    freeze(monkeypatch, ANSWERED)
+    console = search_console_from("2026-09-04", status=500)
+    fake_net(replies(lambda request: console(request)))
+    data = await core.get_seo_data(HOST, ["search_pages"], **OCTOBER, **SEPTEMBER)
+    result = data["sources"]["search_pages"]
+    assert result["delta"] is None
+    assert "could not check the first day of data of the main range" in result["reason"]
+    assert "ask start_date" not in result["reason"]
+
+
+async def test_each_source_gives_its_own_pair(live, fake_net, monkeypatch):
+    freeze(monkeypatch, ANSWERED)
+    days = {"20261005": 1, "20261020": 2}
+    fake_net(replies(property_with(days, first_event="20260910", gsc_first="2026-09-04")))
+    data = await core.get_seo_data(HOST, ["search_pages", "ga4_organic"], **OCTOBER, **SEPTEMBER)
+    gsc, analytics = data["sources"]["search_pages"], data["sources"]["ga4_organic"]
+    assert PAIR in gsc["reason"]
+    assert (
+        "ask start_date 2026-10-10 to end_date 2026-10-28 (main range) against "
+        "compare_start_date 2026-09-10 to compare_end_date 2026-09-28 (comparison range)"
+    ) in analytics["reason"]
+    assert "the pair with the latest start_date" in gsc["reason"]
+    # 1 source never changes the dates of another.
+    assert gsc["applied"]["start_date"] == analytics["applied"]["start_date"] == "2026-10-01"
+
+
+@pytest.mark.parametrize("name", DATED)
+async def test_each_dated_source_gives_the_pair_to_ask(live, fake_net, monkeypatch, name):
+    freeze(monkeypatch, ANSWERED)
+    fake_net(replies(property_with({}, first_event="20260904", gsc_first="2026-09-04")))
+    data = await core.get_seo_data(HOST, [name], **OCTOBER, **SEPTEMBER)
+    result = data["sources"][name]
+    fix = (
+        "A range before the first day of data must give the aligned pair in reason (see "
+        "core._aligned): both starts move to the first day by the same days, both ends stay."
+    )
+    assert result["delta"] is None, f"{name}: {fix}"
+    assert PAIR in (result["reason"] or ""), f"{name}: {fix} reason: {result['reason']}"

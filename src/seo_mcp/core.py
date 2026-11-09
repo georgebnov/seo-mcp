@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from seo_mcp import api as full_api
@@ -133,26 +133,82 @@ def _uncollected(side: str, result: dict[str, Any], params: Params) -> str | Non
         return f"The source reports no event on any day, so the {side} range has no data."
     if first is None or first <= start:
         return None
+    return f"The {side} range starts on {start}, but the first day with any data is {first}."
+
+
+def _span(params: Params) -> tuple[date, date] | None:
+    return (params.start, params.end) if params.start and params.end else None
+
+
+def _aligned(first: str, primary: Params, comparison: Params) -> str:
+    """Give the 2 ranges to ask next: both starts move forward by the same days, to first.
+
+    d = max(0, first - each start). Both ends stay. Delta is main minus comparison, so either
+    range can be the later one, and the rule needs no order. get_seo_data takes only YYYY-MM-DD
+    dates for a comparison, so each start and end is a real date.
+    """
+    fallback = f"Ask 2 ranges that start on or after {first}."
+    main, other = _span(primary), _span(comparison)
+    if main is None or other is None:
+        return fallback
+    day = date.fromisoformat(first)
+    shift = max(timedelta(0), day - main[0], day - other[0])
+    ranges = (("main", main), ("comparison", other))
+    for side, (_, end) in ranges:
+        if end < day:
+            return f"The {side} range has no day on or after {first}, so no pair fits. {fallback}"
+    for side, (start, end) in ranges:
+        if start + shift > end:
+            return (
+                f"Both starts must move {shift.days} days to start on or after {first}, but the "
+                f"{side} range is shorter than that, so no pair fits. {fallback}"
+            )
     return (
-        f"The {side} range starts on {start}, but the first day with any data is {first}. "
-        f"Ask 2 ranges that start on or after {first}."
+        f"To compare the same days on or after {first}, move both starts {shift.days} days: "
+        f"ask start_date {main[0] + shift} to end_date {main[1]} (main range) against "
+        f"compare_start_date {other[0] + shift} to compare_end_date {other[1]} (comparison "
+        "range). With more sources, ask the pair with the latest start_date for all of them."
     )
+
+
+def _found_day(sides: list[dict[str, Any]]) -> str | None:
+    """The first day of data, or None when the read of 1 range failed or found no data.
+
+    A range with a row on its first day reads nothing, so 1 found day is enough.
+    """
+    reads = {done.get("first_data_read") for done in sides} - {None}
+    found = [done["first_data_day"] for done in sides if done.get("first_data_day")]
+    return max(found) if reads == {"found"} and found else None
 
 
 def _gate_delta(result: dict[str, Any], primary: Params, comparison: Params) -> None:
     """George: the comparison needs to be same dates. A range with no collected data gives none."""
+    sides = [result, result["comparison"]]
     notes = [
         note
-        for side, done, params in (
-            ("main", result, primary),
-            ("comparison", result["comparison"], comparison),
+        for side, done, params in zip(
+            ("main", "comparison"), sides, (primary, comparison), strict=True
         )
         if (note := _uncollected(side, done, params))
     ]
-    if notes:
-        result["delta"] = None
-        notes.append("So delta is null.")
-        result["reason"] = " ".join(filter(None, [result["reason"], *notes]))
+    if not notes:
+        return
+    result["delta"] = None
+    first = _found_day(sides)
+    if first:
+        notes.append(_aligned(first, primary, comparison))
+    else:
+        # A failed or empty read gives no sure pair: a range that starts too early still asks.
+        late = [
+            done["first_data_day"]
+            for done, params in zip(sides, (primary, comparison), strict=True)
+            if done.get("first_data_day")
+            and params.start
+            and done["first_data_day"] > params.start.isoformat()
+        ]
+        notes += [f"Ask 2 ranges that start on or after {max(late)}."] if late else []
+    notes.append("So delta is null.")
+    result["reason"] = " ".join(filter(None, [result["reason"], *notes]))
 
 
 async def _asked(
