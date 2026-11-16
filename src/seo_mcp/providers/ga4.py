@@ -2,7 +2,7 @@
 
 import json
 from contextlib import suppress
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
@@ -78,17 +78,17 @@ ORGANIC = {
 }
 
 
-# The docs state that daily quotas refresh at midnight Pacific Standard Time. A fixed offset
-# also keeps the server able to start on a host with no timezone data.
-RESET_ZONE = timezone(timedelta(hours=-8))
+# The docs state that daily quotas refresh at midnight Pacific time, so the ledger key and
+# each date of the view are US Pacific dates, with summer time. A token count needs no clock time.
 DAILY_TOKENS = {"standard": 200_000, "analytics_360": 2_000_000}
 LOW_DAY_TOKENS = 20_000
 LOW_HOUR_TOKENS = 4_000
 POOLS = {"runReport": "core", "runPivotReport": "core", "runRealtimeReport": "realtime"}
 COUNTED = (
-    "tokens_left comes from the API, at seen_at. tokens_used_today sums the tokens of the calls "
+    "tokens_left comes from the API, on seen_on. tokens_used_today sums the tokens of the calls "
     "of this machine, through this cache folder."
 )
+DAY_ZONE = "seen_on and resets_on are US Pacific dates: GA4 resets its quotas at midnight Pacific."
 NO_READING = "The server has no reading since the last reset: the next GA4 report gives one."
 # The docs: kind "is always the fixed string" of the method. A real empty report has no rows,
 # so only kind tells it from a reply such as {"message": "try later"}.
@@ -102,12 +102,11 @@ def reading_path(prop: str, pool: str) -> Path:
 
 
 def _pacific_day() -> str:
-    return datetime.now(RESET_ZONE).date().isoformat()
+    return quota.pacific_date().isoformat()
 
 
-def _next_reset() -> str:
-    next_day = datetime.now(RESET_ZONE).date() + timedelta(days=1)
-    return datetime(next_day.year, next_day.month, next_day.day, tzinfo=RESET_ZONE).isoformat()
+def _reset_on() -> str:
+    return (quota.pacific_date() + timedelta(days=1)).isoformat()
 
 
 def _stored(file: Path) -> dict[str, Any]:
@@ -130,11 +129,12 @@ async def _record(prop: str, pool: str, reply: dict[str, Any]) -> None:
     file = reading_path(prop, pool)
     async with quota.locked(file):
         total = _stored(file).get("tokens_used_today", 0) + spent
+        day = _pacific_day()
         quota.write_json(
             file,
             {
-                "day": _pacific_day(),
-                "seen_at": datetime.now(RESET_ZONE).isoformat(),
+                "day": day,
+                "seen_on": day,
                 "tokens_used_today": total,
                 "tokens_spent": spent,
                 "tokens_left": _left(seen, "tokensPerDay"),
@@ -163,8 +163,9 @@ def _view(prop: str, pool: str) -> dict[str, Any]:
         # The reading is of the last live call. A saved answer, or a failure in its window,
         # sent nothing, so it spent nothing.
         "tokens_spent": 0 if shared.shown().get("from_cache") else stored.get("tokens_spent"),
-        "seen_at": stored.get("seen_at"),
-        "resets_at": _next_reset(),
+        "seen_on": stored.get("seen_on"),
+        "resets_on": _reset_on(),
+        "day_zone": DAY_ZONE,
         "reset_stated": True,
         "counted": COUNTED,
     }

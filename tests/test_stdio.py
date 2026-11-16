@@ -19,7 +19,11 @@ def payload(result) -> dict:
     return json.loads(result.content[0].text)
 
 
-async def test_three_tools_and_an_honest_result(write_config, repo, tmp_path):
+READ_TOOLS = ["get_seo_data", "list_sites", "query_api"]
+WRITE_TOOLS = ["submit_urls"]
+
+
+async def test_four_tools_and_an_honest_result(write_config, repo, tmp_path):
     path = write_config()
     with open(tmp_path / "stderr.log", "w") as errlog:
         async with stdio_client(server(str(path), str(repo)), errlog=errlog) as streams:
@@ -29,8 +33,16 @@ async def test_three_tools_and_an_honest_result(write_config, repo, tmp_path):
                 sites = payload(await session.call_tool("list_sites", {}))
                 data = await session.call_tool("get_seo_data", {"sources": ["bing_links"]})
                 data = payload(data)
-    assert sorted(tool.name for tool in tools) == ["get_seo_data", "list_sites", "query_api"]
-    assert all(tool.annotations.read_only_hint for tool in tools)
+                urls = {"urls": ["https://www.example.com/jobs/1"]}
+                submit = payload(await session.call_tool("submit_urls", urls))
+    assert sorted(tool.name for tool in tools) == sorted(READ_TOOLS + WRITE_TOOLS)
+    kinds = {tool.name: tool.annotations for tool in tools}
+    assert all(kinds[name].read_only_hint for name in READ_TOOLS)
+    assert all(kinds[name].read_only_hint is False for name in WRITE_TOOLS)
+    assert all(kinds[name].destructive_hint is False for name in WRITE_TOOLS)
     assert sites["rows"][0]["host"] == "www.example.com"
     assert data["site"] == "www.example.com"
     assert data["status"] == "not_connected"
+    # The example site has no opt-in, so the write refuses and sends nothing.
+    assert submit["status"] == "refused"
+    assert "submit_urls" in submit["reason"]

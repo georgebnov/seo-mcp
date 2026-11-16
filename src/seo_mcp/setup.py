@@ -21,7 +21,7 @@ from typing import Any
 
 from seo_mcp import NAME, config, connection, quota, secrets
 from seo_mcp.config import ConfigError, Site
-from seo_mcp.connection import MISSING_FIELD, MISSING_REFERENCE, NEEDS, NOT_CHECKED, READY
+from seo_mcp.connection import MISSING_FIELD, MISSING_REFERENCE, NEEDS, NOT_CHECKED, OFF, READY
 from seo_mcp.results import NotConnected, Refused
 
 FIELD_HINTS = {
@@ -29,7 +29,19 @@ FIELD_HINTS = {
     "ga4_property_id": "the GA4 property ID, for example 123456789",
     "bing_site_url": "the site URL in Bing Webmaster Tools, for example https://www.example.com/",
     "clarity_project": "the Clarity project, for example example-project (with none, the host)",
+    "submit_urls": (
+        f'type "{config.ON}" to let the submit_urls tool send URL_UPDATED notifications of this '
+        "site to the Google Indexing API (empty or - keeps it off)"
+    ),
 }
+# The grant of the write. A service account gets it in the Google consoles, not from a key.
+GRANT = """
+submit_urls is on for {host}. Before it can send, do these steps 1 time:
+  1. In Google Cloud, in the project of the service account, turn on the Indexing API.
+  2. In Search Console, open the property {prop}, then Settings, Users and permissions, and add
+     the client_email of the service account as an Owner.
+The write token asks only for the indexing scope. The read sources keep their read-only
+scopes. Google documents this API only for JobPosting and BroadcastEvent pages."""
 SECRET_HINTS = {
     "google_service_account": "the JSON key of the service account, for Search Console and GA4",
     "google_api_key": "the Google API key, for PageSpeed and the Chrome UX Report",
@@ -78,10 +90,14 @@ def _step(site: Site, gap: connection.Gap, file: Path) -> str:
 
 
 def _provider(site: Site, api: str, file: Path) -> dict[str, Any]:
-    """The state comes from connection.state, so status and the server never disagree."""
+    """The state comes from connection.state, so status and the server never disagree.
+
+    An off write has no gap to fix: the user did not opt in.
+    """
     gaps = [
         {"state": gap.state, "name": gap.name, "step": _step(site, gap, file)}
         for gap in connection.gaps(site, api)
+        if gap.state != OFF
     ]
     return {"provider": api, "state": connection.state(site, api), "gaps": gaps}
 
@@ -102,7 +118,7 @@ def status(only: str | None = None) -> dict[str, Any]:
             {
                 "host": site.host,
                 "repo_path": str(site.repo_path),
-                "ready": all(row["state"] == READY for row in found),
+                "ready": all(row["state"] in (READY, OFF) for row in found),
                 "providers": found,
             }
         )
@@ -193,6 +209,10 @@ def _env_problem(answer: str) -> str | None:
     return _plain(answer)
 
 
+def _opt_in_problem(answer: str) -> str | None:
+    return None if answer == config.ON else f'Type "{config.ON}", or - to keep it off.'
+
+
 def _kind_problem(answer: str) -> str | None:
     return None if answer in KINDS else f"Type 1 of {', '.join(KINDS)}."
 
@@ -265,11 +285,14 @@ def _ask_entry(sites: dict[str, Any], shared: dict[str, Any], host: str) -> dict
     if repo == typed and not repo.startswith("~") and not Path(repo).is_absolute():
         repo = str(_folder(repo))
     for name, hint in FIELD_HINTS.items():
-        value = _ask_until(f"{name}: {hint} (now: {entry.get(name, 'none')}): ", _plain)
+        problem = _opt_in_problem if name == config.OPT_IN else _plain
+        value = _ask_until(f"{name}: {hint} (now: {entry.get(name, 'none')}): ", problem)
         if value == REMOVE:
             entry.pop(name, None)
         elif value:
             entry[name] = value
+    if entry.get(config.OPT_IN) == config.ON:
+        print(GRANT.format(host=host, prop=entry.get("gsc_property", "of the site")))
     own: dict[str, Any] = dict(entry.get("secrets", {}))
     for name in SECRET_HINTS:
         _ask_secret(name, own, shared)

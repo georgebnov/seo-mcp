@@ -622,7 +622,88 @@ DATES: tuple[Mutant, ...] = (
     ),
 )
 
-AREAS: dict[str, tuple[Mutant, ...]] = {"quota": QUOTA, "dates": DATES}
+SUBMIT_MODEL = "submit_urls"
+SUBMIT_TESTS = "tests/test_indexing.py::"
+SUBMIT: tuple[Mutant, ...] = (
+    Model(
+        "OffSendsNothing",
+        SUBMIT_MODEL,
+        (('OptedIn == pc = "start" /\\ optIn /\\', 'OptedIn == pc = "start" /\\'),),
+        "a site with no opt-in reaches the gate",
+    ),
+    Code(
+        "OffSendsNothing",
+        "src/seo_mcp/core.py",
+        (("    if not entry.opted_in():", "    if False:"),),
+        (f"{SUBMIT_TESTS}test_a_site_with_no_opt_in_sends_nothing",),
+        "core.submit_urls skips the opt-in check",
+    ),
+    Model(
+        "ForeignUrlSendsNothing",
+        SUBMIT_MODEL,
+        (('Inside == pc = "check" /\\ inProperty /\\', 'Inside == pc = "check" /\\'),),
+        "a URL outside the property reaches the ledger",
+    ),
+    Code(
+        "ForeignUrlSendsNothing",
+        "src/seo_mcp/providers/indexing.py",
+        (
+            (
+                '        inside = host == domain or host.endswith(f".{domain}")',
+                "        inside = True",
+            ),
+        ),
+        (f"{SUBMIT_TESTS}test_a_url_outside_the_property_is_refused_before_any_call",),
+        "indexing.problem takes each host for a domain property",
+    ),
+    Model(
+        "StaleReceiptSendsNothing",
+        SUBMIT_MODEL,
+        (
+            (
+                '/\\ pc = "reserved" /\\ receipt = "today"\n  /\\ pc\' = "flight"',
+                '/\\ pc = "reserved"\n  /\\ pc\' = "flight"',
+            ),
+        ),
+        "a receipt of the old day opens a call of the new day",
+    ),
+    Code(
+        "StaleReceiptSendsNothing",
+        "src/seo_mcp/providers/indexing.py",
+        (("            if spent.day != quota.today(LEDGER):", "            if False:"),),
+        (f"{SUBMIT_TESTS}test_a_receipt_of_the_old_day_opens_no_call",),
+        "indexing._one sends with a receipt of the old day",
+    ),
+    Model(
+        "SuccessIsSaved",
+        SUBMIT_MODEL,
+        (
+            (
+                '  /\\ pc = "flight" /\\ pc\' = "unconfirmed" /\\ cache\' = "hour"\n'
+                "  /\\ UNCHANGED <<optIn, inProperty, connected, ledger, count, sent, count0, "
+                "sent0, receipt>>",
+                '  /\\ pc = "flight" /\\ pc\' = "unconfirmed" /\\ Marked',
+            ),
+        ),
+        "a 2xx that the server cannot read starts only the failure window",
+    ),
+    Code(
+        "SuccessIsSaved",
+        "src/seo_mcp/providers/indexing.py",
+        (("good=_any,", "good=lambda reply: _echoed(reply, url),"),),
+        (f"{SUBMIT_TESTS}test_a_success_that_the_server_cannot_read_is_unconfirmed",),
+        "indexing._one saves only an answer that names the same URL",
+    ),
+    Code(
+        "NeverPastTheLimit",
+        "src/seo_mcp/quota.py",
+        (("_pacific(at) if ledger.zone == PACIFIC else UTC", "UTC"),),
+        (f"{SUBMIT_TESTS}test_the_ledger_day_is_the_pacific_day_with_summer_time",),
+        "the publish ledger counts the UTC day, not the Pacific day",
+    ),
+)
+
+AREAS: dict[str, tuple[Mutant, ...]] = {"quota": QUOTA, "dates": DATES, "submit": SUBMIT}
 
 
 def _edit(path: Path, edits: tuple[tuple[str, str], ...]) -> None:

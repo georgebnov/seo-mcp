@@ -291,6 +291,7 @@ METERED = {
     ("clarity.microsoft.com", r"/mcp/recordings/sample"),
     ("clarity.microsoft.com", r"/mcp/dashboard/query"),
     ("searchconsole.googleapis.com", r"/v1/urlInspection/index:inspect"),
+    ("indexing.googleapis.com", r"/v3/urlNotifications:publish"),
 }
 ENDPOINT = net.Endpoint("GET", "api.example.test", r"/v1/read", "a-ledger")
 URL = "https://api.example.test/v1/read"
@@ -407,6 +408,49 @@ async def test_a_ga4_reading_of_an_older_day_is_not_shown_as_today(live, fake_ne
     assert view["tokens_left"] is None
     assert view["tokens_used_today"] == 0
     assert "no reading" in view["note"]
+
+
+# 00:30 PDT on 2027-07-01. A fixed PST offset gives 23:30 on 2027-06-30: the wrong day.
+SUMMER = datetime(2027, 7, 1, 7, 30, tzinfo=UTC)
+
+
+def at_moment(monkeypatch, moment):
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return moment.astimezone(tz or UTC)
+
+    for module in (ga4, quota):
+        monkeypatch.setattr(module, "datetime", Frozen, raising=False)
+
+
+async def test_the_ga4_quota_day_is_the_pacific_date_with_summer_time(live, fake_net, monkeypatch):
+    """Google resets the GA4 quotas at midnight Pacific time, and the answer shows only dates."""
+    at_moment(monkeypatch, SUMMER)
+    fake_net(replies(ga4_reply))
+    data = await core.query_api(HOST, "ga4", "run_report", {})
+    assert (data["seen_on"], data["resets_on"]) == ("2027-07-01", "2027-07-02")
+    assert "US Pacific date" in data["day_zone"]
+    assert "seen_at" not in data and "resets_at" not in data
+    stored = json.loads(ga4.reading_path(SITE["ga4_property_id"], "core").read_text())
+    assert stored["day"] == "2027-07-01"
+
+
+async def test_a_ga4_reading_of_the_pacific_day_before_is_not_today(live, monkeypatch):
+    at_moment(monkeypatch, SUMMER)
+    path = ga4.reading_path(SITE["ga4_property_id"], "core")
+    quota.write_json(path, {"day": "2027-06-30", "tokens_used_today": 5, "tokens_left": 9})
+    view = ga4.now(core.config.resolve(HOST))["core"]
+    assert (view["tokens_left"], view["tokens_used_today"]) == (None, 0)
+    assert (view["seen_on"], view["resets_on"]) == (None, "2027-07-02")
+
+
+async def test_the_ga4_quota_shows_no_clock_time(live, fake_net):
+    fake_net(replies(ga4_reply))
+    await core.query_api(HOST, "ga4", "run_report", {})
+    view = ga4.now(core.config.resolve(HOST))["core"]
+    times = [value for value in view.values() if re.search(r"\d{2}:\d{2}", str(value))]
+    assert not times, f"The GA4 quota holds a clock time: {times}"
 
 
 async def test_few_ga4_tokens_give_a_warning(live, fake_net):

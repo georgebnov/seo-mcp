@@ -59,20 +59,26 @@ def security(tmp_path, monkeypatch):
     return install
 
 
+OFF_WRITE = "submit_urls is off for this site"
+
+
 def test_list_sites_shows_each_provider(live):
     (row,) = core.list_sites()["rows"]
-    assert row["connected"] == dict.fromkeys(providers.APIS, True)
-    assert row["missing"] == {}
+    # The write of submit_urls is off until the site opts in, so nothing is missing for a read.
+    assert row["connected"] == {**dict.fromkeys(providers.APIS, True), "indexing": False}
+    assert row["missing"] == {"indexing": [OFF_WRITE]}
 
 
 def test_list_sites_names_what_is_missing(live, monkeypatch):
     monkeypatch.delenv("BING_KEY_ENV")
     edit(lambda body, entry: entry.pop("ga4_property_id"))
     (row,) = core.list_sites()["rows"]
-    assert row["connected"] == {**dict.fromkeys(providers.APIS, True), "bing": False, "ga4": False}
+    off = {"bing": False, "ga4": False, "indexing": False}
+    assert row["connected"] == {**dict.fromkeys(providers.APIS, True), **off}
     assert row["missing"] == {
         "bing": ["the environment variable that bing_api_key names is not set"],
         "ga4": ["the sites file has no ga4_property_id"],
+        "indexing": [OFF_WRITE],
     }
     assert "bing" not in row["quota"]
     assert live == []

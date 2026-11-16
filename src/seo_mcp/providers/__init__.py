@@ -15,11 +15,11 @@ from seo_mcp.api import Api
 from seo_mcp.config import Site
 from seo_mcp.net import Endpoint
 from seo_mcp.params import Params
-from seo_mcp.providers import _google, bing, clarity, ga4, gsc, pagespeed
+from seo_mcp.providers import _google, bing, clarity, ga4, gsc, indexing, pagespeed
 
 Source = Callable[[Site, Params], Awaitable[dict[str, Any]]]
 
-MODULES: tuple[Any, ...] = (_google, gsc, ga4, pagespeed, bing, clarity)
+MODULES: tuple[Any, ...] = (_google, gsc, ga4, pagespeed, bing, clarity, indexing)
 
 
 def merge(modules: tuple[Any, ...], table: str) -> dict[str, Any]:
@@ -62,3 +62,6 @@ APIS: dict[str, Api] = {
     for name, entry in merge(MODULES, "APIS").items()
 }
 ENDPOINTS: tuple[Endpoint, ...] = tuple(e for m in MODULES for e in m.ENDPOINTS)
+# The 1 write, behind the same gate: a site that is not connected, or did not opt in, reads no
+# secret and sends nothing.
+SUBMIT: Callable[[Site, list[str]], Awaitable[dict[str, Any]]] = _gated("indexing", indexing.submit)

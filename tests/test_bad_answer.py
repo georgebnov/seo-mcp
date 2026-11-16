@@ -8,8 +8,8 @@ from pathlib import Path
 import httpx2
 import pytest
 
-from seo_mcp import core, net, quota, shared
-from seo_mcp.providers import clarity, gsc
+from seo_mcp import config, core, net, quota, shared
+from seo_mcp.providers import clarity, gsc, indexing
 from test_query_api import HOST, SITE, clarity_auth
 from test_quota import (
     DASHBOARD,
@@ -172,6 +172,24 @@ def method(api, call):
     return lambda: run(api, call)
 
 
+PROJECT = "demo-project"
+SUBMITS = (indexing.LEDGER, PROJECT)
+
+
+async def submit():
+    """Opt the site in, with an account of a Cloud project, then submit 1 URL."""
+    file = config.path()
+    body = json.loads(file.read_text())
+    (entry,) = body["sites"].values()
+    file.write_text(
+        json.dumps({**body, "sites": {k: {**entry, "submit_urls": "on"} for k in body["sites"]}})
+    )
+    key = Path(body["secrets"]["google_service_account"]["file"])
+    account = json.loads(key.read_text())
+    key.write_text(json.dumps({**account, "client_email": f"a@{PROJECT}.iam.gserviceaccount.com"}))
+    return await core.submit_urls(HOST, [f"https://{HOST}/jobs/1"])
+
+
 SPENDERS = {
     ("clarity.py", "_cached"): [
         ("clarity", CLARITY, source("clarity")),
@@ -182,6 +200,7 @@ SPENDERS = {
     ("gsc.py", "_url_inspection"): [
         ("url_inspection", INSPECTION, method("search_console", INSPECT)),
     ],
+    ("indexing.py", "_one"): [("submit_urls", SUBMITS, submit)],
     ("gsc.py", "index_status"): [
         ("index_status of 1 page", INSPECTION, source("index_status", page=f"https://{HOST}/a")),
         ("index_status of a batch", INSPECTION, source("index_status")),
@@ -217,6 +236,19 @@ async def test_a_repeat_of_any_reply_sends_nothing(live, fake_net, name, spent, 
     assert first > 0
     assert len(metered_requests(calls)) == first, f"{name} sent the repeat of a spent call."
     assert quota.view(*spent)["calls_used_today"] == first
+
+
+@pytest.mark.parametrize("body", JUNK, ids=json.dumps)
+async def test_a_success_of_the_write_never_says_failed(live, fake_net, body):
+    """Google can have the URL after any 2xx, so the 1 write never reads one as a failure."""
+
+    def reply(request):
+        return httpx2.Response(200, json=body) if metered_requests([request]) else None
+
+    fake_net(replies(reply))
+    (row,) = (await submit())["rows"]
+    fix = "Give a 2xx of the publish the status unconfirmed in indexing._one, never failed."
+    assert row["status"] == "unconfirmed", f"indexing.py: a 2xx gave {row['status']}. {fix}"
 
 
 INSPECTIONS = [path for key, paths in SPENDERS.items() if key[0] == "gsc.py" for path in paths]

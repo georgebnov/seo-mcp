@@ -11,7 +11,18 @@ from seo_mcp.results import NotConnected
 
 CONFIG_ENV = NAME.upper().replace("-", "_") + "_CONFIG"
 DEFAULT_PATH = f"~/.config/{NAME}/sites.json"
-SITE_FIELDS = {"host", "gsc_property", "ga4_property_id", "bing_site_url", "clarity_project"}
+SITE_FIELDS = {
+    "host",
+    "gsc_property",
+    "ga4_property_id",
+    "bing_site_url",
+    "clarity_project",
+    "submit_urls",
+}
+# The 1 write, submit_urls, runs only for a site with this exact value. Any other value is an
+# error, so that "off" or "false" never reads as on.
+OPT_IN = "submit_urls"
+ON = "on"
 SOURCE_KINDS = ({"env"}, {"file"}, {"file", "json_key"}, {"keychain"})
 
 
@@ -41,6 +52,9 @@ class Site:
     def optional_secret(self, name: str) -> str | None:
         return secrets.read(self.secrets[name]) if name in self.secrets else None
 
+    def opted_in(self) -> bool:
+        return self.fields.get(OPT_IN) == ON
+
 
 def path() -> Path:
     return Path(os.environ.get(CONFIG_ENV) or DEFAULT_PATH).expanduser()
@@ -69,6 +83,10 @@ def _site(repo_path: str, entry: Any, shared: dict[str, dict[str, str]]) -> Site
     for name, value in fields.items():
         if not isinstance(value, str) or secrets.scrub(value) != value:
             raise ConfigError(f"Field {name} of {repo_path} is not a plain name.")
+    if OPT_IN in fields and fields[OPT_IN] != ON:
+        raise ConfigError(
+            f'Field {OPT_IN} of {repo_path} must be "{ON}". To keep submit_urls off, remove it.'
+        )
     host = fields.pop("host").lower()
     return Site(host, Path(repo_path).expanduser().resolve(), fields, {**shared, **own})
 

@@ -1,7 +1,7 @@
 [project]
 name = "seo-mcp"
 version = "0.1.0"
-description = "Read-only MCP server: one call returns the SEO data of a site."
+description = "MCP server: one call returns the SEO data of a site. Its 1 write, submit_urls, is opt-in."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

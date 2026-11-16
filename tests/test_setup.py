@@ -70,7 +70,10 @@ def test_a_ready_site_exits_0_and_reads_no_value(ready, capsys, fake_net):
     assert code == 0
     assert VALUE not in out
     assert "www.example.com" in out
-    assert all(re.search(rf"{name}\s+ready", out) for name in providers.APIS)
+    # The write is off until the site opts in, and off counts as done: the exit code is 0.
+    reads = [name for name in providers.APIS if name != "indexing"]
+    assert all(re.search(rf"{name}\s+ready", out) for name in reads)
+    assert re.search(r"indexing\s+off", out)
     assert not calls
     asked = ready.read_text()
     assert "find-generic-password" in asked
@@ -82,7 +85,7 @@ def test_json_names_each_provider_once(ready, capsys):
     report = json.loads(out)
     assert code == 0
     assert report["ready"] is True
-    assert states(report) == dict.fromkeys(providers.APIS, "ready")
+    assert states(report) == {**dict.fromkeys(providers.APIS, "ready"), "indexing": "off"}
 
 
 def test_each_gap_has_a_state_and_a_next_step(write_config, tmp_path, keychain, capsys):
@@ -103,6 +106,7 @@ def test_each_gap_has_a_state_and_a_next_step(write_config, tmp_path, keychain, 
         "crux": "missing secret reference",
         "bing": "missing field",
         "clarity": "missing secret reference",
+        "indexing": "off",
     }
     rows = {row["provider"]: row for row in report["sites"][0]["providers"]}
     steps = {gap["name"]: gap["step"] for row in rows.values() for gap in row["gaps"]}

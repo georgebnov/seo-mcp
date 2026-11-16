@@ -1,4 +1,4 @@
-"""The full path: query_api sends 1 official read query and keeps the server read-only."""
+"""The full path: query_api sends 1 official read query, and it never writes."""
 
 import ast
 import asyncio
@@ -152,7 +152,8 @@ async def test_options_list_fields_values_and_gaps(live):
 def test_each_api_has_docs_and_a_list_of_gaps_in_the_readme(name):
     entry = providers.APIS[name]
     assert entry.docs.startswith("https://")
-    assert entry.methods
+    # The Indexing API has no read method: only the submit_urls tool writes to it.
+    assert entry.methods or name == "indexing"
     readme = README.read_text()
     for gap in entry.gaps:
         assert gap in readme, f"README has no line for this gap of {name}: {gap}"

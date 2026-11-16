@@ -1,6 +1,7 @@
 """Google service account sign-in, shared by the Search Console and GA4 providers."""
 
 import json
+import re
 import time
 from datetime import date, timedelta
 from typing import Any
@@ -22,6 +23,13 @@ APIS: dict[str, Any] = {}
 TOKEN_SECONDS = 3600
 REFRESH_MARGIN_SECONDS = 60
 UNKNOWN_REASON = "No day of the range is complete, so the total is unknown."
+
+# Google names a key of a user-made service account NAME@PROJECT.iam.gserviceaccount.com.
+PROJECT_EMAIL = re.compile(r"[^@]+@([a-z][a-z0-9-]{4,28}[a-z0-9])\.iam\.gserviceaccount\.com")
+NO_PROJECT = (
+    "The client_email of the Google service account does not name a Cloud project "
+    "(NAME@PROJECT.iam.gserviceaccount.com), so the server cannot count its project quota."
+)
 
 _tokens: dict[tuple[str, str], tuple[str, float]] = {}
 
@@ -75,6 +83,18 @@ def principal(site: Site) -> shared.Identity:
     token step, before any saved answer or failure.
     """
     return shared.identity("google_service_account", _account(site)["client_email"])
+
+
+def project(site: Site) -> str:
+    """The Cloud project of the account, from the email that signs each grant.
+
+    A project_id field of the file is only a label: 2 files with 1 key could name 2 projects.
+    The email is the issuer of the grant, so it is the account that Google counts.
+    """
+    match = PROJECT_EMAIL.fullmatch(_account(site)["client_email"])
+    if not match:
+        raise NotConnected(NO_PROJECT)
+    return match.group(1)
 
 
 async def token(site: Site, scope: str) -> str:

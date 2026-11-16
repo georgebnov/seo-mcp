@@ -566,6 +566,7 @@ ALLOWED = {
     ("ga4.py", "send"),
     ("gsc.py", "_inspect"),
     ("gsc.py", "send"),
+    ("indexing.py", "send"),
     ("shared.py", "send"),
 }
 
