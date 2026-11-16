@@ -365,17 +365,13 @@ ZONE_NAMES = {"UTC", "timezone", "tzinfo", "astimezone", "ZoneInfo"}
 ALLOWED = {
     # The 1 day of each date rule: the local date of the machine, and only that call.
     ("params.py", "_clock", "date.today"),
-    # The call ledger counts the UTC day of the Clarity and URL Inspection quotas.
+    # The call ledgers count the UTC or US Pacific day of a quota, and quota.pacific_date gives
+    # the US Pacific day of the GA4 token quota.
     ("quota.py", "*"),
     # The 5-minute saved answer and the 60-second failure window are times, not days.
     ("shared.py", "*"),
     # Clarity resets its 10 calls at its own day boundary, so its day stays UTC.
     ("clarity.py", "utc_day"),
-    # The GA4 token quota resets at midnight PST: a quota day, not a day of data.
-    ("ga4.py", "RESET_ZONE"),
-    ("ga4.py", "_pacific_day"),
-    ("ga4.py", "_next_reset"),
-    ("ga4.py", "_record"),
     # An OAuth token ends after 1 hour.
     ("_google.py", "token"),
     # Bing gives each row day as /Date(ms)/ at 00:00 UTC. This reads that instant, not the
