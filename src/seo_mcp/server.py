@@ -205,7 +205,7 @@ urls is a list of 1 to {core.MAX_SUBMIT} full URLs of the Search Console propert
 A URL outside the property, or with a user name, a password, a fragment, or . or .. parts, is
 refused before any call.
 Each URL spends 1 of the 200 publish calls of the Google Cloud project for each day. The day
-resets at midnight Pacific time. Read calls_left of indexing in list_sites first.
+resets at midnight Pacific time. Each answer shows calls_used_today and calls_left.
 A repeat of 1 URL within 1 hour sends nothing and spends nothing: the row shows from_cache true
 and the first notify_time. After 1 hour, the same URL goes out again and spends 1.
 Each row has url, status (submitted, refused, or failed), and reason. A submitted row has

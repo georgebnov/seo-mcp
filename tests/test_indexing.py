@@ -106,6 +106,8 @@ async def test_a_submit_sends_url_updated_with_the_indexing_scope(write_config, 
     assert published(calls) == [{"url": "https://www.example.com/jobs/1", "type": "URL_UPDATED"}]
     assert scopes(calls) == [indexing.SCOPE]
     assert used() == 1
+    assert result["calls_left"] == 199
+    assert result["reset_stated"] is True
     assert ACCESS not in json.dumps(result)
 
 
@@ -370,3 +372,20 @@ async def test_a_receipt_of_the_old_day_opens_no_call(write_config, fake_net, ow
     assert row["status"] == "failed"
     assert row["reason"] == indexing.DAY_ENDED
     assert published(calls) == []
+
+
+def test_list_sites_reads_no_secret_for_the_write(write_config, tmp_path):
+    """The ledger key comes from the key file, so list_sites shows only the limits.
+
+    A read of a Keychain item for list_sites would ask the user each time.
+    """
+    locked = tmp_path / "locked.json"
+    locked.write_text("{}")
+    locked.chmod(0)
+    write_config(DOMAIN, {"google_service_account": {"file": str(locked)}})
+    (row,) = core.list_sites()["rows"]
+    assert row["connected"]["indexing"] is True
+    assert row["quota"]["indexing"] == {
+        "tracked": False,
+        "limits": list(indexing.APIS["indexing"].quota.limits),
+    }

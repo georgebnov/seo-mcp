@@ -14,7 +14,7 @@ from seo_mcp import net, quota, shared
 from seo_mcp.api import Api, Quota
 from seo_mcp.config import ON, Site
 from seo_mcp.providers import _google
-from seo_mcp.results import NotConnected, Refused, ok
+from seo_mcp.results import Refused, ok
 
 HOST = "indexing.googleapis.com"
 PUBLISH_API = f"https://{HOST}/v3/urlNotifications:publish"
@@ -207,14 +207,6 @@ async def submit(site: Site, urls: list[str]) -> dict[str, Any]:
     return ok(ordered, thin=not counts["submitted"], limit=len(ordered), counts=counts)
 
 
-def now(site: Site) -> dict[str, Any]:
-    try:
-        key = _google.project(site)
-    except NotConnected as exc:
-        return {"publish": {"calls_left": None, "quota_warning": str(exc)}}
-    return {"publish": quota.view(LEDGER, key)}
-
-
 APIS = {
     "indexing": Api(
         title="Google Indexing API",
@@ -226,9 +218,10 @@ APIS = {
                 f"Publish: {LEDGER.limit} requests each day for each Google Cloud project. "
                 "Each URL counts 1, also in a batch.",
                 "The day resets at midnight Pacific time. The server counts the same day.",
-                "The server counts only the publish requests of submit_urls.",
+                "The server counts only the publish requests of submit_urls. The count of the "
+                "project shows in each submit_urls answer: the key file names the project, and "
+                "list_sites reads no secret.",
             ),
-            now,
         ),
         methods={},
         options={},
