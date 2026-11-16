@@ -192,7 +192,7 @@ The ledger counts only this machine, through this cache folder. It does not see 
 
 When the Clarity Data Export API answers HTTP 429, its documented daily limit, the server keeps the real count, sets `blocked_by_api`, shows `calls_left` as 0, and refuses each Clarity path until the next UTC day. A 429 of an `/mcp/` endpoint has no documented meaning, so it does not stop the day. If a count is broken, the server shows it as unknown and spends no call until you write the real count in the file.
 
-Each GA4 report asks for `returnPropertyQuota`, unless the request sets it to `false`. `tokens_left` is the value of the API at `seen_at`, and it goes stale when another client spends. `tokens_used_today` sums only the tokens of this machine. The API does not say the tier of a property, so `daily_token_limit` shows both limits. With no reading since the last reset, `tokens_left` is `null`.
+Each GA4 report asks for `returnPropertyQuota`, unless the request sets it to `false`. `tokens_left` is the value of the API on `seen_on`, and it goes stale when another client spends. `seen_on` (the day of the last reading) and `resets_on` (the next day) are US Pacific dates as YYYY-MM-DD, with summer time, because GA4 resets its quotas at midnight Pacific time. `day_zone` says so. `tokens_used_today` sums only the tokens of this machine. The API does not say the tier of a property, so `daily_token_limit` shows both limits. With no reading since the last reset, `tokens_left` is `null`.
 
 ### What a dashboard shows and the API does not give
 
