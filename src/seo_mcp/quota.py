@@ -13,7 +13,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import IO, Any, NamedTuple
 from urllib.parse import quote
@@ -24,6 +24,10 @@ from seo_mcp.results import Refused
 CACHE_ENV = NAME.upper().replace("-", "_") + "_CACHE_DIR"
 COUNTED = "Only the calls of this machine, through this cache folder."
 RESET_ASSUMED = "The docs state no reset time, so this time is an assumption."
+RESET_STATED = "The docs state this reset time."
+PACIFIC = "US Pacific time"
+PST = timezone(timedelta(hours=-8), "PST")
+PDT = timezone(timedelta(hours=-7), "PDT")
 
 LOCK_POLL_SECONDS = 0.05
 # A holder keeps a ledger lock only to read and write 1 small file, so this wait is long.
@@ -38,6 +42,9 @@ class Ledger(NamedTuple):
     name: str
     title: str
     limit: int
+    # The zone of the reset of the API: UTC or PACIFIC.
+    zone: str = "UTC"
+    reset_stated: bool = False
 
 
 def folder() -> Path:
@@ -90,13 +97,40 @@ async def locked(target: Path) -> AsyncIterator[None]:
         yield
 
 
-def _today() -> str:
-    return datetime.now(UTC).date().isoformat()
+def _sunday(year: int, month: int, nth: int) -> date:
+    first = date(year, month, 1)
+    return first + timedelta(days=(6 - first.weekday()) % 7 + 7 * (nth - 1))
 
 
-def _next_reset() -> str:
-    day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-    return (day + timedelta(days=1)).isoformat()
+def _pacific(at: datetime) -> tzinfo:
+    """The US rule since 2007, so that a host with no time zone data still counts the day.
+
+    Summer time runs from 02:00 PST on the 2nd Sunday of March to 02:00 PDT on the 1st Sunday
+    of November: 10:00 and 09:00 UTC.
+    """
+    moment = at.astimezone(UTC)
+    start = datetime.combine(_sunday(moment.year, 3, 2), datetime.min.time(), UTC)
+    end = datetime.combine(_sunday(moment.year, 11, 1), datetime.min.time(), UTC)
+    summer = start + timedelta(hours=10) <= moment < end + timedelta(hours=9)
+    return PDT if summer else PST
+
+
+def _local(ledger: Ledger, at: datetime) -> datetime:
+    return at.astimezone(_pacific(at) if ledger.zone == PACIFIC else UTC)
+
+
+def today(ledger: Ledger) -> str:
+    return _local(ledger, datetime.now(UTC)).date().isoformat()
+
+
+def _next_reset(ledger: Ledger) -> str:
+    """The next 00:00 of the zone. Summer time changes at 02:00, never at 00:00."""
+    now = _local(ledger, datetime.now(UTC))
+    next_day = now.date() + timedelta(days=1)
+    reset = datetime.combine(next_day, datetime.min.time(), now.tzinfo)
+    reset = _local(ledger, reset)
+    reset = datetime.combine(next_day, datetime.min.time(), reset.tzinfo)
+    return reset.astimezone(UTC).isoformat()
 
 
 def _broken(ledger: Ledger, file: Path) -> str:
@@ -106,16 +140,16 @@ def _broken(ledger: Ledger, file: Path) -> str:
     )
 
 
-def _is_past_or_today(day: Any) -> bool:
+def _is_past_or_today(day: Any, now: str) -> bool:
     """A count of an older day restarts at 0, so a day must prove that it is not a wrong one."""
     try:
         parsed = date.fromisoformat(day)
     except (TypeError, ValueError):
         return False
-    return parsed.isoformat() == day and parsed <= datetime.now(UTC).date()
+    return parsed.isoformat() == day and parsed <= date.fromisoformat(now)
 
 
-def _read(ledger: Ledger, file: Path, today: str) -> tuple[int, bool]:
+def _read(ledger: Ledger, file: Path, wanted: str) -> tuple[int, bool]:
     try:
         stored = json.loads(file.read_text(encoding="utf-8"))
         used = stored["used"]
@@ -127,15 +161,22 @@ def _read(ledger: Ledger, file: Path, today: str) -> tuple[int, bool]:
         # A broken count must not read as 0: that would spend the quota without control.
         raise Refused(_broken(ledger, file)) from None
     wrong = type(used) is not int or used < 0 or type(blocked) is not bool
-    if wrong or not _is_past_or_today(day):
+    if wrong or not _is_past_or_today(day, today(ledger)):
         raise Refused(_broken(ledger, file))
-    return (used, blocked) if day == today else (0, False)
+    return (used, blocked) if day == wanted else (0, False)
 
 
 def _warning(ledger: Ledger, left: int) -> str | None:
     if left > max(2, ledger.limit // 10):
         return None
-    return f"Only {left} of {ledger.limit} calls of this {ledger.title} are left for this UTC day."
+    return (
+        f"Only {left} of {ledger.limit} calls of this {ledger.title} are left for this "
+        f"{_day(ledger)}."
+    )
+
+
+def _day(ledger: Ledger) -> str:
+    return "UTC day" if ledger.zone == "UTC" else f"day in {ledger.zone}"
 
 
 def view(ledger: Ledger, key: str) -> dict[str, Any]:
@@ -144,12 +185,13 @@ def view(ledger: Ledger, key: str) -> dict[str, Any]:
         "calls_used_today": None,
         "daily_limit": ledger.limit,
         "calls_left": None,
-        "resets_at": _next_reset(),
-        "reset_stated": False,
+        "resets_at": None,
+        "reset_stated": ledger.reset_stated,
         "counted": COUNTED,
     }
     try:
-        used, blocked = _read(ledger, path(ledger, key), _today())
+        fields["resets_at"] = _next_reset(ledger)
+        used, blocked = _read(ledger, path(ledger, key), today(ledger))
     except Refused as exc:
         return {**fields, "quota_warning": str(exc)}
     left = 0 if blocked else max(ledger.limit - used, 0)
@@ -161,10 +203,13 @@ def view(ledger: Ledger, key: str) -> dict[str, Any]:
 
 
 def _refusal(ledger: Ledger, used: int, blocked: bool, count: int) -> str:
-    reset = f"Use a cached answer, or call again after {_next_reset()}. {RESET_ASSUMED}"
-    spent = f"used {used} of the {ledger.limit} calls of this {ledger.title} for this UTC day"
+    stated = RESET_STATED if ledger.reset_stated else RESET_ASSUMED
+    reset = f"Use a cached answer, or call again after {_next_reset(ledger)}. {stated}"
+    spent = (
+        f"used {used} of the {ledger.limit} calls of this {ledger.title} for this {_day(ledger)}"
+    )
     if blocked:
-        return f"The API answered HTTP 429 on this UTC day. This server {spent}. {reset}"
+        return f"The API answered HTTP 429 on this {_day(ledger)}. This server {spent}. {reset}"
     if count == 1:
         return f"This server {spent}. {reset}"
     return f"This request needs {count} calls, and this server {spent}. {reset}"
@@ -174,12 +219,12 @@ async def spend(ledger: Ledger, key: str, count: int = 1) -> net.Receipt:
     """Count calls before they go out, all or none. A failed call counts: the API can too."""
     file = path(ledger, key)
     async with locked(file):
-        today = _today()
-        used, blocked = _read(ledger, file, today)
+        day = today(ledger)
+        used, blocked = _read(ledger, file, day)
         if blocked or used + count > ledger.limit:
             raise Refused(_refusal(ledger, used, blocked, count))
-        write_json(file, {"day": today, "used": used + count})
-    return net.Receipt(ledger.name, count, today)
+        write_json(file, {"day": day, "used": used + count})
+    return net.Receipt(ledger.name, count, day)
 
 
 async def block(ledger: Ledger, key: str, receipt: net.Receipt) -> None:
@@ -187,7 +232,7 @@ async def block(ledger: Ledger, key: str, receipt: net.Receipt) -> None:
     file = path(ledger, key)
     async with locked(file):
         used, _ = _read(ledger, file, receipt.day)
-        if _today() == receipt.day:
+        if today(ledger) == receipt.day:
             write_json(file, {"day": receipt.day, "used": used, "blocked": True})
 
 
