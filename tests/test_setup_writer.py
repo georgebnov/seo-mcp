@@ -16,7 +16,8 @@ from seo_mcp import config, quota, server, setup
 
 ROOT = Path(__file__).parent.parent
 VALUE = "secret-value-that-must-not-print-1234"
-SKIP_FIELDS = ["", "", "", ""]
+# gsc_property, ga4_property_id, bing_site_url, clarity_project, submit_urls.
+SKIP_FIELDS = ["", "", "", "", ""]
 SKIP_SECRETS = ["", "", "", ""]
 
 
@@ -68,6 +69,7 @@ def test_a_new_site_holds_only_references(sites_file, tmp_path, monkeypatch, cap
         "123456789",
         "",
         "",
+        "",
         "file",
         str(account),
         "",
@@ -102,7 +104,7 @@ def test_a_new_site_holds_only_references(sites_file, tmp_path, monkeypatch, cap
 
 
 def test_other_sites_and_fields_stay(two_sites, sites_file, monkeypatch, capsys):
-    stdin = answers("two.example.com", "", "", "12345678", "-", "", *SKIP_SECRETS, "y")
+    stdin = answers("two.example.com", "", "", "12345678", "-", "", "", *SKIP_SECRETS, "y")
     code, out = run(monkeypatch, capsys, stdin)
     after = json.loads(sites_file.read_text())
     assert after["secrets"] == two_sites["secrets"]
@@ -151,7 +153,7 @@ def test_a_relative_repo_path_is_stored_in_full(sites_file, tmp_path, monkeypatc
 def test_a_kept_relative_repo_path_stays_as_it_is(sites_file, monkeypatch, capsys):
     sites_file.parent.mkdir()
     sites_file.write_text(json.dumps({"sites": {"code/one": {"host": "one.example.com"}}}))
-    stdin = answers("one.example.com", "", "", "12345678", "", "", *SKIP_SECRETS, "y")
+    stdin = answers("one.example.com", "", "", "12345678", "", "", "", *SKIP_SECRETS, "y")
     run(monkeypatch, capsys, stdin)
     assert list(json.loads(sites_file.read_text())["sites"]) == ["code/one"]
 
@@ -161,7 +163,7 @@ def test_the_examples_file_still_loads(sites_file, monkeypatch, capsys):
     original = example.read_bytes()
     sites_file.parent.mkdir()
     shutil.copy(example, sites_file)
-    stdin = answers("blog.example.com", "", "", "87654321", "", "", *SKIP_SECRETS, "y")
+    stdin = answers("blog.example.com", "", "", "87654321", "", "", "", *SKIP_SECRETS, "y")
     run(monkeypatch, capsys, stdin)
     before = json.loads(original)
     after = json.loads(sites_file.read_text())
@@ -175,7 +177,7 @@ def test_the_examples_file_still_loads(sites_file, monkeypatch, capsys):
 @pytest.mark.parametrize("confirm", ["n", None])
 def test_no_yes_keeps_the_file(two_sites, sites_file, monkeypatch, capsys, confirm):
     before = sites_file.read_bytes()
-    lines = ["two.example.com", "", "", "12345678", "", "", *SKIP_SECRETS]
+    lines = ["two.example.com", "", "", "12345678", "", "", "", *SKIP_SECRETS]
     run(monkeypatch, capsys, answers(*lines, *([confirm] if confirm else [])))
     assert sites_file.read_bytes() == before
 
@@ -189,7 +191,7 @@ def test_a_stopped_write_keeps_the_old_file(two_sites, sites_file):
         resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
 
     stdin = "\n".join(["two.example.com", "", "https://two.example.com/", "12345678"])
-    stdin += "\n" + "\n".join(["", "a-long-clarity-project-name", *SKIP_SECRETS, "y"]) + "\n"
+    stdin += "\n" + "\n".join(["", "a-long-clarity-project-name", "", *SKIP_SECRETS, "y"]) + "\n"
     done = subprocess.run(
         [sys.executable, "-m", "seo_mcp.server", "setup"],
         input=stdin,
@@ -212,7 +214,7 @@ def test_a_held_lock_writes_nothing(two_sites, sites_file, monkeypatch, capsys):
     fcntl.flock(lock, fcntl.LOCK_EX)
     timer = threading.Timer(1.0, lock.close)
     timer.start()
-    stdin = answers("two.example.com", "", "", "12345678", "", "", *SKIP_SECRETS, "y")
+    stdin = answers("two.example.com", "", "", "12345678", "", "", "", *SKIP_SECRETS, "y")
     code, out = run(monkeypatch, capsys, stdin)
     timer.join()
     assert code == 1
@@ -238,7 +240,7 @@ class ChangesTheFile(io.StringIO):
 def test_a_file_that_changed_meanwhile_is_not_overwritten(
     two_sites, sites_file, monkeypatch, capsys
 ):
-    lines = ["two.example.com", "", "", "12345678", "", "", *SKIP_SECRETS, "y"]
+    lines = ["two.example.com", "", "", "12345678", "", "", "", *SKIP_SECRETS, "y"]
     code, out = run(monkeypatch, capsys, ChangesTheFile("\n".join(lines) + "\n", sites_file))
     assert code == 1
     assert "changed" in out
@@ -298,7 +300,7 @@ def test_a_linked_file_stays_a_link(two_sites, sites_file, tmp_path, monkeypatch
     real.parent.mkdir()
     sites_file.replace(real)
     sites_file.symlink_to(real)
-    stdin = answers("two.example.com", "", "", "12345678", "", "", *SKIP_SECRETS, "y")
+    stdin = answers("two.example.com", "", "", "12345678", "", "", "", *SKIP_SECRETS, "y")
     run(monkeypatch, capsys, stdin)
     assert sites_file.is_symlink()
     assert json.loads(real.read_text())["sites"]["/srv/two"]["ga4_property_id"] == "12345678"
@@ -316,3 +318,33 @@ def test_setup_asks_for_each_field_and_secret():
         f"setup.SECRET_HINTS asks {sorted(setup.SECRET_HINTS)}, but the providers read "
         f"{sorted(secret_names)}. Fix SECRET_HINTS in src/seo_mcp/setup.py."
     )
+
+
+def test_on_turns_on_the_write_and_shows_the_grant(sites_file, monkeypatch, capsys):
+    stdin = answers(
+        "www.example.com",
+        "/srv/site",
+        "sc-domain:example.com",
+        "",
+        "",
+        "",
+        "yes",
+        "on",
+        *SKIP_SECRETS,
+        "y",
+    )
+    code, out = run(monkeypatch, capsys, stdin)
+    (entry,) = json.loads(sites_file.read_text())["sites"].values()
+    assert entry["submit_urls"] == "on"
+    assert 'Type "on", or - to keep it off.' in out
+    assert "as an Owner" in out
+    assert "JobPosting and BroadcastEvent" in out
+
+
+def test_an_empty_answer_keeps_the_write_off(sites_file, monkeypatch, capsys):
+    stdin = answers("www.example.com", "/srv/site", *SKIP_FIELDS, *SKIP_SECRETS, "y")
+    _, out = run(monkeypatch, capsys, stdin)
+    (entry,) = json.loads(sites_file.read_text())["sites"].values()
+    assert "submit_urls" not in entry
+    assert "Wrote" in out
+    assert "as an Owner" not in out

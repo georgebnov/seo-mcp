@@ -8,8 +8,8 @@ from pathlib import Path
 import httpx2
 import pytest
 
-from seo_mcp import core, net, quota, shared
-from seo_mcp.providers import clarity, gsc
+from seo_mcp import config, core, net, quota, shared
+from seo_mcp.providers import clarity, gsc, indexing
 from test_query_api import HOST, SITE, clarity_auth
 from test_quota import (
     DASHBOARD,
@@ -172,6 +172,24 @@ def method(api, call):
     return lambda: run(api, call)
 
 
+PROJECT = "demo-project"
+SUBMITS = (indexing.LEDGER, PROJECT)
+
+
+async def submit():
+    """Opt the site in, with an account of a Cloud project, then submit 1 URL."""
+    file = config.path()
+    body = json.loads(file.read_text())
+    (entry,) = body["sites"].values()
+    file.write_text(
+        json.dumps({**body, "sites": {k: {**entry, "submit_urls": "on"} for k in body["sites"]}})
+    )
+    key = Path(body["secrets"]["google_service_account"]["file"])
+    account = json.loads(key.read_text())
+    key.write_text(json.dumps({**account, "client_email": f"a@{PROJECT}.iam.gserviceaccount.com"}))
+    return await core.submit_urls(HOST, [f"https://{HOST}/jobs/1"])
+
+
 SPENDERS = {
     ("clarity.py", "_cached"): [
         ("clarity", CLARITY, source("clarity")),
@@ -182,6 +200,7 @@ SPENDERS = {
     ("gsc.py", "_url_inspection"): [
         ("url_inspection", INSPECTION, method("search_console", INSPECT)),
     ],
+    ("indexing.py", "_one"): [("submit_urls", SUBMITS, submit)],
     ("gsc.py", "index_status"): [
         ("index_status of 1 page", INSPECTION, source("index_status", page=f"https://{HOST}/a")),
         ("index_status of a batch", INSPECTION, source("index_status")),

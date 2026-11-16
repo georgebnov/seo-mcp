@@ -291,6 +291,7 @@ METERED = {
     ("clarity.microsoft.com", r"/mcp/recordings/sample"),
     ("clarity.microsoft.com", r"/mcp/dashboard/query"),
     ("searchconsole.googleapis.com", r"/v1/urlInspection/index:inspect"),
+    ("indexing.googleapis.com", r"/v3/urlNotifications:publish"),
 }
 ENDPOINT = net.Endpoint("GET", "api.example.test", r"/v1/read", "a-ledger")
 URL = "https://api.example.test/v1/read"

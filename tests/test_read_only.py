@@ -1,10 +1,15 @@
-"""A write call must fail these tests, also in a fork."""
+"""A write call must fail these tests, also in a fork.
+
+The 1 write is submit_urls: providers/indexing.py sends URL_UPDATED to the Google Indexing API.
+Only that file can name a write endpoint, the write host, or a scope that is not read-only.
+"""
 
 import ast
 import re
 from pathlib import Path
 
 from seo_mcp import providers
+from seo_mcp.providers import indexing
 
 SRC = Path(__file__).parent.parent / "src" / "seo_mcp"
 NETWORK_MODULES = {"httpx", "httpx2", "requests", "aiohttp", "urllib3", "socket", "http", "ssl"}
@@ -27,6 +32,16 @@ READ_POSTS = {
     ("clarity.microsoft.com", r"/mcp/recordings/sample"),
     ("clarity.microsoft.com", r"/mcp/dashboard/query"),
 }
+# The only write. It lives in WRITER, and it spends from a ledger.
+WRITES = {("indexing.googleapis.com", r"/v3/urlNotifications:publish")}
+WRITER = SRC / "providers" / "indexing.py"
+WRITER_TEXT = {"urlNotifications", "indexing.googleapis"}
+WRITE_SCOPES = {"https://www.googleapis.com/auth/indexing"}
+SCOPE = re.compile(re.escape("https://www.googleapis.com/auth/") + r"[\w.]+")
+FIX = (
+    "Only src/seo_mcp/providers/indexing.py, the submit_urls path, can name a write endpoint, "
+    "the write host, or a write scope. Make the call a read, or change the rule in AGENTS.md."
+)
 
 
 def imported_modules(path: Path) -> set[str]:
@@ -41,12 +56,28 @@ def imported_modules(path: Path) -> set[str]:
 
 def test_only_listed_posts_exist():
     posts = {(e.host, e.path) for e in providers.ENDPOINTS if e.method == "POST"}
-    assert posts <= READ_POSTS, f"New POST endpoint. Read it, then pin it: {posts - READ_POSTS}"
+    pinned = READ_POSTS | WRITES
+    assert posts <= pinned, f"New POST endpoint. Read it, then pin it: {posts - pinned}"
 
 
 def test_a_post_pin_has_an_endpoint():
     posts = {(e.host, e.path) for e in providers.ENDPOINTS if e.method == "POST"}
-    assert READ_POSTS <= posts, f"A pin outlived its endpoint. Remove it: {READ_POSTS - posts}"
+    pinned = READ_POSTS | WRITES
+    assert pinned <= posts, f"A pin outlived its endpoint. Remove it: {pinned - posts}"
+
+
+def test_only_the_writer_has_a_write_endpoint():
+    for module in providers.MODULES:
+        found = {(e.host, e.path) for e in module.ENDPOINTS}
+        if module is indexing:
+            assert found == WRITES, f"indexing.py has only the publish endpoint: {found}"
+        else:
+            assert not found & WRITES, f"{module.__name__} has a write endpoint. {FIX}"
+            assert not {e.host for e in module.ENDPOINTS} & {h for h, _ in WRITES}, FIX
+
+
+def test_the_write_spends_from_a_ledger():
+    assert all(endpoint.metered for endpoint in indexing.ENDPOINTS)
 
 
 def test_every_other_endpoint_is_get():
@@ -66,14 +97,35 @@ def test_only_net_module_imports_a_network_library():
             assert not found, f"{path.name} imports {found}. Use seo_mcp.net."
 
 
+def write_text(path: Path) -> list[str]:
+    """The write words of 1 source file. The writer may name only its own endpoint."""
+    found = [match.group() for match in WRITE_TEXT.finditer(path.read_text())]
+    return [word for word in found if path != WRITER or word not in WRITER_TEXT]
+
+
+def write_scopes(path: Path) -> list[str]:
+    """The scopes of 1 source file that are not read-only. Only the writer may hold 1."""
+    found = [scope for scope in SCOPE.findall(path.read_text()) if not scope.endswith(".readonly")]
+    return [scope for scope in found if path != WRITER or scope not in WRITE_SCOPES]
+
+
 def test_source_has_no_write_call_names():
     for path in SRC.rglob("*.py"):
-        match = WRITE_TEXT.search(path.read_text())
-        assert not match, f"{path.name} has write text {match.group()!r}. This server is read-only."
+        found = write_text(path)
+        assert not found, f"{path.relative_to(SRC)} has write text {found}. {FIX}"
 
 
-def test_oauth_scopes_are_read_only():
-    text = (SRC / "providers" / "_google.py").read_text()
-    scopes = re.findall(r"https://www.googleapis.com/auth/[\w.]+", text)
+def test_only_the_writer_asks_for_a_write_scope():
+    for path in SRC.rglob("*.py"):
+        found = write_scopes(path)
+        assert not found, f"{path.relative_to(SRC)} asks for the scope {found}. {FIX}"
+
+
+def test_the_shared_sign_in_has_only_read_scopes():
+    scopes = SCOPE.findall((SRC / "providers" / "_google.py").read_text())
     assert scopes
     assert all(scope.endswith(".readonly") for scope in scopes)
+
+
+def test_the_writer_asks_for_the_indexing_scope_only():
+    assert set(SCOPE.findall(WRITER.read_text())) == WRITE_SCOPES
