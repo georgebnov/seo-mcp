@@ -466,6 +466,38 @@ TASKS: dict[str, Task] = {
             ),
         ),
     ),
+    "request_indexing": Task(
+        "Check if Google has a page, then ask Google to crawl it again after a change.",
+        ("request indexing", "submit url", "index this page", "indexing api", "url updated"),
+        (
+            Recipe(
+                "search_console",
+                (
+                    Step(
+                        "Read the state of the page in the Google index first.",
+                        "query_api",
+                        {
+                            "api": "search_console",
+                            "method": "url_inspection",
+                            "request": {"inspectionUrl": "<page_url>"},
+                        },
+                        "rows[0].indexStatusResult has verdict, coverageState, and "
+                        "lastCrawlTime. A recent lastCrawlTime after the change needs no submit.",
+                    ),
+                ),
+                "Search Console has no write method: it shows the state, it cannot ask for a "
+                "crawl. Each inspection spends 1 of 2000 for the site each day.",
+            ),
+            Recipe(
+                "indexing",
+                not_available="query_api sends no write. For a page with JobPosting or "
+                "BroadcastEvent structured data, on a site with submit_urls on, call the "
+                'submit_urls tool with urls ["<page_url>"]. It spends 1 of 200 for the Cloud '
+                "project each day, and it does not promise a crawl. For other pages, list them "
+                "in a sitemap.",
+            ),
+        ),
+    ),
 }
 
 

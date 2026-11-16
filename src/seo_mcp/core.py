@@ -13,6 +13,12 @@ from seo_mcp.results import NotConnected, Refused, Unsupported, failed, ok, unsu
 from seo_mcp.secrets import safe_reason, scrub
 
 SOURCE_TIMEOUT_SECONDS: float = 100
+# Each URL is 1 call of the 200 of the day of the Cloud project, so 1 call can spend at most half.
+MAX_SUBMIT = 100
+SUBMIT_OFF = (
+    'submit_urls is off for {host}: its entry in the sites file has no "submit_urls": "on". '
+    "The server sent nothing and spent no quota. Only the user can turn it on, with seo-mcp setup."
+)
 STATUS_HINTS = {
     401: "The credentials were refused.",
     403: "The token or key is invalid or cut, the account has no access, or the API is off.",
@@ -510,3 +516,21 @@ def list_sites() -> dict[str, Any]:
         for site in sites
     ]
     return scrub(ok(rows, thin=not rows, limit=len(rows)))
+
+
+async def submit_urls(site: str = "", urls: Any = None) -> dict[str, Any]:
+    """The 1 write. Each check that can refuse runs before a secret, a ledger, or the network."""
+    if not isinstance(urls, list) or not urls or not all(isinstance(url, str) for url in urls):
+        return failed("error", "urls must be a list of 1 or more URLs.")
+    if len(urls) > MAX_SUBMIT:
+        return failed("error", f"urls can hold at most {MAX_SUBMIT} URLs in 1 call.")
+    try:
+        entry = config.resolve(site)
+    except NotConnected as exc:
+        return failed("not_connected", safe_reason(str(exc)))
+    except ConfigError as exc:
+        return failed("error", safe_reason(str(exc)))
+    if not entry.opted_in():
+        return {**failed("refused", SUBMIT_OFF.format(host=entry.host)), "site": entry.host}
+    result = await _guard(providers.SUBMIT(entry, urls))
+    return scrub({**result, "site": entry.host})

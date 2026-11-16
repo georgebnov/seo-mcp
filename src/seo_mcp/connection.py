@@ -14,17 +14,19 @@ import threading
 from pathlib import Path
 from typing import NamedTuple
 
-from seo_mcp.config import Site
+from seo_mcp.config import OPT_IN, Site
 from seo_mcp.results import NotConnected
 
 NONE = frozenset[str]()
 READY = "ready"
+# The site did not opt in to a write. setup status counts it as done: nothing is missing.
+OFF = "off"
 MISSING_FIELD = "missing field"
 MISSING_REFERENCE = "missing secret reference"
 NOT_FOUND = "secret not found"
 NOT_CHECKED = "not checked"
 # The worst gap names the state of a provider.
-ORDER = (MISSING_FIELD, MISSING_REFERENCE, NOT_FOUND, NOT_CHECKED)
+ORDER = (OFF, MISSING_FIELD, MISSING_REFERENCE, NOT_FOUND, NOT_CHECKED)
 KEYCHAIN_TIMEOUT_SECONDS = 10
 KEYCHAIN_NO_ITEM = 44
 _probing = threading.Lock()
@@ -36,6 +38,8 @@ class Needs(NamedTuple):
     secrets: frozenset[str] = NONE
     # A provider runs without these. A reference that the sites file names must still exist.
     optional: frozenset[str] = NONE
+    # A write runs only when the site opted in: Site.opted_in, the exact value "on".
+    write: bool = False
 
     def names(self) -> set[str]:
         return set(self.fields | self.secrets | self.optional)
@@ -50,6 +54,12 @@ NEEDS: dict[str, Needs] = {
     "crux": Needs("Chrome UX Report", secrets=frozenset({"google_api_key"})),
     "bing": Needs("Bing", frozenset({"bing_site_url"}), frozenset({"bing_api_key"})),
     "clarity": Needs("Clarity", secrets=frozenset({"clarity_token"})),
+    "indexing": Needs(
+        "Indexing API",
+        frozenset({"gsc_property", OPT_IN}),
+        frozenset({"google_service_account"}),
+        write=True,
+    ),
 }
 
 
@@ -103,6 +113,8 @@ def found(site: Site, source: dict[str, str]) -> bool | None:
 
 def gaps(site: Site, provider: str) -> list[Gap]:
     needs = NEEDS[provider]
+    if needs.write and not site.opted_in():
+        return [Gap(OFF, OPT_IN)]
     result = [Gap(MISSING_FIELD, name) for name in sorted(needs.fields - set(site.fields))]
     for name in sorted(needs.secrets | needs.optional):
         source = site.secrets.get(name)
@@ -132,6 +144,8 @@ ABSENT = {"env": "is not set", "file": "does not exist", "keychain": "does not e
 
 def said(gap: Gap) -> str:
     """Fixed text with canonical names only. A reference name never shows: it can be a key."""
+    if gap.state == OFF:
+        return f"{gap.name} is off for this site"
     if gap.state == MISSING_FIELD:
         return f"the sites file has no {gap.name}"
     if gap.state == MISSING_REFERENCE:
@@ -148,7 +162,8 @@ def missing(site: Site, provider: str) -> list[str]:
 def reason(site: Site, provider: str) -> str:
     label = NEEDS[provider].label
     parts = ", and ".join(missing(site, provider))
-    return f"This site has no {label} connection: {parts}, so seo-mcp has no {label} data for it."
+    then = f"sends nothing to the {label}" if NEEDS[provider].write else f"has no {label} data"
+    return f"This site has no {label} connection: {parts}, so seo-mcp {then} for it."
 
 
 def require(site: Site, provider: str) -> None:
