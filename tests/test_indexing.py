@@ -452,3 +452,16 @@ def test_list_sites_reads_no_secret_for_the_write(write_config, tmp_path):
         "tracked": False,
         "limits": list(indexing.APIS["indexing"].quota.limits),
     }
+
+
+async def test_a_url_with_a_key_shape_keeps_its_status_on_a_repeat(write_config, fake_net, owner):
+    """The saved answer is scrubbed, so a key= query differs from the sent URL on a repeat."""
+    write_config(DOMAIN, owner)
+    calls = fake_net(google(echo))
+    url = "https://www.example.com/jobs/1?key=abc"
+    (first,) = (await core.submit_urls(HOST, [url]))["rows"]
+    (again,) = (await core.submit_urls(HOST, [url]))["rows"]
+    assert first["status"] == "submitted"
+    assert again["status"] == "submitted", again
+    assert again["from_cache"] is True
+    assert len(published(calls)) == 1

@@ -15,6 +15,7 @@ from seo_mcp.api import Api, Quota
 from seo_mcp.config import ON, Site
 from seo_mcp.providers import _google
 from seo_mcp.results import Refused, ok
+from seo_mcp.secrets import scrub
 
 HOST = "indexing.googleapis.com"
 PUBLISH_API = f"https://{HOST}/v3/urlNotifications:publish"
@@ -137,9 +138,13 @@ def _notify_time(reply: Any) -> str | None:
 
 
 def _echoed(reply: Any, url: str) -> bool:
-    """Google took the URL when its answer names the same URL. latestUpdate can be missing."""
+    """Google took the URL when its answer names the same URL. latestUpdate can be missing.
+
+    The saved answer is scrubbed, so both sides are scrubbed: a repeat gives the same status.
+    """
     meta = reply.get("urlNotificationMetadata") if isinstance(reply, dict) else None
-    return isinstance(meta, dict) and meta.get("url") == url
+    echo = meta.get("url") if isinstance(meta, dict) else None
+    return isinstance(echo, str) and scrub(echo) == scrub(url)
 
 
 def _any(_: Any) -> bool:
