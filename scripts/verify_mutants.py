@@ -674,6 +674,26 @@ SUBMIT: tuple[Mutant, ...] = (
         (f"{SUBMIT_TESTS}test_a_receipt_of_the_old_day_opens_no_call",),
         "indexing._one sends with a receipt of the old day",
     ),
+    Model(
+        "SuccessIsSaved",
+        SUBMIT_MODEL,
+        (
+            (
+                '  /\\ pc = "flight" /\\ pc\' = "unconfirmed" /\\ cache\' = "hour"\n'
+                "  /\\ UNCHANGED <<optIn, inProperty, connected, ledger, count, sent, count0, "
+                "sent0, receipt>>",
+                '  /\\ pc = "flight" /\\ pc\' = "unconfirmed" /\\ Marked',
+            ),
+        ),
+        "a 2xx that the server cannot read starts only the failure window",
+    ),
+    Code(
+        "SuccessIsSaved",
+        "src/seo_mcp/providers/indexing.py",
+        (("good=_any,", "good=lambda reply: _echoed(reply, url),"),),
+        (f"{SUBMIT_TESTS}test_a_success_that_the_server_cannot_read_is_unconfirmed",),
+        "indexing._one saves only an answer that names the same URL",
+    ),
     Code(
         "NeverPastTheLimit",
         "src/seo_mcp/quota.py",

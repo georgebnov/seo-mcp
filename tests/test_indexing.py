@@ -245,18 +245,81 @@ async def test_a_refused_call_gives_fixed_text_and_no_body(write_config, fake_ne
     assert CANARY not in json.dumps(result)
 
 
-async def test_a_reply_with_no_real_notify_time_is_a_failure(write_config, fake_net, owner):
+def echo(body):
+    """The live shape of an accepted publish: Google echoes the URL, with no latestUpdate."""
+    return httpx2.Response(200, json={"urlNotificationMetadata": {"url": body["url"]}})
+
+
+def echo_with_bad_time(body):
+    latest = {"url": body["url"], "type": body["type"], "notifyTime": CANARY}
+    return httpx2.Response(
+        200, json={"urlNotificationMetadata": {"url": body["url"], "latestUpdate": latest}}
+    )
+
+
+@pytest.mark.parametrize("publish", [echo, echo_with_bad_time])
+async def test_an_echo_of_the_url_with_no_notify_time_is_submitted(
+    write_config, fake_net, owner, publish
+):
     write_config(DOMAIN, owner)
-    latest = {"notifyTime": CANARY}
-    reply = {"urlNotificationMetadata": {"latestUpdate": latest}}
-    calls = fake_net(google(lambda _: httpx2.Response(200, json=reply)))
+    calls = fake_net(google(publish))
     url = "https://www.example.com/jobs/1"
     result = await core.submit_urls(HOST, [url])
     (row,) = result["rows"]
-    assert row["status"] == "failed"
+    assert row["status"] == "submitted", row
+    assert row["notify_time"] is None
+    assert row["reason"] == indexing.SUBMITTED
+    assert result["counts"]["submitted"] == 1
     assert CANARY not in json.dumps(result)
-    # The failure window: the same URL does not go out again at once.
-    await core.submit_urls(HOST, [url])
+    (again,) = (await core.submit_urls(HOST, [url]))["rows"]
+    assert again["status"] == "submitted"
+    assert again["from_cache"] is True
+    assert again["reason"] == indexing.SAVED
+    assert len(published(calls)) == 1
+    assert used() == 1
+
+
+def raw(content, status=200):
+    return lambda _: httpx2.Response(status, content=content)
+
+
+def says(body):
+    return lambda _: httpx2.Response(200, json=body)
+
+
+OTHER_URL = {"urlNotificationMetadata": {"url": "https://www.example.com/jobs/2"}}
+NO_URL = {"urlNotificationMetadata": {"latestUpdate": {"notifyTime": CANARY}}}
+UNREADABLE = {
+    "no url": says(NO_URL),
+    "another url": says(OTHER_URL),
+    "empty object": says({}),
+    "list": says([]),
+    "null": says(None),
+    "text": says(CANARY),
+    "not json": raw(CANARY.encode()),
+    "no body": raw(b"", 204),
+}
+
+
+@pytest.mark.parametrize("publish", UNREADABLE.values(), ids=UNREADABLE.keys())
+async def test_a_success_that_the_server_cannot_read_is_unconfirmed(
+    write_config, fake_net, owner, publish
+):
+    """Google can have the URL, so the row never says failed, and a repeat sends nothing."""
+    write_config(DOMAIN, owner)
+    calls = fake_net(google(publish))
+    url = "https://www.example.com/jobs/1"
+    result = await core.submit_urls(HOST, [url])
+    (row,) = result["rows"]
+    assert row["status"] == "unconfirmed", row
+    assert row["reason"] == indexing.UNREAD
+    assert row["notify_time"] is None
+    assert result["counts"] == {"submitted": 0, "unconfirmed": 1, "refused": 0, "failed": 0}
+    assert CANARY not in json.dumps(result)
+    (again,) = (await core.submit_urls(HOST, [url]))["rows"]
+    assert again["status"] == "unconfirmed"
+    assert again["from_cache"] is True
+    assert again["reason"] == indexing.UNREAD_SAVED
     assert len(published(calls)) == 1
     assert used() == 1
 

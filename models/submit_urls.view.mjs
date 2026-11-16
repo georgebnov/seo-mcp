@@ -15,7 +15,7 @@ const names = {
   dayEnded: "The day ended after the count: nothing sent, the call stays counted",
   flight: "The publish request is on the network",
   stored: "Google took the notification, and the server saves it for 1 hour",
-  badAnswer: "Google answered with no valid notifyTime: not saved",
+  unconfirmed: "Google answered a success that the server cannot read: saved for 1 hour",
   failed: "The call failed after the request went out, and it stays counted",
   notSent: "No request went out, the reserved call stays counted",
 };
@@ -40,8 +40,8 @@ const labels = {
   StaleReceipt: "the receipt is of the old day",
   Send: "the server sends URL_UPDATED",
   ConnectFails: "the connection fails before the request goes out",
-  Answer: "Google answers with notifyTime",
-  BadShape: "Google answers HTTP 200 with no valid notifyTime",
+  Answer: "Google answers with the same URL",
+  Unconfirmed: "Google answers a 2xx with no URL, another URL, or no JSON",
   Fails: "Google answers an error, or the call times out",
 };
 export const step = (action) => (action === "Done" ? null : labels[action]);
@@ -49,7 +49,7 @@ const phases = {
   start: "Start", gate: "Start", check: "Start", lock: "Saved answer", hit: "Saved answer",
   repeated: "Saved answer", ledger: "Ledger", off: "Stop", notConnected: "Stop", foreign: "Stop",
   busy: "Stop", refused: "Stop", reserved: "Spend", flight: "Spend", dayEnded: "Stop",
-  stored: "Answer", badAnswer: "Stop", failed: "Stop", notSent: "Stop",
+  stored: "Answer", unconfirmed: "Answer", failed: "Stop", notSent: "Stop",
 };
 export const group = (v) => phases[v.pc];
 export const colors = { Start: "blue", "Saved answer": "teal", Ledger: "yellow", Spend: "orange", Stop: "pink", Answer: "purple" };

@@ -252,7 +252,7 @@ Google documents the Indexing API only for pages with `JobPosting` or `Broadcast
 3. A call takes 1 to 100 URLs. Each URL spends 1 of the 200 calls of the Cloud project for the Pacific day.
 4. The write token asks for `https://www.googleapis.com/auth/indexing` only. It is a separate token: each read source keeps its read-only scope.
 
-Each row has `url`, `status` (`submitted`, `refused`, or `failed`), and `reason`. A `submitted` row has `notify_time`, the time that Google took it, and `from_cache`. A `failed` row gives fixed text by HTTP status, never the text of Google. After a read timeout, the reason says that Google can have the notification.
+Each row has `url`, `status` (`submitted`, `unconfirmed`, `refused`, or `failed`), and `reason`. A `submitted` row means that Google answered with the same URL in `urlNotificationMetadata.url`. A live answer can have no `latestUpdate`, so `notify_time` is the `latestUpdate.notifyTime` of Google, or `null`. An `unconfirmed` row means that Google answered with a success code that the server could not read: Google can have the URL, the call counts as spent, and the answer is saved like a `submitted` one. Each sent row has `from_cache` and `cached_at`. A `failed` row gives fixed text by HTTP status, never the text of Google. After a read timeout, the reason says that Google can have the notification.
 
 `query_api(api="indexing")` lists the quota and these limits, and it has no method:
 
@@ -260,7 +260,7 @@ Each row has `url`, `status` (`submitted`, `refused`, or `failed`), and `reason`
 - A notification does not promise a crawl or an index.
 - URL_DELETED and the metadata read: this server does not send them.
 
-A repeat of 1 URL (same site, same service account) within 1 hour sends nothing and spends nothing: the row is `submitted` with `from_cache` `true` and the first `notify_time`. After 1 hour, the same URL goes out again and spends 1. After a failed call, the same URL does not go out for 60 seconds.
+A repeat of 1 URL (same site, same service account) within 1 hour sends nothing and spends nothing: the row has the status of the first answer, with `from_cache` `true`. After 1 hour, the same URL goes out again and spends 1. After a failed call, the same URL does not go out for 60 seconds.
 
 ## Setup
 
