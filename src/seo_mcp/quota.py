@@ -119,6 +119,11 @@ def _local(ledger: Ledger, at: datetime) -> datetime:
     return at.astimezone(_pacific(at) if ledger.zone == PACIFIC else UTC)
 
 
+def pacific_date() -> date:
+    now = datetime.now(UTC)
+    return now.astimezone(_pacific(now)).date()
+
+
 def today(ledger: Ledger) -> str:
     return _local(ledger, datetime.now(UTC)).date().isoformat()
 
