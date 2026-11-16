@@ -15,6 +15,7 @@ from seo_mcp.api import Api, Quota
 from seo_mcp.config import ON, Site
 from seo_mcp.providers import _google
 from seo_mcp.results import Refused, ok
+from seo_mcp.secrets import scrub
 
 HOST = "indexing.googleapis.com"
 PUBLISH_API = f"https://{HOST}/v3/urlNotifications:publish"
@@ -37,7 +38,15 @@ OFF = "submit_urls is off for this site, so the server sends nothing."
 SUBMITTED = "Google took the notification. It does not promise a crawl or an index."
 SAVED = (
     "This URL went to Google less than 1 hour ago, so the server did not send it again and "
-    "spent no call. notify_time is the time of that send."
+    "spent no call. cached_at is the time of that answer."
+)
+UNREAD = (
+    "Google answered with a success code, so it probably took the URL, but the server could "
+    "not read the answer. It counts as spent. The same URL does not go out again for 1 hour."
+)
+UNREAD_SAVED = (
+    "This URL went to Google less than 1 hour ago, with an answer that the server could not "
+    "read, so the server did not send it again and spent no call."
 )
 MAYBE_SENT = (
     "The call failed after the request went out, so Google can have it. It counts as spent. "
@@ -45,7 +54,6 @@ MAYBE_SENT = (
 )
 NOT_SENT = "The connection failed before the request went out. It counts as spent."
 DAY_ENDED = "The quota day ended between the count and the send, so the server did not send it."
-BAD_REPLY = "Google answered with no valid notifyTime, so the server reads it as a failure."
 REASONS = {
     400: "Google refused the request (HTTP 400): the URL is not valid for the Indexing API.",
     401: "Google refused the credentials (HTTP 401).",
@@ -129,15 +137,24 @@ def _notify_time(reply: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _good(reply: Any) -> bool:
-    return _notify_time(reply) is not None
+def _echoed(reply: Any, url: str) -> bool:
+    """Google took the URL when its answer names the same URL. latestUpdate can be missing.
+
+    The saved answer is scrubbed, so both sides are scrubbed: a repeat gives the same status.
+    """
+    meta = reply.get("urlNotificationMetadata") if isinstance(reply, dict) else None
+    echo = meta.get("url") if isinstance(meta, dict) else None
+    return isinstance(echo, str) and scrub(echo) == scrub(url)
+
+
+def _any(_: Any) -> bool:
+    """Each success answer is saved, also one that the server cannot read: Google can have it."""
+    return True
 
 
 def _failure(exc: net.ApiError) -> str:
     if exc.note:
         return exc.note
-    if exc.status == 200:
-        return BAD_REPLY
     if exc.status is None:
         return MAYBE_SENT if exc.sent else NOT_SENT
     return REASONS.get(exc.status, f"Google answered HTTP {exc.status}.")
@@ -164,21 +181,31 @@ async def _one(
             if spent.day != quota.today(LEDGER):
                 raise net.ApiError(None, sent=False, note=DAY_ENDED)
             body = {"url": url, "type": "URL_UPDATED"}
-            return await net.request(
-                ENDPOINTS, "POST", PUBLISH_API, json=body, headers=headers, spent=spent
-            )
+            try:
+                return await net.request(
+                    ENDPOINTS, "POST", PUBLISH_API, json=body, headers=headers, spent=spent
+                )
+            except net.ApiError as exc:
+                # A success with a body that is not JSON: Google can have the URL.
+                if exc.status is not None and 200 <= exc.status < 300:
+                    return {}
+                raise
 
         try:
             reply = await shared.once(
-                path, send, prepare=prepare, good=_good, until=shared.after(RESUBMIT_SECONDS)
+                path, send, prepare=prepare, good=_any, until=shared.after(RESUBMIT_SECONDS)
             )
         except Refused as exc:
             return {**_refused(url, str(exc)), **shared.shown()}
         except net.ApiError as exc:
             return {"url": url, "status": "failed", "reason": _failure(exc), **shared.shown()}
         seen = shared.shown()
-        reason = SAVED if seen.get("from_cache") else SUBMITTED
-        row = {"url": url, "status": "submitted", "notify_time": _notify_time(reply)}
+        cached = bool(seen.get("from_cache"))
+        if _echoed(reply, url):
+            status, reason = "submitted", SAVED if cached else SUBMITTED
+        else:
+            status, reason = "unconfirmed", UNREAD_SAVED if cached else UNREAD
+        row = {"url": url, "status": status, "notify_time": _notify_time(reply)}
         return {**row, "reason": reason, **seen}
 
 
@@ -202,7 +229,7 @@ async def submit(site: Site, urls: list[str]) -> dict[str, Any]:
     ordered = [rows[url] for url in wanted]
     counts = {
         state: sum(row["status"] == state for row in ordered)
-        for state in ("submitted", "refused", "failed")
+        for state in ("submitted", "unconfirmed", "refused", "failed")
     }
     return ok(ordered, thin=not counts["submitted"], limit=len(ordered), counts=counts)
 

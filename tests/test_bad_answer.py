@@ -238,6 +238,19 @@ async def test_a_repeat_of_any_reply_sends_nothing(live, fake_net, name, spent, 
     assert quota.view(*spent)["calls_used_today"] == first
 
 
+@pytest.mark.parametrize("body", JUNK, ids=json.dumps)
+async def test_a_success_of_the_write_never_says_failed(live, fake_net, body):
+    """Google can have the URL after any 2xx, so the 1 write never reads one as a failure."""
+
+    def reply(request):
+        return httpx2.Response(200, json=body) if metered_requests([request]) else None
+
+    fake_net(replies(reply))
+    (row,) = (await submit())["rows"]
+    fix = "Give a 2xx of the publish the status unconfirmed in indexing._one, never failed."
+    assert row["status"] == "unconfirmed", f"indexing.py: a 2xx gave {row['status']}. {fix}"
+
+
 INSPECTIONS = [path for key, paths in SPENDERS.items() if key[0] == "gsc.py" for path in paths]
 NO_RESULT = [{}, {"message": "try later"}, {"inspectionResult": "text"}]
 

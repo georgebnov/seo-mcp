@@ -8,7 +8,7 @@ VARIABLES pc, optIn, inProperty, connected, cache, ledger, count, sent, count0, 
 vars == <<pc, optIn, inProperty, connected, cache, ledger, count, sent, count0, sent0, receipt>>
 
 Ends == {"off", "foreign", "notConnected", "hit", "repeated", "busy", "refused", "dayEnded",
-         "stored", "badAnswer", "failed", "notSent"}
+         "stored", "unconfirmed", "failed", "notSent"}
 
 Init ==
   /\ pc = "start"
@@ -70,11 +70,14 @@ Send ==
   /\ UNCHANGED <<optIn, inProperty, connected, cache, ledger, count, count0, sent0, receipt>>
 ConnectFails == pc = "reserved" /\ receipt = "today" /\ pc' = "notSent" /\ Marked
 
-\* A good answer holds a notifyTime that parses as a time.
+\* indexing._echoed: the answer names the same URL. It can have no latestUpdate.
 Answer ==
   /\ pc = "flight" /\ pc' = "stored" /\ cache' = "hour"
   /\ UNCHANGED <<optIn, inProperty, connected, ledger, count, sent, count0, sent0, receipt>>
-BadShape == pc = "flight" /\ pc' = "badAnswer" /\ Marked
+\* indexing._any: a 2xx that the server cannot read is saved too, because Google can have it.
+Unconfirmed ==
+  /\ pc = "flight" /\ pc' = "unconfirmed" /\ cache' = "hour"
+  /\ UNCHANGED <<optIn, inProperty, connected, ledger, count, sent, count0, sent0, receipt>>
 \* HTTP 403, 429, another status, a read timeout, or the source timeout in flight.
 Fails == pc = "flight" /\ pc' = "failed" /\ Marked
 
@@ -83,7 +86,7 @@ Done == pc \in Ends /\ UNCHANGED vars
 Next ==
   Off \/ OptedIn \/ NotConnected \/ Connected \/ Foreign \/ Inside \/ CacheHit \/ FailureRepeat
   \/ CacheNone \/ LockBusy \/ RefuseBroken \/ RefuseLimit \/ Reserve \/ ReserveNewDay \/ DayEnds
-  \/ StaleReceipt \/ Send \/ ConnectFails \/ Answer \/ BadShape \/ Fails \/ Done
+  \/ StaleReceipt \/ Send \/ ConnectFails \/ Answer \/ Unconfirmed \/ Fails \/ Done
 
 Spec == Init /\ [][Next]_vars
 
@@ -109,9 +112,10 @@ StaleReceiptSendsNothing == /\ (pc = "dayEnded" => sent = sent0)
                             /\ (sent > sent0 => receipt = "today")
 \* The ledger counts the call before the network.
 ReservedBeforeTheNetwork == sent > sent0 => receipt # "none"
-\* A bad HTTP 200 answer is never saved.
-BadAnswerIsNotSaved == pc = "badAnswer" => cache # "hour"
+\* Each 2xx answer is saved for 1 hour, so a repeat sends nothing. The model assumes that the
+\* write of the answer succeeds: shared.once ignores an OSError of a full disk.
+SuccessIsSaved == pc \in {"stored", "unconfirmed"} => cache = "hour"
 \* Each failure of a spent call starts the failure window.
 SpentFailureKeepsTheWindow ==
-  pc \in {"failed", "badAnswer", "notSent", "dayEnded"} => cache = "failedInWindow"
+  pc \in {"failed", "notSent", "dayEnded"} => cache = "failedInWindow"
 ====
