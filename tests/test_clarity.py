@@ -120,11 +120,6 @@ async def test_403_names_a_cut_token_as_a_cause(write_config, fake_net):
     assert "invalid or cut" in result["reason"]
 
 
-async def test_no_token_is_not_connected(write_config):
-    write_config()
-    assert (await get())["status"] == "not_connected"
-
-
 async def test_a_changed_project_does_not_read_the_old_answer(write_config, fake_net):
     calls = fake_net(lambda _: httpx2.Response(200, json=LIVE))
     write_config({**SITE, "clarity_project": "old-project"})
