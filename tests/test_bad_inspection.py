@@ -57,19 +57,13 @@ async def index_status(**params):
 
 
 @pytest.mark.parametrize("body", BAD_REPLIES)
-async def test_a_bad_reply_for_1_page_is_a_clear_failure(live, fake_net, body):
-    inspection_says(fake_net, lambda _: body)
-    result = await index_status(page=PAGE)
-    assert result["status"] == "error"
-    assert "shape" in result["reason"]
-    assert "Error" not in result["reason"]
-    assert result["calls_used_today"] == 1
-
-
-@pytest.mark.parametrize("body", BAD_REPLIES)
-async def test_a_repeat_of_a_bad_reply_sends_nothing(live, fake_net, body):
+async def test_a_bad_reply_for_1_page_fails_and_a_repeat_sends_nothing(live, fake_net, body):
     calls = inspection_says(fake_net, lambda _: body)
-    await index_status(page=PAGE)
+    first = await index_status(page=PAGE)
+    assert first["status"] == "error"
+    assert "shape" in first["reason"]
+    assert "Error" not in first["reason"]
+    assert first["calls_used_today"] == 1
     result = await index_status(page=PAGE)
     assert "shape" in result["reason"]
     assert "did not send it again" in result["reason"]
@@ -88,20 +82,17 @@ async def test_a_reply_with_no_inspection_result_is_never_saved(live, fake_net):
 
 
 async def test_a_result_with_no_index_status_keeps_its_empty_row(live, fake_net):
-    inspection_says(fake_net, lambda _: {"inspectionResult": {"inspectionResultLink": "x"}})
+    inspection_says(fake_net, lambda _: LINK_ONLY)
     result = await index_status(page=PAGE)
     assert result["status"] == "ok"
     assert result["rows"][0]["verdict"] is None
     assert result["rows"][0]["coverage_state"] is None
 
 
-@pytest.mark.parametrize(
-    "status",
-    [{}, {"verdict": "NEUTRAL", "coverageState": "URL is unknown to Google"}],
-    ids=["empty", "unknown url"],
-)
 @pytest.mark.parametrize("empty", [None, ""], ids=["absent", "empty text"])
-async def test_no_canonical_on_either_side_is_no_match_claim(live, fake_net, status, empty):
+async def test_no_canonical_on_either_side_is_no_match_claim(live, fake_net, empty):
+    """Google gave this status, with no canonical, for a URL that it does not know."""
+    status = {"verdict": "NEUTRAL", "coverageState": "URL is unknown to Google"}
     fields = {} if empty is None else {"googleCanonical": empty, "userCanonical": empty}
     reply = {"inspectionResult": {"indexStatusResult": {**status, **fields}}}
     inspection_says(fake_net, lambda _: reply)
@@ -136,6 +127,7 @@ async def test_a_batch_of_only_bad_replies_spends_once(live, fake_net):
     calls = inspection_says(fake_net, lambda _: {"inspectionResult": "text"})
     first = await index_status()
     second = await index_status()
+    assert first["status"] == "error"
     assert "shape" in first["reason"]
     assert "did not send it again" in second["reason"]
     assert second["calls_used_today"] == first["calls_used_today"] == len(metered_requests(calls))
@@ -200,21 +192,15 @@ async def inspect():
 
 
 @pytest.mark.parametrize("body", NO_RESULT)
-async def test_a_bad_reply_of_the_method_is_a_clear_failure(live, fake_net, body):
-    inspection_says(fake_net, lambda _: body)
-    data = await inspect()
-    assert data["status"] == "error"
-    assert data["rows"] == []
-    assert "shape" in data["reason"]
-    assert "Error" not in data["reason"]
-    assert data["calls_used_today"] == 1
-    assert not inspection_answers()
-
-
-@pytest.mark.parametrize("body", NO_RESULT)
-async def test_a_repeat_of_a_bad_reply_of_the_method_sends_nothing(live, fake_net, body):
+async def test_a_bad_reply_of_the_method_fails_and_a_repeat_sends_nothing(live, fake_net, body):
     calls = inspection_says(fake_net, lambda _: body)
-    await inspect()
+    first = await inspect()
+    assert first["status"] == "error"
+    assert first["rows"] == []
+    assert "shape" in first["reason"]
+    assert "Error" not in first["reason"]
+    assert first["calls_used_today"] == 1
+    assert not inspection_answers()
     data = await inspect()
     assert data["status"] == "error"
     assert "shape" in data["reason"]

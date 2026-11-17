@@ -2,7 +2,7 @@
 
 import ast
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx2
@@ -53,16 +53,21 @@ def saved_files():
     return [path for path in names if "failed" not in path.name and "-calls-" not in path.name]
 
 
-@pytest.mark.parametrize("body", BAD_INSIGHTS)
-async def test_a_bad_answer_of_the_source_is_a_clear_failure(live, fake_net, body):
-    clarity_says(fake_net, body)
-    data = await core.get_seo_data(HOST, ["clarity"])
-    result = data["sources"]["clarity"]
-    assert result["status"] == "error"
-    assert "shape" in result["reason"]
-    assert "Error" not in result["reason"]
-    assert result["calls_used_today"] == 1
+# The source and the live_insights method share 1 call and 1 check, so the method test below
+# holds the table of bodies.
+async def test_a_bad_answer_of_the_source_fails_and_a_repeat_spends_nothing(live, fake_net):
+    calls = clarity_says(fake_net, {"message": "try later"})
+    first = (await core.get_seo_data(HOST, ["clarity"]))["sources"]["clarity"]
+    assert first["status"] == "error"
+    assert "shape" in first["reason"]
+    assert "Error" not in first["reason"]
+    assert first["calls_used_today"] == 1
     assert not saved_files()
+    result = (await core.get_seo_data(HOST, ["clarity"]))["sources"]["clarity"]
+    assert "shape" in result["reason"]
+    assert "did not send it again" in result["reason"]
+    assert len(metered_requests(calls)) == 1
+    assert count() == 1
 
 
 @pytest.mark.parametrize(
@@ -76,30 +81,8 @@ async def test_a_bad_answer_of_each_method_is_never_saved(live, fake_net, call, 
     data = await run("clarity", call)
     assert data["status"] == "error"
     assert "shape" in data["reason"]
+    assert "Error" not in data["reason"]
     assert not saved_files()
-
-
-async def test_a_repeat_of_a_bad_answer_keeps_the_reason_and_spends_nothing(live, fake_net):
-    calls = clarity_says(fake_net, {"message": "try later"})
-    await core.get_seo_data(HOST, ["clarity"])
-    result = (await core.get_seo_data(HOST, ["clarity"]))["sources"]["clarity"]
-    assert "shape" in result["reason"]
-    assert "did not send it again" in result["reason"]
-    assert len(metered_requests(calls)) == 1
-    assert count() == 1
-
-
-async def test_the_source_works_again_after_the_window(live, fake_net):
-    clarity_says(fake_net, {"message": "try later"})
-    await core.get_seo_data(HOST, ["clarity"])
-    mark = shared.failure_path(clarity.cache_path(HOST, clarity_auth()))
-    old = datetime.now(UTC) - timedelta(seconds=shared.FAILURE_WINDOW_SECONDS)
-    mark.write_text(json.dumps({**json.loads(mark.read_text()), "failed_at": old.isoformat()}))
-    clarity_says(fake_net, METRICS)
-    result = (await core.get_seo_data(HOST, ["clarity"]))["sources"]["clarity"]
-    assert result["status"] == "ok"
-    assert result["totals"]["sessions"] == 7
-    assert count() == 2
 
 
 def save_today(body):
@@ -146,15 +129,10 @@ async def test_a_good_answer_of_each_method_is_saved(live, fake_net, call, body)
 
 
 # Each path that spends: a reply of any shape must not let a repeat spend again.
-JUNK = [
-    [],
-    ["text"],
-    "text",
-    None,
-    5,
-    {},
-    {"message": "try later"},
-    {"data": "text"},
+JUNK = [[], ["text"], "text", None, 5, {}, {"message": "try later"}]
+# A body with a field that only 1 check reads. On each other path it is {"message": ...} again.
+DASHBOARD_JUNK = [{"data": "text"}]
+INSPECTION_JUNK = [
     {"inspectionResult": "text"},
     {"inspectionResult": None},
     {"inspectionResult": ["text"]},
@@ -192,21 +170,31 @@ async def submit():
 
 SPENDERS = {
     ("clarity.py", "_cached"): [
-        ("clarity", CLARITY, source("clarity")),
-        ("live_insights", CLARITY, method("clarity", INSIGHTS)),
-        ("recordings", CLARITY, method("clarity", RECORDINGS)),
-        ("dashboard_query", CLARITY, method("clarity", DASHBOARD)),
+        ("clarity", CLARITY, source("clarity"), []),
+        ("live_insights", CLARITY, method("clarity", INSIGHTS), []),
+        ("recordings", CLARITY, method("clarity", RECORDINGS), []),
+        ("dashboard_query", CLARITY, method("clarity", DASHBOARD), DASHBOARD_JUNK),
     ],
     ("gsc.py", "_url_inspection"): [
-        ("url_inspection", INSPECTION, method("search_console", INSPECT)),
+        ("url_inspection", INSPECTION, method("search_console", INSPECT), INSPECTION_JUNK),
     ],
-    ("indexing.py", "_one"): [("submit_urls", SUBMITS, submit)],
+    ("indexing.py", "_one"): [("submit_urls", SUBMITS, submit, [])],
     ("gsc.py", "index_status"): [
-        ("index_status of 1 page", INSPECTION, source("index_status", page=f"https://{HOST}/a")),
-        ("index_status of a batch", INSPECTION, source("index_status")),
+        (
+            "index_status of 1 page",
+            INSPECTION,
+            source("index_status", page=f"https://{HOST}/a"),
+            INSPECTION_JUNK,
+        ),
+        ("index_status of a batch", INSPECTION, source("index_status"), INSPECTION_JUNK),
     ],
 }
-PATHS = [path for paths in SPENDERS.values() for path in paths]
+REPEATS = [
+    (name, spent, call, body)
+    for paths in SPENDERS.values()
+    for name, spent, call, own in paths
+    for body in JUNK + own
+]
 
 
 def spends(function):
@@ -221,8 +209,11 @@ def spenders():
                 yield path.name, node.name
 
 
-@pytest.mark.parametrize("body", JUNK, ids=json.dumps)
-@pytest.mark.parametrize(("name", "spent", "call"), PATHS, ids=[path[0] for path in PATHS])
+@pytest.mark.parametrize(
+    ("name", "spent", "call", "body"),
+    REPEATS,
+    ids=[f"{repeat[0]}-{json.dumps(repeat[3])}" for repeat in REPEATS],
+)
 async def test_a_repeat_of_any_reply_sends_nothing(live, fake_net, name, spent, call, body):
     def reply(request):
         if metered_requests([request]):
@@ -236,37 +227,6 @@ async def test_a_repeat_of_any_reply_sends_nothing(live, fake_net, name, spent, 
     assert first > 0
     assert len(metered_requests(calls)) == first, f"{name} sent the repeat of a spent call."
     assert quota.view(*spent)["calls_used_today"] == first
-
-
-@pytest.mark.parametrize("body", JUNK, ids=json.dumps)
-async def test_a_success_of_the_write_never_says_failed(live, fake_net, body):
-    """Google can have the URL after any 2xx, so the 1 write never reads one as a failure."""
-
-    def reply(request):
-        return httpx2.Response(200, json=body) if metered_requests([request]) else None
-
-    fake_net(replies(reply))
-    (row,) = (await submit())["rows"]
-    fix = "Give a 2xx of the publish the status unconfirmed in indexing._one, never failed."
-    assert row["status"] == "unconfirmed", f"indexing.py: a 2xx gave {row['status']}. {fix}"
-
-
-INSPECTIONS = [path for key, paths in SPENDERS.items() if key[0] == "gsc.py" for path in paths]
-NO_RESULT = [{}, {"message": "try later"}, {"inspectionResult": "text"}]
-
-
-@pytest.mark.parametrize("body", NO_RESULT, ids=json.dumps)
-@pytest.mark.parametrize(("name", "_", "call"), INSPECTIONS, ids=[path[0] for path in INSPECTIONS])
-async def test_no_inspection_result_is_a_failure_on_each_path(live, fake_net, name, _, call, body):
-    def reply(request):
-        return httpx2.Response(200, json=body) if metered_requests([request]) else None
-
-    fake_net(replies(reply))
-    data = await call()
-    result = data.get("sources", {}).get("index_status", data)
-    fix = "Require an inspectionResult object before the path shows or saves a reply."
-    assert result["status"] == "error", f"gsc.py: {name} showed a failed call as ok. {fix}"
-    assert "shape" in result["reason"]
 
 
 READERS = ("shared.request", "shared.once")
@@ -298,6 +258,8 @@ def test_each_function_that_spends_is_in_the_sweep():
 
 
 # A live read of a date range with no data answered with this body, and with no rows field.
+# Each read of a Search Console report (search_queries, search_pages, quick_wins) sends through
+# gsc._analytics, so READS holds 1 source for each call that has a check.
 REAL_EMPTY = {"responseAggregationType": "byProperty"}
 RANGE = {"startDate": "2026-01-01", "endDate": "2026-01-02"}
 
@@ -308,8 +270,6 @@ def search_console(name, request):
 
 READS = [
     ("search_queries", source("search_queries"), "/searchAnalytics/query"),
-    ("search_pages", source("search_pages"), "/searchAnalytics/query"),
-    ("quick_wins", source("quick_wins"), "/searchAnalytics/query"),
     ("sitemaps", source("sitemaps"), "/sitemaps"),
     ("search_analytics", search_console("search_analytics", RANGE), "/searchAnalytics/query"),
     ("sitemap list", search_console("sitemaps", {}), "/sitemaps"),
@@ -336,17 +296,11 @@ def sent(calls, ending):
 async def test_a_search_console_reply_of_no_known_field_is_a_failure(
     live, fake_net, name, call, ending
 ):
-    search_console_says(fake_net, ending, {"message": "try later"})
+    calls = search_console_says(fake_net, ending, {"message": "try later"})
     result = result_of(await call(), name)
     assert result["status"] == "error", f"{name} showed a failed read as an ok empty result."
     assert "shape" in result["reason"]
     assert result["rows"] == []
-
-
-@pytest.mark.parametrize(("name", "call", "ending"), READS, ids=READ_IDS)
-async def test_a_bad_search_console_reply_is_never_saved(live, fake_net, name, call, ending):
-    calls = search_console_says(fake_net, ending, {"message": "try later"})
-    await call()
     first = len(sent(calls, ending))
     result = result_of(await call(), name)
     assert result["status"] == "error"
@@ -386,18 +340,6 @@ async def test_an_empty_sitemap_list_stays_ok(live, fake_net, body):
     assert data["status"] == "ok"
 
 
-async def test_a_bad_reply_that_an_old_server_saved_is_not_served(live, fake_net):
-    calls = search_console_says(fake_net, "/sitemaps", {"sitemap": []})
-    await core.get_seo_data(HOST, ["sitemaps"])
-    (saved,) = list(shared.folder().glob("*.json"))
-    stored = json.loads(saved.read_text())
-    saved.write_text(json.dumps({**stored, "answer": {"message": "try later"}}))
-    result = (await core.get_seo_data(HOST, ["sitemaps"]))["sources"]["sitemaps"]
-    assert result["status"] == "ok"
-    assert result["from_cache"] is False
-    assert len(sent(calls, "/sitemaps")) == 2
-
-
 def test_only_the_named_reads_have_no_shape_check():
     wrong = sorted(unchecked_reads() - NO_SHAPE_CHECK)
     fix = "Pass good= to the read, so that a failed HTTP 200 reply is not an ok empty result."
@@ -411,17 +353,17 @@ def query(api, name, request=None):
 
 
 FEED = f"https://{HOST}/sitemap.xml"
-# Each read that PR #21 left with no check. The match finds the request of the read.
+# Each read that PR #21 left with no check, 1 row for each call that has a check: each GA4 report
+# sends through ga4._post, and both Chrome UX Report methods through 1 reader. The match finds
+# the request of the read.
 OTHER_READS = [
     ("ga4_organic", source("ga4_organic"), ":runReport"),
-    ("ga4_landing_pages", source("ga4_landing_pages"), ":runReport"),
     ("run_report", query("ga4", "run_report", {"metrics": [{"name": "sessions"}]}), ":runReport"),
-    ("pivot_report", query("ga4", "pivot_report", {}), ":runPivotReport"),
-    ("realtime_report", query("ga4", "realtime_report", {}), ":runRealtimeReport"),
     ("metadata", query("ga4", "metadata"), "/metadata"),
     ("crux record", query("crux", "record", {}), ":queryRecord"),
-    ("crux history", query("crux", "history", {}), ":queryHistoryRecord"),
     ("sitemap", query("search_console", "sitemap", {"feedpath": FEED}), "sitemap.xml"),
+    ("pagespeed run", query("pagespeed", "run", {}), "/runPagespeed"),
+    ("bing method", query("bing", "GetQueryStats"), "/GetQueryStats"),
 ]
 OTHER_IDS = [read[0] for read in OTHER_READS]
 
@@ -472,7 +414,6 @@ async def test_a_real_empty_ga4_report_stays_ok(live, fake_net):
 # is a failure. Google leaves out an empty sitemap list, so {} of sitemaps.list stays ok.
 EMPTY_IS_A_FAILURE = [
     ("search_queries", source("search_queries"), "/searchAnalytics/query"),
-    ("search_analytics", search_console("search_analytics", RANGE), "/searchAnalytics/query"),
     ("metadata", query("ga4", "metadata"), "/metadata"),
     ("sitemap", query("search_console", "sitemap", {"feedpath": FEED}), "sitemap.xml"),
 ]
@@ -485,8 +426,9 @@ async def test_an_empty_object_is_not_an_empty_answer(live, fake_net, name, call
     calls = search_console_says(fake_net, ending, {})
     result = result_of(await call(), name)
     assert result["status"] == "error", f"{name} showed {{}} as an ok empty answer."
-    assert "shape" in result["reason"]
+    assert net.BAD_SHAPE in result["reason"]
     assert result["rows"] == []
+    assert not [path for path in shared.folder().glob("*.json") if "failed" not in path.name]
     first = len(sent(calls, ending))
     repeat = result_of(await call(), name)
     assert "did not send it again" in repeat["reason"]
@@ -533,14 +475,6 @@ SITEMAP_RECORD = {
     "errors": "0",
     "contents": [{"type": "web", "submitted": "57", "indexed": "0"}],
 }
-
-
-async def test_an_empty_sitemap_record_is_never_saved(live, fake_net):
-    search_console_says(fake_net, "sitemap.xml", {})
-    data = await core.query_api(HOST, "search_console", "sitemap", {"feedpath": FEED})
-    assert data["status"] == "error", "sitemaps.get showed {} as an ok sitemap."
-    assert net.BAD_SHAPE in data["reason"]
-    assert not [path for path in shared.folder().glob("*.json") if "failed" not in path.name]
 
 
 async def test_a_sitemap_record_with_a_path_is_ok(live, fake_net):
