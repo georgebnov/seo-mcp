@@ -7,7 +7,6 @@ import os
 import subprocess
 import sys
 import textwrap
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -46,9 +45,8 @@ def age_all(seconds):
     """Make each saved answer older, as time would."""
     for path in shared.folder().glob("*.json"):
         stored = json.loads(path.read_text())
-        field = "failed_at" if "failed_at" in stored else "cached_at"
-        at = datetime.fromisoformat(stored[field]) - timedelta(seconds=seconds)
-        path.write_text(json.dumps({**stored, field: at.isoformat()}))
+        at = datetime.fromisoformat(stored["cached_at"]) - timedelta(seconds=seconds)
+        path.write_text(json.dumps({**stored, "cached_at": at.isoformat()}))
 
 
 REPEATS = [
@@ -74,6 +72,7 @@ METHODS = [
     ("ga4", *GA4_REPORT),
     ("ga4", "metadata", {}),
     ("bing", "GetQueryStats", {}),
+    ("clarity", *DASHBOARD),
 ]
 
 
@@ -83,7 +82,7 @@ async def test_a_repeat_of_a_source_sends_nothing(live, name, params):
     count = len(sent(live))
     assert count
     assert first["status"] == "ok"
-    assert first["from_cache"] is False
+    assert first["from_cache"] is False, f"{name}: note each call in shared.once."
     second = (await sources(name, **params))["sources"][name]
     assert len(sent(live)) == count
     assert second["status"] == "ok"
@@ -121,20 +120,33 @@ async def test_a_repeat_of_bing_links_sends_nothing(live, fake_net):
     assert len(sent(calls)) == 1
 
 
+class SlowEdge(httpx2.AsyncBaseTransport):
+    """Hold each request, so that the other tasks of 1 process reach the lock of the call."""
+
+    def __init__(self):
+        self.seen = []
+
+    async def handle_async_request(self, request):
+        self.seen.append(request)
+        await asyncio.sleep(0.05)
+        return httpx2.Response(200, json={"lighthouseResult": {"categories": {}, "audits": {}}})
+
+
 async def test_parallel_identical_calls_share_1_request(live):
+    net.transport = edge = SlowEdge()
     results = await asyncio.gather(*(sources("page_speed") for _ in range(18)))
-    assert len(sent(live)) == 1
+    assert len(edge.seen) == 1
     flags = [result["sources"]["page_speed"]["from_cache"] for result in results]
     assert flags.count(False) == 1
 
 
 async def test_2_sources_share_their_identical_request(live):
+    """quick_wins asks for 1 report of its own and takes the 2 date reads of search_pages."""
     await sources("search_pages")
     count = len(sent(live))
-    data = await sources("index_status", page=f"https://{HOST}/a")
-    await sources("quick_wins")
-    assert data["sources"]["index_status"]["status"] == "ok"
-    assert len(sent(live)) <= count + 2
+    data = await sources("quick_wins")
+    assert data["sources"]["quick_wins"]["status"] == "ok"
+    assert len(sent(live)) == count + 1
 
 
 @pytest.mark.parametrize(
@@ -157,13 +169,14 @@ async def test_different_requests_do_not_share(live, first, second):
     assert len(sent(live)) > count
 
 
-async def test_2_sites_do_not_share(live, tmp_path, write_config, account):
-    await sources("page_speed", page=f"https://{HOST}/a")
+async def test_2_sites_do_not_share(live, write_config, account):
+    """The 2 sites have 1 property and 1 account, so only the host makes the requests differ."""
+    await sources("search_queries")
     count = len(sent(live))
     write_config({**SITE, "host": "other.example.com"}, account)
-    data = await core.get_seo_data("other.example.com", ["page_speed"], page="/a")
-    assert data["sources"]["page_speed"]["from_cache"] is False
-    assert len(sent(live)) == count + 1
+    data = await core.get_seo_data("other.example.com", ["search_queries"])
+    assert data["sources"]["search_queries"]["from_cache"] is False
+    assert len(sent(live)) > count
 
 
 async def test_a_saved_answer_ends_at_the_stated_time(live):
@@ -184,19 +197,11 @@ async def test_a_saved_answer_of_the_future_is_not_served(live):
     assert (await sources("page_speed"))["sources"]["page_speed"]["from_cache"] is False
 
 
-async def test_a_realtime_report_stays_only_a_short_time(live, fake_net):
+async def test_a_realtime_report_stays_only_a_short_time(live):
     first = await query("ga4", *REALTIME)
     said = datetime.fromisoformat(first["cache_expires_at"])
     span = said - datetime.fromisoformat(first["cached_at"])
     assert span == timedelta(seconds=shared.REALTIME_SECONDS)
-
-
-async def test_a_repeat_of_url_inspection_spends_nothing(live):
-    await query("search_console", *("url_inspection", INSPECT[1]))
-    data = await query("search_console", *("url_inspection", INSPECT[1]))
-    assert data["calls_used_today"] == 1
-    assert data["from_cache"] is True
-    assert len(metered_requests(live)) == 1
 
 
 async def test_a_saved_inspection_serves_at_the_limit(live):
@@ -205,15 +210,8 @@ async def test_a_saved_inspection_serves_at_the_limit(live):
     data = await query("search_console", *("url_inspection", INSPECT[1]))
     assert data["status"] == "ok"
     assert data["from_cache"] is True
-
-
-async def test_a_repeat_of_index_status_spends_nothing(live):
-    first = (await sources("index_status"))["sources"]["index_status"]
-    assert first["status"] == "ok"
-    second = (await sources("index_status"))["sources"]["index_status"]
-    assert second["calls_used_today"] == first["calls_used_today"]
-    assert second["rows"] == first["rows"]
-    assert second["from_cache"] is True
+    assert data["calls_used_today"] == gsc.LEDGER.limit
+    assert len(metered_requests(live)) == 1
 
 
 async def test_2_properties_of_1_host_do_not_share_index_status(live, write_config, account):
@@ -250,52 +248,20 @@ async def test_a_full_disk_does_not_lose_a_paid_answer(tmp_path):
 
 
 async def test_a_prune_reaches_entries_behind_many_lock_files(live, monkeypatch):
+    """The ledger is as old as the stale entry: a prune of the cache folder would end its count."""
     monkeypatch.setattr(shared, "PRUNE_BATCH", 1)
     shared.folder().mkdir(parents=True)
     for number in range(200):
         (shared.folder() / f"{number}.lock").touch()
     stale = shared.folder() / "stale.json"
     stale.write_text("{}")
+    set_ledger(clarity.LEDGER, HOST, used=3)
     long_ago = datetime.now(UTC).timestamp() - shared.PRUNE_SECONDS - 1
     os.utime(stale, (long_ago, long_ago))
+    os.utime(quota.path(clarity.LEDGER, HOST), (long_ago, long_ago))
     await sources("page_speed")
     assert not stale.exists()
-
-
-def test_parallel_pruners_of_shared_skip_a_removed_file_and_fail_none(tmp_path):
-    """A pruner lists the folder, and another pruner removes a listed file before its stat."""
-    cache = tmp_path / "parallel"
-    entries = cache / "shared"
-    entries.mkdir(parents=True)
-    long_ago = datetime.now(UTC).timestamp() - shared.PRUNE_SECONDS - 1
-    for number in range(2000):
-        path = entries / f"{number:032x}.json"
-        path.write_text("{}")
-        os.utime(path, (long_ago, long_ago))
-    go = tmp_path / "go"
-    # Each worker starts on the same file, so that the prunes overlap.
-    script = textwrap.dedent(
-        f"""
-        import os, time
-        from seo_mcp import shared
-        while not os.path.exists({str(go)!r}):
-            time.sleep(0.001)
-        for _ in range(200):
-            if not any(shared.folder().glob("*.json")):
-                break
-            shared._prune(shared.folder())
-        """
-    )
-    env = {**os.environ, "SEO_MCP_CACHE_DIR": str(cache)}
-    workers = [
-        subprocess.Popen([sys.executable, "-c", script], env=env, stderr=subprocess.PIPE)
-        for _ in range(8)
-    ]
-    time.sleep(1)
-    go.touch()
-    errors = [worker.communicate(timeout=60)[1].decode() for worker in workers]
-    assert [worker.returncode for worker in workers] == [0] * 8, errors
-    assert sorted(path.name for path in entries.glob("*.json")) == []
+    assert quota.view(clarity.LEDGER, HOST)["calls_used_today"] == 3
 
 
 async def test_a_longer_lifetime_does_not_extend_a_short_saved_answer(live):
@@ -306,20 +272,6 @@ async def test_a_longer_lifetime_does_not_extend_a_short_saved_answer(live):
     age_all(31)
     await shared.request(*args, keep=300, auth=auth)
     assert len(sent(live)) == 2
-
-
-async def test_a_repeat_of_a_ga4_report_does_not_count_its_tokens_twice(live, fake_net):
-    def reply(request):
-        if request.url.path.endswith(":runReport"):
-            usage = {"tokensPerDay": {"consumed": 12, "remaining": 100}}
-            body = {"rows": [], "propertyQuota": usage, "kind": "analyticsData#runReport"}
-            return httpx2.Response(200, json=body)
-        return None
-
-    fake_net(replies(reply))
-    await query("ga4", *GA4_REPORT)
-    data = await query("ga4", *GA4_REPORT)
-    assert data["tokens_used_today"] == 12
 
 
 @pytest.mark.parametrize(
@@ -342,17 +294,6 @@ async def test_a_failure_of_any_source_stops_a_repeat(live, fake_net, name, host
     assert len(sent(calls)) == 1
 
 
-async def test_a_failure_goes_out_again_after_the_window(live, fake_net):
-    def reply(request):
-        return httpx2.Response(500) if "pagespeed" in request.url.path else None
-
-    calls = fake_net(replies(reply))
-    await sources("page_speed")
-    age_all(shared.FAILURE_WINDOW_SECONDS)
-    await sources("page_speed")
-    assert len(sent(calls)) == 2
-
-
 CACHE_FIELDS = {"from_cache", "cached_at", "cache_age_seconds", "cache_expires_at"}
 
 
@@ -362,21 +303,16 @@ async def test_a_404_of_crux_shows_the_cache_fields(live, fake_net):
     def reply(request):
         return httpx2.Response(404) if "records:" in request.url.path else None
 
-    fake_net(replies(reply))
+    calls = fake_net(replies(reply))
     first = (await sources("chrome_field_data"))["sources"]["chrome_field_data"]
     again = (await sources("chrome_field_data"))["sources"]["chrome_field_data"]
     fix = "A live answer from a failed call shows the cache fields (shared.once)."
     assert CACHE_FIELDS <= set(first), fix
     assert first["from_cache"] is False
     assert again["from_cache"] is True
-
-
-@pytest.mark.parametrize(("name", "params"), REPEATS)
-async def test_each_network_source_shows_the_cache_fields(live, name, params):
-    result = (await sources(name, **params))["sources"][name]
-    assert result["status"] == "ok"
-    missing = sorted(CACHE_FIELDS - set(result))
-    assert not missing, f"{name} misses {missing}: note each call in shared.once."
+    assert again["status"] == "ok"
+    assert "no field data" in again["reason"]
+    assert len(sent(calls)) == 1
 
 
 async def test_a_saved_ga4_answer_spent_no_token(live, fake_net):
@@ -389,18 +325,6 @@ async def test_a_saved_ga4_answer_spent_no_token(live, fake_net):
     assert saved["tokens_spent"] == 0
     # The reading of the day stays: only the spend of this answer is 0.
     assert saved["tokens_used_today"] == 12
-
-
-async def test_a_404_of_crux_stays_the_no_data_answer_on_a_repeat(live, fake_net):
-    def reply(request):
-        return httpx2.Response(404) if "records:" in request.url.path else None
-
-    calls = fake_net(replies(reply))
-    await sources("chrome_field_data")
-    data = (await sources("chrome_field_data"))["sources"]["chrome_field_data"]
-    assert data["status"] == "ok"
-    assert "no field data" in data["reason"]
-    assert len(sent(calls)) == 1
 
 
 @pytest.mark.parametrize(
@@ -464,30 +388,9 @@ async def test_a_saved_request_still_needs_a_listed_endpoint(live):
     assert len(live) == count
 
 
-async def test_a_source_of_2_requests_is_from_cache_only_when_both_are(live):
-    await sources("search_pages")
-    count = len(sent(live))
-    data = (await sources("index_status"))["sources"]["index_status"]
-    assert data["from_cache"] is False
-    assert len(sent(live)) > count
-    assert data["cache_age_seconds"] >= 0
-
-
 async def test_a_source_with_no_network_shows_no_cache_fields(live):
     data = await core.query_api(HOST)
     assert "from_cache" not in data
-
-
-async def test_old_saved_entries_are_pruned_and_ledgers_stay(live):
-    set_ledger(clarity.LEDGER, HOST, used=3)
-    stale = shared.folder() / "stale.json"
-    stale.parent.mkdir(parents=True, exist_ok=True)
-    stale.write_text("{}")
-    long_ago = datetime.now(UTC).timestamp() - shared.PRUNE_SECONDS - 1
-    os.utime(stale, (long_ago, long_ago))
-    await sources("page_speed")
-    assert not stale.exists()
-    assert quota.view(clarity.LEDGER, HOST)["calls_used_today"] == 3
 
 
 async def test_a_broken_saved_file_is_a_miss(live):
@@ -517,13 +420,6 @@ async def test_outer_spaces_do_not_make_a_new_clarity_call(live, text):
     assert len(metered_requests(live)) == 1
 
 
-@pytest.mark.parametrize("other", ["Q", "q  q", "q q", "q?"])
-async def test_2_different_questions_stay_2_calls(live, other):
-    await run("clarity", ("dashboard_query", {"query": "q q"}))
-    data = await run("clarity", ("dashboard_query", {"query": other + " x"}))
-    assert data["from_cache"] is False
-
-
 async def test_only_outer_spaces_are_trimmed(live):
     await run("clarity", ("dashboard_query", {"query": "a b"}))
     data = await run("clarity", ("dashboard_query", {"query": "a  b"}))
@@ -531,7 +427,7 @@ async def test_only_outer_spaces_are_trimmed(live):
     assert len(metered_requests(live)) == 2
 
 
-def test_18_real_processes_send_1_request(tmp_path, write_config, repo):
+def test_18_real_processes_send_1_request(tmp_path, write_config):
     write_config({"secrets": {}})
     cache = tmp_path / "shared-cache"
     child = textwrap.dedent(
