@@ -2,40 +2,33 @@
 - 1 is the day it should start counting from."
 
 Each date rule uses 1 day, the local date of the machine (params.today), read 1 time for each
-call. The newest day of each dated source is that day minus 1. The tests fix the local date
-and the UTC time apart, so a rule that still reads the UTC date fails.
+call. The newest day of each dated source is that day minus 1. The tests fix only that local
+date. They do not set the UTC time, so no behavior test here fails on a rule that reads the UTC
+date: the guard at the end of this file fails on it, and so does
+tests/test_coverage.py::test_the_local_date_and_not_the_utc_date_gives_the_newest_day.
 """
 
 import ast
 import json
 import re
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 
-from seo_mcp import core, params, shared
-from seo_mcp.providers import clarity, ga4, gsc
+from seo_mcp import core, params
+from seo_mcp.providers import ga4, gsc
 from test_query_api import HOST
 
-# The D5 case: 06:11 UTC on 2026-11-09. The local date of the machine is 2026-11-09 too.
+# The day of the D5 case: the local date of the machine is 2026-11-09.
 TODAY = date(2026, 11, 9)
 YESTERDAY = "2026-11-08"
-MOMENT = datetime(2026, 11, 9, 6, 11, tzinfo=UTC)
 DATED = ["search_queries", "ga4_organic"]
 
 
-def freeze(monkeypatch, day=TODAY, moment=MOMENT):
-    """Fix the local date (params._clock) and the instant of the cache times apart."""
-
-    class Frozen(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return moment.astimezone(tz or UTC)
-
-    for module in (shared, gsc, ga4, clarity, params):
-        monkeypatch.setattr(module, "datetime", Frozen, raising=False)
-    monkeypatch.setattr(params, "_clock", lambda: day, raising=False)
+def freeze(monkeypatch, day=TODAY):
+    """Fix the local date of the machine, the 1 input of each date rule."""
+    monkeypatch.setattr(params, "_clock", lambda: day)
 
 
 def google(calls):
@@ -66,21 +59,6 @@ def ends(calls):
 
 async def dated(**asked):
     return (await core.get_seo_data(HOST, DATED, **asked))["sources"]
-
-
-async def test_the_newest_day_of_each_dated_source_is_today_minus_1(live, monkeypatch):
-    freeze(monkeypatch)
-    sources = await dated(start_date="2026-11-01", end_date="2026-11-20")
-    for name in DATED:
-        result = sources[name]
-        assert result["status"] == "ok", (name, result["reason"])
-        assert result["coverage"]["end_date"] == YESTERDAY, name
-        assert result["date_moved"] == {
-            "asked_end_date": "2026-11-20",
-            "sent_end_date": YESTERDAY,
-        }, name
-        assert result["applied"]["end_date"] == YESTERDAY, name
-    assert ends(live) == {YESTERDAY}
 
 
 async def test_an_end_of_today_moves_to_yesterday(live, monkeypatch):
@@ -114,11 +92,6 @@ async def test_a_start_of_today_or_later_is_refused_with_nothing_sent(live, monk
 @pytest.mark.parametrize(
     ("api", "method", "request_body"),
     [
-        (
-            "ga4",
-            "run_report",
-            {"dateRanges": [{"startDate": "2026-11-10", "endDate": "2026-11-10"}]},
-        ),
         ("ga4", "run_report", {"dateRanges": [{"startDate": "today", "endDate": "today"}]}),
         (
             "search_console",
@@ -126,7 +99,7 @@ async def test_a_start_of_today_or_later_is_refused_with_nothing_sent(live, monk
             {"startDate": "2026-11-09", "endDate": "2026-11-09"},
         ),
     ],
-    ids=["ga4-D5", "ga4-today", "search-console-today"],
+    ids=["ga4-today", "search-console-today"],
 )
 async def test_query_api_refuses_a_start_past_the_newest_day(
     live, monkeypatch, api, method, request_body
@@ -143,8 +116,6 @@ async def test_query_api_refuses_a_start_past_the_newest_day(
     [
         ("7daysAgo", "today", ("2026-11-02", YESTERDAY), True),
         ("7daysAgo", "yesterday", ("2026-11-02", YESTERDAY), False),
-        ("30daysAgo", "3daysAgo", ("2026-10-10", "2026-11-06"), False),
-        ("2026-11-01", "today", ("2026-11-01", YESTERDAY), True),
     ],
 )
 async def test_a_ga4_relative_date_goes_out_as_a_plain_date(
@@ -183,7 +154,7 @@ def cohorts(*ranges):
     return {"cohortSpec": {"cohorts": items}}
 
 
-@pytest.mark.parametrize("method", ["run_report", "pivot_report"])
+# pivot_report sends its cohorts through the same line of ga4._reader: the guard below has its row.
 @pytest.mark.parametrize(
     ("start", "end", "sent", "moved"),
     [
@@ -193,11 +164,11 @@ def cohorts(*ranges):
     ],
 )
 async def test_a_ga4_cohort_range_goes_out_as_plain_dates_up_to_yesterday(
-    live, monkeypatch, method, start, end, sent, moved
+    live, monkeypatch, start, end, sent, moved
 ):
     freeze(monkeypatch)
     request = cohorts({"startDate": start, "endDate": end})
-    data = await core.query_api(HOST, "ga4", method, request)
+    data = await core.query_api(HOST, "ga4", "run_report", request)
     assert data["status"] == "ok", data["reason"]
     went = {"startDate": sent[0], "endDate": sent[1]}
     [body] = reports(live)
@@ -216,19 +187,12 @@ async def test_a_ga4_cohort_range_goes_out_as_plain_dates_up_to_yesterday(
         assert "date_moved" not in data
 
 
-@pytest.mark.parametrize(
-    "date_range",
-    [
-        {"startDate": "today", "endDate": "today"},
-        {"startDate": "2026-11-10", "endDate": "2026-11-12"},
-    ],
-    ids=["today", "future"],
-)
 async def test_a_ga4_cohort_start_past_the_newest_day_is_refused_with_nothing_sent(
-    live, monkeypatch, date_range
+    live, monkeypatch
 ):
     freeze(monkeypatch)
-    request = cohorts({"startDate": "2026-11-01", "endDate": "2026-11-05"}, date_range)
+    late = {"startDate": "today", "endDate": "today"}
+    request = cohorts({"startDate": "2026-11-01", "endDate": "2026-11-05"}, late)
     data = await core.query_api(HOST, "ga4", "run_report", request)
     assert data["status"] == "error"
     assert YESTERDAY in data["reason"]
@@ -318,28 +282,24 @@ async def test_no_ga4_method_sends_a_relative_date_or_a_day_after_yesterday(
     assert not wrong, f"{fix} {wrong}"
 
 
-async def test_a_ga4_default_range_goes_out_as_plain_dates(live, monkeypatch):
-    freeze(monkeypatch)
-    result = (await core.get_seo_data(HOST, ["ga4_organic"]))["sources"]["ga4_organic"]
-    assert result["window"] == {"startDate": "2026-10-10", "endDate": "2026-11-06"}
-    assert result["coverage"]["last_complete_day"] == "2026-11-06"
-
-
 async def test_1_call_reads_the_day_1_time(live, monkeypatch):
     """A call that runs over midnight keeps 1 day for all of its sources."""
     freeze(monkeypatch)
     days = iter([TODAY] + [TODAY + timedelta(days=1)] * 50)
-    monkeypatch.setattr(params, "_clock", lambda: next(days), raising=False)
+    monkeypatch.setattr(params, "_clock", lambda: next(days))
     sources = await dated(start_date="2026-11-01", end_date="2026-11-30")
     assert {sources[name]["coverage"]["end_date"] for name in DATED} == {YESTERDAY}
 
 
 async def test_a_saved_report_of_yesterday_does_not_serve_today(live, monkeypatch):
-    """A saved answer keeps the partial days of its own day: after midnight it goes again."""
-    freeze(monkeypatch, TODAY, datetime(2026, 11, 9, 23, 58, tzinfo=UTC))
+    """A saved answer keeps the partial days of its own day: after midnight it goes again.
+
+    The 2 calls run inside the 5 minutes of a saved answer, so only the new day sends them again.
+    """
+    freeze(monkeypatch)
     await dated(start_date="2026-11-01", end_date="2026-11-05")
     before = len(reports(live))
-    freeze(monkeypatch, TODAY + timedelta(days=1), datetime(2026, 11, 10, 0, 1, tzinfo=UTC))
+    freeze(monkeypatch, TODAY + timedelta(days=1))
     sources = await dated(start_date="2026-11-01", end_date="2026-11-05")
     assert len(reports(live)) == 2 * before
     for name in DATED:

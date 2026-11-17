@@ -15,6 +15,11 @@ def ledger_path(project_id):
     return quota.path(clarity.LEDGER, project_id)
 
 
+def spent() -> int:
+    """The Clarity calls of the day that the ledger of the site counts."""
+    return json.loads(ledger_path("www.example.com").read_text())["used"]
+
+
 SITE = {
     "gsc_property": "sc-domain:example.com",
     "ga4_property_id": "123456789",
@@ -140,8 +145,8 @@ async def ask(sources, **params):
         ({"start_date": "2026-1-5", "end_date": GOOD_DAY}, "start_date"),
         ({"start_date": "20260105", "end_date": GOOD_DAY}, "start_date"),
         ({"start_date": "2026-02-30", "end_date": "2026-03-01"}, "start_date"),
-        ({"start_date": GOOD_DAY}, "end_date"),
-        ({"end_date": GOOD_DAY}, "start_date"),
+        ({"start_date": GOOD_DAY}, "start_date and end_date go together"),
+        ({"end_date": GOOD_DAY}, "start_date and end_date go together"),
         ({"start_date": "2026-01-11", "end_date": GOOD_DAY}, "start_date"),
         ({"start_date": GOOD_DAY, "end_date": GOOD_DAY, "last_days": 7}, "last_days"),
         ({"last_days": 0}, "last_days"),
@@ -168,7 +173,7 @@ async def ask(sources, **params):
                 "end_date": GOOD_DAY,
                 "compare_start_date": "2026-01-01",
             },
-            "compare_end_date",
+            "compare_start_date and compare_end_date go together",
         ),
         (
             {
@@ -524,14 +529,6 @@ async def test_failed_comparison_side_gives_no_delta(write_config, fake_net, acc
 
 
 # Clarity: 10 calls for each project each day.
-async def test_clarity_refuses_dates_and_a_query(live):
-    data = await ask(["clarity"], start_date="2026-01-01", end_date=GOOD_DAY)
-    assert data["sources"]["clarity"]["status"] == "unsupported"
-    data = await ask(["clarity"], query="shoes")
-    assert data["sources"]["clarity"]["status"] == "unsupported"
-    assert not api_calls(live)
-
-
 async def test_clarity_refuses_more_days_than_the_api_has(live):
     data = await ask(["clarity"], last_days=7)
     result = data["sources"]["clarity"]
@@ -557,6 +554,7 @@ async def test_clarity_page_filter_comes_before_rows_and_totals_and_costs_no_cal
     result = data["sources"]["clarity"]
     assert len(api_calls(live)) == 1
     assert result["from_cache"] is True
+    assert spent() == 1, "A saved answer spends no call of the day."
     assert {row["Url"] for row in result["rows"]} == {PAGE, "http://www.example.com/a"}
     assert result["totals"] == {"sessions": 110}
     assert result["complete"] is True
@@ -622,6 +620,7 @@ async def test_clarity_metrics_below_the_row_limit_together_are_complete_for_a_p
 async def test_clarity_compare_pages_spends_one_call(live):
     data = await ask(["clarity"], page="/a", compare_page="/b")
     assert len(api_calls(live)) == 1
+    assert spent() == 1, "The 2 sides run in parallel and share 1 call of the day."
     result = data["sources"]["clarity"]
     assert result["totals"] == {"sessions": 110}
     assert result["comparison"]["totals"] == {"sessions": 500}
@@ -653,13 +652,6 @@ async def test_clarity_stops_at_the_daily_budget(write_config, fake_net, monkeyp
     assert len(calls) == clarity.DAILY_CALLS
 
 
-async def test_clarity_cache_hit_spends_no_budget(live):
-    await ask(["clarity"])
-    await ask(["clarity"])
-    stored = json.loads(ledger_path("www.example.com").read_text())
-    assert stored["used"] == 1
-
-
 async def test_clarity_ledger_of_an_older_day_starts_again(live):
     path = ledger_path("www.example.com")
     path.parent.mkdir(parents=True)
@@ -675,11 +667,6 @@ async def test_broken_clarity_ledger_fails_closed(live):
     assert result["status"] == "error"
     assert "ledger" in result["reason"]
     assert not api_calls(live)
-
-
-async def test_parallel_clarity_runs_spend_one_call(live):
-    await ask(["clarity"], page="/a", compare_page="/b")
-    assert json.loads(ledger_path("www.example.com").read_text())["used"] == 1
 
 
 # The guard: a source cannot claim a parameter and ignore it, and the list cannot drift.
@@ -711,27 +698,36 @@ def trace(calls) -> list[tuple[str, str, bytes]]:
 @pytest.mark.parametrize("group", list(GROUPS))
 @pytest.mark.parametrize("name", sorted(providers.SOURCES))
 async def test_a_declared_parameter_acts_and_an_undeclared_one_is_refused(live, name, group):
+    if not GROUPS[group] <= providers.ACCEPTS[name]:
+        refused = (await ask([name], **PARAM_VALUES[group]))["sources"][name]
+        assert refused["status"] == "unsupported", f"{name} ignored {group} in silence"
+        assert not live, f"{name} refused {group} and still sent a request"
+        return
     plain = await ask([name])
     before = trace(live)
     live.clear()
     (cache := clarity.cache_path("www.example.com", clarity_auth())).unlink(missing_ok=True)
     assert not cache.exists()
     filtered = await ask([name], **PARAM_VALUES[group])
-    after = trace(live)
     result = filtered["sources"][name]
-    if GROUPS[group] <= providers.ACCEPTS[name]:
-        assert result["status"] == "ok", result
-        assert set(result["applied"]) == GROUPS[group]
-        moved = after != before or result["rows"] != plain["sources"][name]["rows"]
-        assert moved, f"{name} declares {group} but the parameter changed nothing"
-    else:
-        assert result["status"] == "unsupported", f"{name} ignored {group} in silence"
-        assert not after
+    assert result["status"] == "ok", result
+    assert set(result["applied"]) == GROUPS[group]
+    moved = trace(live) != before or result["rows"] != plain["sources"][name]["rows"]
+    assert moved, f"{name} declares {group} but the parameter changed nothing"
 
 
 def test_tool_description_names_each_source_and_what_it_accepts():
-    text = core.describe_sources()
+    lines = dict(
+        line.removeprefix("- ").split(": ", 1) for line in core.describe_sources().splitlines()
+    )
+    assert set(lines) == set(providers.SOURCES)
+    # The text that an agent reads: 1 source with no parameter, 1 with a page, 1 with dates.
+    assert lines["sitemaps"] == "no parameters"
+    assert lines["clarity"] == "compare_page, last_days, page"
+    assert lines["ga4_organic"] == (
+        "compare_end_date, compare_page, compare_start_date, end_date, last_days, page, start_date"
+    )
+    # Each other line names each declared parameter and no other, as whole names.
     for name, accepts in providers.ACCEPTS.items():
-        line = next(item for item in text.splitlines() if item.startswith(f"- {name}:"))
-        for parameter in accepts:
-            assert parameter in line
+        named = set(lines[name].split(", ")) - {"no parameters"}
+        assert named - set(params.COMPARE_NEEDS) == accepts, f"{name}: {lines[name]}"
