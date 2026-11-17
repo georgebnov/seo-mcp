@@ -4,6 +4,7 @@ import ast
 import asyncio
 import fcntl
 import threading
+import time
 from pathlib import Path
 
 import httpx2
@@ -24,15 +25,30 @@ def short_wait(monkeypatch):
     monkeypatch.setattr(quota, "LOCK_WAIT_SECONDS", WAIT)
 
 
-def hold_lock(target, seconds=HOLD):
-    """A stuck process: another open file holds the lock, and a thread lets it go at the end."""
-    lock_file = target.with_suffix(".lock")
-    lock_file.parent.mkdir(parents=True, exist_ok=True)
-    handle = lock_file.open("a")
-    fcntl.flock(handle, fcntl.LOCK_EX)
-    timer = threading.Timer(seconds, handle.close)
-    timer.start()
-    return timer
+@pytest.fixture
+def hold_lock():
+    """A stuck process: another open file holds the lock until the test ends.
+
+    A timer also lets the lock go after `seconds`, so that code that waits with no limit fails
+    the test and does not stop the run.
+    """
+    held = []
+
+    def hold(target, seconds=HOLD):
+        lock_file = target.with_suffix(".lock")
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_file.open("a")
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        timer = threading.Timer(seconds, handle.close)
+        timer.start()
+        held.append((timer, handle))
+        return timer
+
+    yield hold
+    for timer, handle in held:
+        timer.cancel()
+        timer.join()
+        handle.close()
 
 
 @pytest.mark.parametrize(
@@ -42,10 +58,11 @@ def hold_lock(target, seconds=HOLD):
         ("search_console", INSPECT, gsc.LEDGER, SITE["gsc_property"]),
     ],
 )
-async def test_a_stuck_ledger_refuses_and_sends_nothing(live, short_wait, api, call, ledger, key):
-    timer = hold_lock(quota.path(ledger, key))
+async def test_a_stuck_ledger_refuses_and_sends_nothing(
+    live, short_wait, hold_lock, api, call, ledger, key
+):
+    hold_lock(quota.path(ledger, key))
     data = await run(api, call)
-    timer.join()
     assert data["status"] == "error"
     assert "busy" in data["reason"]
     assert quota.path(ledger, key).name in data["reason"]
@@ -53,15 +70,14 @@ async def test_a_stuck_ledger_refuses_and_sends_nothing(live, short_wait, api, c
     assert quota.view(ledger, key)["calls_used_today"] == 0
 
 
-async def test_a_stuck_ledger_stops_no_other_source(live, short_wait):
-    timer = hold_lock(quota.path(clarity.LEDGER, HOST))
+async def test_a_stuck_ledger_stops_no_other_source(live, short_wait, hold_lock):
+    hold_lock(quota.path(clarity.LEDGER, HOST))
     data = await core.get_seo_data(HOST, ["clarity", "search_queries"])
-    timer.join()
     assert data["sources"]["clarity"]["status"] == "error"
     assert data["sources"]["search_queries"]["status"] == "ok"
 
 
-async def test_a_stuck_ledger_does_not_freeze_the_event_loop(live, short_wait):
+async def test_a_stuck_ledger_does_not_freeze_the_event_loop(live, short_wait, hold_lock):
     ticks = []
 
     async def heartbeat():
@@ -70,17 +86,16 @@ async def test_a_stuck_ledger_does_not_freeze_the_event_loop(live, short_wait):
             await asyncio.sleep(0.01)
 
     beat = asyncio.create_task(heartbeat())
-    timer = hold_lock(quota.path(clarity.LEDGER, HOST))
+    hold_lock(quota.path(clarity.LEDGER, HOST))
     await asyncio.sleep(0)
     ticks.clear()
     await run("clarity", DASHBOARD)
     count = len(ticks)
     beat.cancel()
-    timer.join()
     assert count > 5
 
 
-async def test_a_short_hold_only_delays_the_call(live, monkeypatch):
+async def test_a_short_hold_only_delays_the_call(live, monkeypatch, hold_lock):
     monkeypatch.setattr(quota, "LOCK_WAIT_SECONDS", 2)
     timer = hold_lock(quota.path(clarity.LEDGER, HOST), 0.2)
     data = await run("clarity", DASHBOARD)
@@ -89,29 +104,32 @@ async def test_a_short_hold_only_delays_the_call(live, monkeypatch):
     assert data["calls_used_today"] == 1
 
 
-async def test_list_sites_does_not_wait_for_a_stuck_ledger(live, short_wait):
-    timer = hold_lock(quota.path(clarity.LEDGER, HOST))
+async def test_list_sites_does_not_wait_for_a_stuck_ledger(live, hold_lock):
+    hold_lock(quota.path(clarity.LEDGER, HOST))
+    start = time.monotonic()
     assert core.list_sites()["status"] == "ok"
-    timer.join()
+    assert time.monotonic() - start < HOLD / 2
 
 
-async def test_a_stuck_ledger_after_a_429_keeps_the_429_reason(live, fake_net, short_wait):
+async def test_a_stuck_ledger_after_a_429_keeps_the_429_reason(
+    live, fake_net, short_wait, hold_lock
+):
     def reply(request):
         if request.url.host == "www.clarity.ms":
-            timers.append(hold_lock(quota.path(clarity.LEDGER, HOST)))
+            hold_lock(quota.path(clarity.LEDGER, HOST))
             return httpx2.Response(429)
         return None
 
-    timers = []
     fake_net(replies(reply))
     data = await run("clarity", ("live_insights", {"numOfDays": 1}))
-    timers[0].join()
     assert "HTTP 429" in data["reason"]
     assert data["calls_used_today"] == 1
     assert shared.failure_path(clarity.cache_path(HOST, clarity_auth(), 1, ())).exists()
 
 
-async def test_a_stuck_reading_file_does_not_lose_a_paid_ga4_answer(live, fake_net, short_wait):
+async def test_a_stuck_reading_file_does_not_lose_a_paid_ga4_answer(
+    live, fake_net, short_wait, hold_lock
+):
     def reply(request):
         if request.url.path.endswith(":runReport"):
             body = {"rows": [], "propertyQuota": GA4_QUOTA, "kind": "analyticsData#runReport"}
@@ -119,9 +137,8 @@ async def test_a_stuck_reading_file_does_not_lose_a_paid_ga4_answer(live, fake_n
         return None
 
     calls = fake_net(replies(reply))
-    timer = hold_lock(ga4.reading_path(SITE["ga4_property_id"], "core"))
+    hold_lock(ga4.reading_path(SITE["ga4_property_id"], "core"))
     data = await run("ga4", ("run_report", {"metrics": [{"name": "sessions"}]}))
-    timer.join()
     assert data["status"] == "ok"
     assert len(sent(calls)) == 1
 

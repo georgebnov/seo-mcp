@@ -111,8 +111,9 @@ async def test_each_metered_method_refuses_at_the_limit(live, api, call, ledger,
     assert data["status"] == "error"
     assert f"used {ledger.limit} of the {ledger.limit} calls" in data["reason"]
     assert data["resets_at"] in data["reason"]
+    assert "assumption" in data["reason"]
     assert data["calls_left"] == 0
-    assert not metered_requests(live)
+    assert not sent(live)
 
 
 @pytest.mark.parametrize(
@@ -142,16 +143,6 @@ async def test_a_batch_over_the_limit_gives_the_used_count_and_the_limit(live):
     assert f"used {gsc.LEDGER.limit - 1} of the {gsc.LEDGER.limit} calls" in data["reason"]
     assert data["resets_at"] in data["reason"]
     assert not metered_requests(live)
-
-
-async def test_a_refused_call_names_the_reset_and_sends_nothing(live):
-    set_ledger(clarity.LEDGER, HOST, used=10)
-    data = await run("clarity", DASHBOARD)
-    assert data["status"] == "error"
-    assert data["calls_left"] == 0
-    assert data["resets_at"] in data["reason"]
-    assert "assumption" in data["reason"]
-    assert not live
 
 
 @pytest.mark.parametrize(("used", "warned"), [(7, False), (8, True), (9, True)])
@@ -195,20 +186,13 @@ async def test_a_429_of_an_mcp_endpoint_does_not_block_the_day(live, fake_net):
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize(
-    ("api", "call", "ledger", "key"),
-    [
-        ("clarity", DASHBOARD, clarity.LEDGER, HOST),
-        ("search_console", INSPECT, gsc.LEDGER, SITE["gsc_property"]),
-    ],
-)
+# Each metered method reads the day through quota.spend, so 1 ledger proves the day rule.
 @pytest.mark.parametrize("day", ["not a date", "2026-1-31", "20260131", "2099-01-01", 5, None])
-async def test_a_ledger_with_a_wrong_day_fails_closed(live, day, api, call, ledger, key):
-    set_ledger(ledger, key, used=ledger.limit, blocked=True)
-    path = quota.path(ledger, key)
-    path.write_text(json.dumps({"day": day, "used": ledger.limit, "blocked": True}))
+async def test_a_ledger_with_a_wrong_day_fails_closed(live, day):
+    path = quota.path(clarity.LEDGER, HOST)
+    set_ledger(clarity.LEDGER, HOST, day=day, used=clarity.LEDGER.limit, blocked=True)
     before = path.read_text()
-    data = await run(api, call)
+    data = await run("clarity", DASHBOARD)
     assert data["status"] == "error"
     assert "ledger" in data["reason"]
     assert data["calls_left"] is None
