@@ -181,6 +181,29 @@ def test_each_run_model_call_catches_a_refused_run():
             )
 
 
+def test_the_scan_finds_a_run_model_call_outside_a_catch():
+    caught = "try:\n    run_model(a)\nexcept RunFailed:\n    pass\n"
+    assert not list(_calls_outside_a_catch(ast.parse(caught)))
+    bare = "run_model(a)\ntry:\n    pass\nexcept RunFailed:\n    check.run_model(b)\n"
+    assert [call.lineno for call in _calls_outside_a_catch(ast.parse(bare))] == [1, 5]
+
+
+def test_each_test_of_a_code_mutant_exists():
+    """verify_mutants.py runs these tests by name, and `just check` does not run that script."""
+    root = SCRIPTS.parent
+    gone = []
+    for mutant in MUTANTS:
+        for test in getattr(mutant, "tests", ()):
+            file, _, name = test.partition("::")
+            tree = ast.parse((root / file).read_text())
+            if name not in {node.name for node in ast.walk(tree) if hasattr(node, "name")}:
+                gone.append(test)
+    assert not gone, (
+        f"scripts/verify_mutants.py names a test that is gone: {gone}. Name the test that now "
+        "fails on that mutant."
+    )
+
+
 def test_a_model_that_statechart_refuses_with_no_mutant_is_an_error(tmp_path, monkeypatch, capsys):
     fake_statechart(tmp_path, monkeypatch, 2)
     assert verify_mutants.run((verify_mutants.QUOTA[0],)) == 1

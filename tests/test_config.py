@@ -52,12 +52,11 @@ def test_absolute_repo_path_selects_the_site(write_config, repo):
 
 
 def test_unknown_field_is_refused_without_its_value(write_config):
-    path = write_config({"api_key": "value-that-must-not-print"})
+    write_config({"api_key": "value-that-must-not-print"})
     with pytest.raises(config.ConfigError) as caught:
         config.load()
     assert "api_key" in str(caught.value)
     assert "value-that-must-not-print" not in str(caught.value)
-    assert path
 
 
 def test_key_shaped_field_is_refused(write_config):

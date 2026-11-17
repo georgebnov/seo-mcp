@@ -69,13 +69,17 @@ def test_a_removed_leak_still_fires_from_history(clean_repo):
 
 def test_a_commit_message_is_scanned(clean_repo):
     git(clean_repo, "commit", "-q", "--allow-empty", "-m", "fix: hide acme-private-term")
-    assert scan.scan(clean_repo, {"acme-private-term"})
+    findings = scan.scan(clean_repo, {"acme-private-term"})
+    assert findings
+    assert "acme" not in str(findings).lower()
 
 
 def test_private_terms_fire_and_do_not_print_in_git_tracked_text(clean_repo):
     (clean_repo / "leak.txt").write_text("the Acme-Private-Term here\n")
     git(clean_repo, "add", "-A")
-    assert scan.scan(clean_repo, {"acme-private-term"})
+    findings = scan.scan(clean_repo, {"acme-private-term"})
+    assert findings
+    assert "acme" not in str(findings).lower()
 
 
 def test_terms_come_from_the_real_config_and_the_terms_file(tmp_path, monkeypatch):
@@ -87,8 +91,9 @@ def test_terms_come_from_the_real_config_and_the_terms_file(tmp_path, monkeypatc
     monkeypatch.setenv("SEO_MCP_CONFIG", str(config))
     monkeypatch.setenv("SEO_MCP_PRIVATE_TERMS", str(terms))
     found = scan.private_terms()
-    assert {"www.real-site.org", "acme"} <= found
+    assert {"www.real-site.org", "real-site.org", "acme"} <= found
     assert "42" not in found
+    assert "# a comment" not in found
 
 
 def test_this_repo_is_clean():

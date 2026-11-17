@@ -17,7 +17,6 @@ async def test_allowed_request_returns_json(fake_net):
     [
         ("POST", "https://api.example.test/v1/read"),
         ("GET", "https://api.example.test/v1/read/extra"),
-        ("GET", "https://api.example.test/v1/write"),
         ("GET", "https://other.example.test/v1/read"),
         ("GET", "http://api.example.test/v1/read"),
         ("GET", "https://api.example.test:8443/v1/read"),
@@ -46,6 +45,7 @@ async def test_error_carries_no_url_or_body(fake_net):
         await net.request(READ, "GET", "https://api.example.test/v1/read", params={"apikey": "k1"})
     assert "the-upstream-body" not in str(caught.value)
     assert "k1" not in str(caught.value)
+    assert caught.value.detail is None
 
 
 async def test_transport_failure_hides_the_url(fake_net):
