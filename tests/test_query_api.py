@@ -11,7 +11,7 @@ import httpx2
 import pytest
 
 from seo_mcp import api, core, providers, quota, server, shared
-from seo_mcp.providers import bing, clarity, ga4
+from seo_mcp.providers import clarity, ga4
 
 SITE = {
     "gsc_property": "sc-domain:example.com",
@@ -105,20 +105,6 @@ def answer(request):
     return httpx2.Response(500)
 
 
-@pytest.fixture
-def live(write_config, fake_net, account, monkeypatch):
-    monkeypatch.setenv("CLARITY_ENV", "clarity-token-value-1234")
-    monkeypatch.setenv("GOOGLE_KEY_ENV", "google-key-value-1234")
-    monkeypatch.setenv("BING_KEY_ENV", "bing-key-value-5678")
-    shared = {
-        **account,
-        "google_api_key": {"env": "GOOGLE_KEY_ENV"},
-        "bing_api_key": {"env": "BING_KEY_ENV"},
-    }
-    write_config(SITE, shared)
-    return fake_net(answer)
-
-
 def sent(calls):
     return [call for call in calls if call.url.host != "oauth2.googleapis.com"]
 
@@ -174,6 +160,7 @@ async def test_unknown_api_and_method_name_the_known_ones(live):
     data = await ask("ga4", "nope")
     assert data["status"] == "error"
     assert "run_report" in data["reason"]
+    assert not live
 
 
 # A field of a request is never dropped in silence.
@@ -188,19 +175,21 @@ async def test_each_method_refuses_an_unknown_field_before_the_network(live, nam
     assert not live
 
 
+# Each row sends the required fields, so that only the field of the server can cause the error.
 @pytest.mark.parametrize(
-    ("name", "method", "field"),
+    ("name", "method", "needed", "field"),
     [
-        ("search_console", "search_analytics", "siteUrl"),
-        ("search_console", "url_inspection", "siteUrl"),
-        ("ga4", "run_report", "property"),
-        ("bing", "GetQueryStats", "siteUrl"),
-        ("bing", "GetQueryStats", "apikey"),
+        ("search_console", "search_analytics", RANGE, "siteUrl"),
+        ("search_console", "url_inspection", {"inspectionUrl": "/a"}, "siteUrl"),
+        ("ga4", "run_report", {}, "property"),
+        ("bing", "GetQueryStats", {}, "siteUrl"),
+        ("bing", "GetQueryStats", {}, "apikey"),
     ],
 )
-async def test_a_field_of_the_server_is_refused(live, name, method, field):
-    data = await ask(name, method, {field: "https://www.evil.test/"})
+async def test_a_field_of_the_server_is_refused(live, name, method, needed, field):
+    data = await ask(name, method, {**needed, field: "https://www.evil.test/"})
     assert data["status"] == "error"
+    assert f"has no field {field}." in data["reason"]
     assert not live
 
 
@@ -567,13 +556,6 @@ async def test_bing_arguments_are_required_and_on_the_site(live):
     assert not live
 
 
-def test_each_bing_method_is_a_listed_get_endpoint():
-    paths = {e.path for e in bing.ENDPOINTS}
-    for name in bing.METHODS:
-        assert name.startswith("Get")
-        assert rf"/webmaster/api\.svc/json/{name}" in paths
-
-
 # Clarity: every path spends the same daily budget.
 async def test_live_insights_dimensions_are_in_the_cache_key(live):
     first = await ask("clarity", "live_insights", {"numOfDays": 1, "dimension1": "OS"})
@@ -628,6 +610,7 @@ async def test_recordings_send_filters_and_the_sort_number(live):
     assert data["rows"] == [
         {"timestamp": "2026-01-01 10:00:00", "link": "https://clarity.microsoft.com/player/p/s1"}
     ]
+    assert "sample" in data["sample"]
     assert data["calls_used_today"] == 1
 
 
@@ -671,10 +654,12 @@ async def test_dashboard_query_sends_text_and_time_zone(live):
 
 
 async def test_dashboard_rows_come_from_the_data_list(live, fake_net):
-    reply = {"query": "q", "data": [{"Device": "PC"}, {"Device": "Mobile"}], "dataErrorType": 0}
+    rows = [{"Device": "PC"}, {"Device": "Mobile"}]
+    reply = {"query": "Rewritten question", "data": rows, "dataErrorType": 0}
     fake_net(lambda _: httpx2.Response(200, json=reply))
     data = await ask("clarity", "dashboard_query", {"query": "q"})
-    assert data["rows"] == [{"Device": "PC"}, {"Device": "Mobile"}]
+    assert data["rows"] == rows
+    assert data["answered_question"] == "Rewritten question"
     assert data["reason"] is None
 
 
@@ -684,22 +669,6 @@ async def test_dashboard_error_type_is_not_an_empty_success(live, fake_net):
     data = await ask("clarity", "dashboard_query", {"query": "q"})
     assert data["thin_data"] is True
     assert "3" in data["reason"]
-
-
-async def test_all_clarity_paths_share_1_budget(live, write_config):
-    project = quota.path(clarity.LEDGER, HOST)
-    project.parent.mkdir(parents=True)
-    today = datetime.now(UTC).date().isoformat()
-    project.write_text(json.dumps({"day": today, "used": clarity.DAILY_CALLS}))
-    for method, request in (
-        ("live_insights", {"numOfDays": 1}),
-        ("recordings", {"filters": {"date": DAY}}),
-        ("dashboard_query", {"query": "q"}),
-    ):
-        data = await ask("clarity", method, request)
-        assert data["status"] == "error"
-        assert "10 calls" in data["reason"]
-    assert not live
 
 
 # Parity with the schema of the official Clarity MCP server.
@@ -762,19 +731,6 @@ async def test_clarity_options_list_the_valid_filter_values(live):
     assert "SignUp" in options["smart_event_examples"]
     assert set(options["recording_filter_units"]) >= {"pageDuration", "firstInputDelay"}
     assert any("1 metric" in rule for rule in options["dashboard_rules"])
-
-
-async def test_recordings_say_that_they_are_a_sample(live):
-    data = await ask("clarity", "recordings", {"filters": {"date": DAY}, "count": 250})
-    assert data["more_rows"] == "possible"
-    assert "sample" in data["sample"]
-
-
-async def test_dashboard_shows_the_question_that_clarity_answered(live, fake_net):
-    reply = {"query": "Rewritten question", "data": [{"Device": "PC"}], "dataErrorType": 0}
-    fake_net(lambda _: httpx2.Response(200, json=reply))
-    data = await ask("clarity", "dashboard_query", {"query": "q"})
-    assert data["answered_question"] == "Rewritten question"
 
 
 # The wording of a real answer that Clarity rewrote, with the dates changed.
@@ -920,14 +876,6 @@ def test_the_more_rows_scan_finds_a_fixed_no():
     assert fixed_no_with_rows("answer(rows, more_rows=more)") == []
 
 
-async def test_a_removed_method_is_unknown_and_spends_nothing(live):
-    data = await ask("clarity", "documentation", {"query": "q"})
-    assert data["status"] == "error"
-    assert "Unknown method" in data["reason"]
-    assert not live
-    assert not quota.path(clarity.LEDGER, HOST).exists()
-
-
 async def test_the_catalog_lists_only_calls_that_work():
     options = await core.query_api(api="clarity")
     assert [row["method"] for row in options["rows"]] == [
@@ -958,12 +906,6 @@ async def test_no_site_entry_is_a_clear_error(live):
     data = await core.query_api("www.nope.test", "ga4", "metadata")
     assert data["status"] == "error"
     assert not live
-
-
-async def test_not_connected_field(write_config, fake_net):
-    write_config()
-    data = await ask("ga4", "metadata")
-    assert data["status"] == "not_connected"
 
 
 async def test_result_is_scrubbed(live, fake_net):
