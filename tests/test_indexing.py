@@ -330,6 +330,35 @@ async def test_a_timeout_after_the_send_says_that_google_can_have_it(write_confi
     assert row["reason"] == indexing.MAYBE_SENT
 
 
+async def test_a_mixed_list_gives_each_url_its_own_row_in_the_asked_order(
+    write_config, fake_net, owner
+):
+    """A refused URL stands between sent URLs, and each sent URL gets another answer of Google."""
+    urls = [f"https://www.example.com/jobs/{number}" for number in (1, 2, 3)]
+    outside = "https://www.other.test/jobs/9"
+
+    def publish(body):
+        if body["url"] == urls[1]:
+            return httpx2.Response(500)
+        echo = urls[0] if body["url"] == urls[0] else "https://www.example.com/jobs/0"
+        return httpx2.Response(200, json={"urlNotificationMetadata": {"url": echo}})
+
+    write_config(DOMAIN, owner)
+    calls = fake_net(google(publish))
+    asked = [urls[0], outside, urls[1], urls[0], urls[2]]
+    result = await core.submit_urls(HOST, asked)
+    rows = result["rows"]
+    assert [(row["url"], row["status"]) for row in rows] == [
+        (urls[0], "submitted"),
+        (outside, "refused"),
+        (urls[1], "failed"),
+        (urls[2], "unconfirmed"),
+    ]
+    assert result["counts"] == {"submitted": 1, "unconfirmed": 1, "refused": 1, "failed": 1}
+    assert sorted(body["url"] for body in published(calls)) == urls
+    assert used() == 3
+
+
 @pytest.mark.parametrize("urls", [[], [1], None, "https://www.example.com/jobs/1"])
 async def test_a_bad_list_is_an_error(write_config, fake_net, owner, urls):
     write_config(DOMAIN, owner)
