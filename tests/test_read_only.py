@@ -8,11 +8,27 @@ import ast
 import re
 from pathlib import Path
 
+import pytest
+
 from seo_mcp import providers
 from seo_mcp.providers import indexing
 
 SRC = Path(__file__).parent.parent / "src" / "seo_mcp"
-NETWORK_MODULES = {"httpx", "httpx2", "requests", "aiohttp", "urllib3", "socket", "http", "ssl"}
+# A name with a dot is 1 module of a package: urllib.parse opens no connection.
+NETWORK_MODULES = {
+    "httpx",
+    "httpx2",
+    "requests",
+    "aiohttp",
+    "urllib3",
+    "urllib.request",
+    "socket",
+    "http",
+    "ssl",
+    "ftplib",
+    "smtplib",
+    "xmlrpc",
+}
 WRITE_TEXT = re.compile(
     r"Submit[A-Z]|Add[A-Z]|Remove[A-Z]|Delete[A-Z]|Update[A-Z]|urlNotifications|indexing\.googleapis"
     r'|"(PUT|PATCH|DELETE)"'
@@ -45,13 +61,14 @@ FIX = (
 
 
 def imported_modules(path: Path) -> set[str]:
-    names = set()
+    """Each imported name, as its package and as its full name."""
+    full = set()
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.Import):
-            names |= {alias.name.split(".")[0] for alias in node.names}
+            full |= {alias.name for alias in node.names}
         elif isinstance(node, ast.ImportFrom) and node.module:
-            names.add(node.module.split(".")[0])
-    return names
+            full |= {node.module} | {f"{node.module}.{alias.name}" for alias in node.names}
+    return full | {name.split(".")[0] for name in full}
 
 
 def test_only_listed_posts_exist():
@@ -95,6 +112,24 @@ def test_only_net_module_imports_a_network_library():
         if path.name != "net.py":
             found = imported_modules(path) & NETWORK_MODULES
             assert not found, f"{path.name} imports {found}. Use seo_mcp.net."
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "import httpx2",
+        "import http.client",
+        "import urllib.request",
+        "from urllib import request",
+        "from urllib.request import urlopen",
+    ],
+)
+def test_the_import_scan_finds_a_network_library(tmp_path, line):
+    path = tmp_path / "module.py"
+    path.write_text(f"{line}\nfrom urllib.parse import quote\n")
+    assert imported_modules(path) & NETWORK_MODULES
+    path.write_text("from urllib.parse import quote\nimport json\n")
+    assert not imported_modules(path) & NETWORK_MODULES
 
 
 def write_text(path: Path) -> list[str]:

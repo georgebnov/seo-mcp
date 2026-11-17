@@ -67,6 +67,14 @@ def test_scrub_removes_a_read_value_in_keys_values_and_encodings(monkeypatch):
     assert "abc" not in json.dumps(secrets.scrub(dirty))
 
 
+def test_scrub_removes_a_read_value_in_its_json_form(monkeypatch):
+    """An upstream JSON body gives a quote and a backslash of a key as escapes."""
+    value = 'pass"word\\tail'
+    monkeypatch.setenv("MY_KEY", value)
+    secrets.read({"env": "MY_KEY"})
+    assert "word" not in secrets.scrub(f"body: {json.dumps({'k': value})}")
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -76,6 +84,7 @@ def test_scrub_removes_a_read_value_in_keys_values_and_encodings(monkeypatch):
         "url?key=abc123",
         "Authorization: Bearer abc.def",
         "-----BEGIN " + "PRIVATE KEY-----\nbody\n-----END " + "PRIVATE KEY-----",
+        "-----BEGIN " + "PRIVATE KEY-----\nbody of a cut key",
     ],
 )
 def test_scrub_removes_key_shapes(text):
