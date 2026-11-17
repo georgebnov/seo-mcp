@@ -265,7 +265,7 @@ A repeat of 1 URL (same site, same service account) within 1 hour sends nothing 
 ## Setup
 
 1. Install [uv](https://docs.astral.sh/uv/) and clone this repo.
-2. Run `uv run --project <path to this repo> seo-mcp setup` in your terminal, 1 time for each site. It writes `~/.config/seo-mcp/sites.json`, or the path in `SEO_MCP_CONFIG`. You can also copy `examples/sites.json` there and edit it: the key of each entry is the repo path, and a new site needs no code change.
+2. Run `uv run --project <path to this repo> seo-mcp setup` in your terminal, 1 time for each site. It writes `~/.config/seo-mcp/sites.json`, or the path in `SEO_MCP_CONFIG`. You can also copy `examples/sites.json` there and edit it: the key of each entry is the repo path, and a new site needs no code change. The example has no `submit_urls` field, so a copy keeps the 1 write off. To turn it on for a site, add `"submit_urls": "on"` to its entry.
 3. Run `uv run --project <path to this repo> seo-mcp setup status`. For each site, it shows each provider with 1 state: `ready`, `off`, `missing field`, `missing secret reference`, `secret not found`, or `not checked`. `off` is only for `indexing`, the write of `submit_urls`, when the site did not opt in: it has no gap and counts as done. Each gap has the next step. The command exits 0 only when all providers of all sites are ready or off. `--json` gives the same report for an agent.
 4. Start the server from your agent client with `uv run --project <path to this repo> seo-mcp`.
 
