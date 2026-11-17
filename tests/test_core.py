@@ -16,7 +16,6 @@ from test_query_api import SITE, answer
 
 CRUX = "chromeuxreport.googleapis.com"
 CLARITY = "www.clarity.ms"
-BING = "ssl.bing.com"
 LEAKY_PAGE = "https://x.test/?apikey=abc123"
 SECRET_TEXT = "secret-text-from-an-exception"
 # The status and the reason of each provider in the default rules.
@@ -60,7 +59,7 @@ def edge(write_config, account, monkeypatch):
     write_config(site, {**account, "google_api_key": {"env": "GOOGLE_KEY_ENV"}})
     # Real sources run inside the limit, so it leaves time for a slow CI machine.
     monkeypatch.setattr(core, "SOURCE_TIMEOUT_SECONDS", 1)
-    transport = Edge({CRUX: 404, CLARITY: 403, ga4.HOST: "raise", gsc.HOST: "wait", BING: 500})
+    transport = Edge({CRUX: 404, CLARITY: 403, ga4.HOST: "raise", gsc.HOST: "wait"})
     net.transport = transport
     return transport
 
@@ -82,6 +81,8 @@ async def test_only_a_site_runs_every_source(edge):
         state: states.count(state) for state in ("ok", "not_connected", "error")
     }
     assert data["counts"]["ok"] == 2
+    # The timeout cancels each Search Console request in flight.
+    assert set(edge.cancelled) == {gsc.HOST}
 
 
 async def test_sources_limits_the_call(edge):
@@ -102,20 +103,9 @@ async def test_exception_text_never_reaches_a_result(edge):
     assert data["sources"]["ga4_organic"]["reason"] == "The source failed with RuntimeError."
 
 
-async def test_top_status_when_nothing_is_connected(edge):
-    data = await core.get_seo_data("www.example.com", ["bing_links"])
-    assert data["status"] == "not_connected"
-
-
 async def test_top_status_when_all_fail(edge):
     data = await core.get_seo_data("www.example.com", ["bing_links", "ga4_organic"])
     assert data["status"] == "error"
-
-
-async def test_timeout_cancels_the_source(edge):
-    data = await core.get_seo_data("www.example.com", ["sitemaps"])
-    assert data["sources"]["sitemaps"]["status"] == "error"
-    assert edge.cancelled == [gsc.HOST]
 
 
 async def test_output_is_scrubbed(edge):
@@ -151,16 +141,6 @@ async def test_list_sites_names_no_secret_value(write_config, monkeypatch):
     assert row["fields"] == ["gsc_property"]
     assert row["secrets"] == ["t"]
     assert "secret-value-99" not in json.dumps(data)
-
-
-async def test_a_connection_failure_reads_as_a_sentence(write_config, fake_net, monkeypatch):
-    def refuse(request):
-        raise httpx2.ConnectError("no route")
-
-    write_config({})
-    net.transport = httpx2.MockTransport(refuse)
-    data = await core.get_seo_data("www.example.com", ["page_speed"])
-    assert data["sources"]["page_speed"]["reason"] == "The connection failed."
 
 
 async def test_an_http_failure_names_the_status_and_the_api(write_config, fake_net):

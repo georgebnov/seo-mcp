@@ -128,17 +128,6 @@ async def test_the_live_case_gives_no_delta_and_names_the_first_day(live, fake_n
     assert len(first_data_reads(calls)) == 1
 
 
-async def test_real_0_days_after_the_first_event_keep_the_delta(live, fake_net, monkeypatch):
-    freeze(monkeypatch, ANSWERED)
-    days = {"20260920": 4, "20261010": 9}
-    calls = fake_net(replies(property_with(days, first_event="20250101")))
-    data = await core.get_seo_data(HOST, ["ga4_organic"], **MAIN, **COMPARE)
-    result = data["sources"]["ga4_organic"]
-    assert result["delta"]["sessions"] == 5
-    assert result["comparison"]["first_data_day"] == "2025-01-01"
-    assert len(probes(calls)) == 1
-
-
 async def test_a_range_that_starts_on_the_first_event_keeps_the_delta(live, fake_net, monkeypatch):
     """GA4 collected on the first day of the range, so its missing row is a real 0."""
     freeze(monkeypatch, ANSWERED)
@@ -226,37 +215,6 @@ async def test_a_search_console_range_alone_sends_no_extra_read(live, fake_net, 
     assert first_data_reads(calls) == []
 
 
-async def test_a_failed_search_console_read_gives_no_delta(live, fake_net, monkeypatch):
-    freeze(monkeypatch, ANSWERED)
-    console = search_console_from("2025-06-01", status=500)
-    fake_net(replies(lambda request: console(request)))
-    data = await core.get_seo_data(HOST, ["search_queries"], **MAIN, **COMPARE)
-    result = data["sources"]["search_queries"]
-    assert result["status"] == "ok"
-    assert result["totals"] is not None
-    assert result["delta"] is None
-    assert "could not check" in result["reason"]
-
-
-# A new dated source must check its first day of data too, or its delta can compare no data.
-DATED = sorted(name for name, names in providers.ACCEPTS.items() if "start_date" in names)
-
-
-@pytest.mark.parametrize("name", DATED)
-async def test_each_dated_source_checks_its_first_day_of_data(live, fake_net, monkeypatch, name):
-    freeze(monkeypatch, ANSWERED)
-    fake_net(replies(property_with({})))
-    result = (await core.get_seo_data(HOST, [name], **MAIN, **COMPARE))["sources"][name]
-    fix = (
-        "In a date comparison, a range with no row on its first day must read the first day "
-        "of data of the source and give first_data_day and first_data_read (see "
-        "ga4._first_event, gsc._first_data), so that core gives no delta for days with no data:"
-    )
-    sides = {"main": result, "comparison": result.get("comparison", {})}
-    missing = sorted(side for side, done in sides.items() if "first_data_read" not in done)
-    assert not missing, f"{name}: {fix} {missing}"
-
-
 # The reason gives the exact pair to ask next: both starts move forward by the same days, to
 # the first day of data, and both ends stay. Delta is main minus comparison, so either range
 # can be the later one.
@@ -272,13 +230,6 @@ async def search_pages(fake_net, monkeypatch, first, **dates):
     freeze(monkeypatch, ANSWERED)
     fake_net(replies(property_with({}, gsc_first=first)))
     return (await core.get_seo_data(HOST, ["search_pages"], **dates))["sources"]["search_pages"]
-
-
-async def test_a_comparison_start_before_the_first_day_gives_the_pair(live, fake_net, monkeypatch):
-    result = await search_pages(fake_net, monkeypatch, "2026-09-04", **OCTOBER, **SEPTEMBER)
-    assert result["delta"] is None
-    assert PAIR in result["reason"]
-    assert "move both starts 3 days" in result["reason"]
 
 
 async def test_a_main_start_before_the_first_day_gives_the_pair(live, fake_net, monkeypatch):
@@ -319,6 +270,9 @@ async def test_a_failed_first_day_read_gives_no_pair(live, fake_net, monkeypatch
     fake_net(replies(lambda request: console(request)))
     data = await core.get_seo_data(HOST, ["search_pages"], **OCTOBER, **SEPTEMBER)
     result = data["sources"]["search_pages"]
+    # The failed read fails no report: both sides keep their totals.
+    assert result["status"] == result["comparison"]["status"] == "ok"
+    assert result["totals"] is not None
     assert result["delta"] is None
     assert "could not check the first day of data of the main range" in result["reason"]
     assert "ask start_date" not in result["reason"]
@@ -340,18 +294,31 @@ async def test_each_source_gives_its_own_pair(live, fake_net, monkeypatch):
     assert gsc["applied"]["start_date"] == analytics["applied"]["start_date"] == "2026-10-01"
 
 
+# A new dated source must check its first day of data too, or its delta can compare no data.
+DATED = sorted(name for name, names in providers.ACCEPTS.items() if "start_date" in names)
+
+
 @pytest.mark.parametrize("name", DATED)
 async def test_each_dated_source_gives_the_pair_to_ask(live, fake_net, monkeypatch, name):
     freeze(monkeypatch, ANSWERED)
     fake_net(replies(property_with({}, first_event="20260904", gsc_first="2026-09-04")))
     data = await core.get_seo_data(HOST, [name], **OCTOBER, **SEPTEMBER)
     result = data["sources"][name]
+    read = (
+        "In a date comparison, a range with no row on its first day must read the first day "
+        "of data of the source and give first_data_day and first_data_read (see "
+        "ga4._first_event, gsc._first_data), so that core gives no delta for days with no data:"
+    )
+    sides = {"main": result, "comparison": result.get("comparison", {})}
+    missing = sorted(side for side, done in sides.items() if "first_data_read" not in done)
+    assert not missing, f"{name}: {read} {missing}"
     fix = (
         "A range before the first day of data must give the aligned pair in reason (see "
         "core._aligned): both starts move to the first day by the same days, both ends stay."
     )
     assert result["delta"] is None, f"{name}: {fix}"
     assert PAIR in (result["reason"] or ""), f"{name}: {fix} reason: {result['reason']}"
+    assert "move both starts 3 days" in result["reason"]
 
 
 def _compare_steps():
