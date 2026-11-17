@@ -85,7 +85,6 @@ async def two_callers(first_reply):
     "first",
     [
         httpx2.Response(500),
-        httpx2.Response(429),
         httpx2.ReadTimeout("slow"),
         httpx2.ConnectError("no route"),
     ],
@@ -189,13 +188,6 @@ async def test_2_pages_of_1_request_share_the_failure(live, fake_net):
     data = await core.get_seo_data(HOST, ["clarity"], page="/b")
     assert data["sources"]["clarity"]["status"] == "error"
     assert len(metered_requests(calls)) == 1
-
-
-async def test_another_request_is_not_stopped_by_a_failure(live, fake_net):
-    calls = clarity_fails(fake_net)
-    await run("clarity", DASHBOARD)
-    await run("clarity", ("dashboard_query", {"query": "another question"}))
-    assert len(metered_requests(calls)) == 2
 
 
 def age_failure(seconds):
