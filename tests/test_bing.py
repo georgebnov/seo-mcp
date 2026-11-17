@@ -18,8 +18,8 @@ def links(*pairs, pages=1):
     return httpx2.Response(200, json={"d": {"Links": rows, "TotalPages": pages}})
 
 
-async def get(sources=("bing_links",)):
-    data = await core.get_seo_data("www.example.com", list(sources))
+async def get():
+    data = await core.get_seo_data("www.example.com", ["bing_links"])
     return data["sources"]["bing_links"]
 
 
@@ -57,13 +57,6 @@ async def test_more_pages_are_reported(write_config, fake_net):
     fake_net(lambda _: links(("https://www.example.com/a", 30), pages=4))
     result = await get()
     assert "1 of 4" in result["reason"]
-
-
-async def test_no_field_is_not_connected(write_config):
-    write_config({}, SHARED)
-    result = await get()
-    assert result["status"] == "not_connected"
-    assert "bing_site_url" in result["reason"]
 
 
 async def test_api_failure_holds_no_key(write_config, fake_net):

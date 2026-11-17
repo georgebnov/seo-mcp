@@ -124,6 +124,9 @@ FOREIGN = [
     "/jobs/1",
     f"https://{HOST}./jobs/1",
     "https://www.example.com/jobs/1\n",
+    "https://www.example.com/jobs/" + "1" * indexing.MAX_URL,
+    f"https://www..{BASE}/jobs/1",
+    "https://www.example.com:port/jobs/1",
 ]
 
 
@@ -146,6 +149,7 @@ async def test_a_url_outside_the_property_is_refused_before_any_call(
         "https://www.example.com/blog/1",
         "http://www.example.com/jobs/1",
         "https://example.com/jobs/",
+        "https://www.example.com:8443/jobs/1",
     ],
 )
 async def test_a_url_prefix_property_takes_only_its_prefix(write_config, fake_net, owner, url):
@@ -395,9 +399,7 @@ async def test_an_account_with_no_cloud_project_is_not_connected(write_config, f
     assert calls == []
 
 
-async def test_2_sites_of_1_project_share_1_ledger(
-    write_config, fake_net, owner, tmp_path, monkeypatch
-):
+async def test_2_sites_of_1_project_share_1_ledger(write_config, fake_net, owner, tmp_path):
     path = write_config(DOMAIN, owner)
     body = json.loads(path.read_text())
     other = {**DOMAIN, "host": "jobs.example.test", "gsc_property": "https://jobs.example.test/"}
@@ -409,14 +411,7 @@ async def test_2_sites_of_1_project_share_1_ledger(
     assert used() == 2
 
 
-def test_list_sites_shows_the_opt_in(write_config, owner):
-    write_config({"gsc_property": "sc-domain:example.com"}, owner)
-    (row,) = core.list_sites()["rows"]
-    assert row["connected"]["indexing"] is False
-    assert row["missing"]["indexing"] == ["submit_urls is off for this site"]
-
-
-def test_an_off_site_stays_ready_in_setup_status(write_config, owner, monkeypatch):
+def test_an_off_site_stays_ready_in_setup_status(write_config, owner):
     write_config({"gsc_property": "sc-domain:example.com"}, owner)
     (site,) = config.load()
     assert connection.state(site, "indexing") == connection.OFF

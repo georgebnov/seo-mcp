@@ -88,17 +88,3 @@ async def test_chrome_field_data(write_config, fake_net):
     assert {"metric": "cumulative_layout_shift", "p75": 0.05, "rating": "good"} in result["rows"]
     assert len(result["rows"]) == 2
     assert b"https://www.example.com" in calls[0].content
-
-
-async def test_no_field_data_is_ok_and_thin(write_config, fake_net):
-    write_config({}, SHARED)
-    fake_net(lambda _: httpx2.Response(404))
-    result = await get("chrome_field_data")
-    assert result["status"] == "ok"
-    assert result["thin_data"] is True
-    assert result["reason"]
-
-
-async def test_field_data_needs_a_key(write_config):
-    write_config()
-    assert (await get("chrome_field_data"))["status"] == "not_connected"

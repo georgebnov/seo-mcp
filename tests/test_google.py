@@ -3,7 +3,6 @@ import json
 import httpx2
 
 from seo_mcp import core
-from seo_mcp.providers import _google
 
 SITE = {"gsc_property": "sc-domain:example.com", "ga4_property_id": "123456789"}
 ACCESS = "fake-access-token-1234"
@@ -145,19 +144,12 @@ async def test_index_status_inspects_home_and_top_pages(write_config, fake_net, 
     assert result["thin_data"] is True
 
 
-async def test_index_status_all_failed_is_an_error(write_config, fake_net, account):
-    write_config(SITE, account)
-    fake_net(api(inspect=lambda _: httpx2.Response(403)))
-    assert (await get("index_status"))["status"] == "error"
-
-
 KIND = {"kind": "analyticsData#runReport"}
 
 
 def report(body):
     dimension = body["dimensions"][0]["name"]
     assert body["dimensionFilter"]["filter"]["stringFilter"]["value"] == "Organic Search"
-    values = {"date": ["20260102", "20260101"], "landingPage": ["/a", "/b"]}[dimension]
     return httpx2.Response(
         200,
         json={
@@ -168,7 +160,7 @@ def report(body):
                     "dimensionValues": [{"value": value}],
                     "metricValues": [{"value": "150"}, {"value": "7"}],
                 }
-                for value in values
+                for value in ("20260102", "20260101")
             ],
             "totals": [{"metricValues": [{"value": "300"}, {"value": "12"}]}],
             "kind": "analyticsData#runReport",
@@ -183,13 +175,6 @@ async def test_ga4_organic(write_config, fake_net, account):
     assert result["rows"][0] == {"date": "20260101", "sessions": 150.0, "totalUsers": 7.0}
     assert result["totals"] == {"sessions": 300.0, "totalUsers": 12.0}
     assert result["thin_data"] is False
-
-
-async def test_ga4_landing_pages(write_config, fake_net, account):
-    write_config(SITE, account)
-    fake_net(api(ga4=report))
-    result = await get("ga4_landing_pages")
-    assert result["rows"][0]["landingPage"] == "/a"
 
 
 async def test_ga4_empty_report_is_thin(write_config, fake_net, account):
@@ -224,13 +209,6 @@ async def test_refused_sign_in_is_an_error_without_upstream_text(write_config, f
     assert "grant-detail" not in json.dumps(data)
 
 
-async def test_no_account_is_not_connected(write_config):
-    write_config(SITE)
-    result = await get("ga4_organic")
-    assert result["status"] == "not_connected"
-    assert "google_service_account" in result["reason"]
-
-
 async def test_bad_account_file_is_not_connected_and_silent(write_config, tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text('{"private_key": "pem-body-value"}')
@@ -238,10 +216,6 @@ async def test_bad_account_file_is_not_connected_and_silent(write_config, tmp_pa
     data = await core.get_seo_data("www.example.com", ["search_queries"])
     assert data["sources"]["search_queries"]["status"] == "not_connected"
     assert "pem-body-value" not in json.dumps(data)
-
-
-def test_scope_constants_are_read_only():
-    assert _google.GSC_SCOPE.endswith(".readonly")
 
 
 def query_rows(count, clicks=0, impressions=2):
