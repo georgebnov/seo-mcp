@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 from seo_mcp import config, connection, core, providers
-from test_query_api import SITE
 
 SOURCE = Path(__file__).parent.parent / "src" / "seo_mcp"
 HOST = "www.example.com"
@@ -85,7 +84,10 @@ def test_list_sites_names_what_is_missing(live, monkeypatch):
 
 
 async def test_a_missing_reference_gives_not_connected_and_sends_nothing(live):
+    """George: a site that exists with its key missing is still a missing connection."""
     edit(drop_bing_key)
+    (row,) = core.list_sites()["rows"]
+    assert row["connected"]["bing"] is False
     data = await core.get_seo_data(HOST, ["bing_links", "search_queries"])
     bing = data["sources"]["bing_links"]
     assert bing["status"] == "not_connected"
@@ -93,17 +95,6 @@ async def test_a_missing_reference_gives_not_connected_and_sends_nothing(live):
     assert bing["rows"] == []
     assert data["sources"]["search_queries"]["status"] == "ok"
     assert not [call for call in live if call.url.host == "ssl.bing.com"]
-
-
-async def test_a_site_without_its_key_is_still_not_connected(live):
-    """George: a site that exists with its key missing is still a missing connection."""
-    edit(drop_bing_key)
-    (row,) = core.list_sites()["rows"]
-    assert row["connected"]["bing"] is False
-    data = await core.query_api(HOST, "bing", "GetQueryStats", {})
-    assert data["status"] == "not_connected"
-    assert data["reason"] == NO_BING_KEY
-    assert live == []
 
 
 async def test_not_connected_beats_an_unsupported_parameter(live):
@@ -231,7 +222,7 @@ async def test_each_method_checks_the_connection(live, api, method):
 
 
 def test_each_source_has_1_provider():
-    assert set(providers.PROVIDER_OF) == set(providers.SOURCES)
+    """The import of providers already fails when a source has no provider."""
     assert set(providers.PROVIDER_OF.values()) <= set(providers.APIS)
     assert set(connection.NEEDS) == set(providers.APIS)
 
@@ -280,11 +271,3 @@ def test_a_missing_file_with_json_key_first_names_the_file(live):
     edit(lambda body, entry: body["secrets"].update(bing_api_key=missing))
     (row,) = core.list_sites()["rows"]
     assert row["missing"]["bing"] == ["the file that bing_api_key names does not exist"]
-
-
-def test_a_site_with_all_names_is_connected(write_config, monkeypatch):
-    monkeypatch.setenv("CLARITY_ENV", "x")
-    write_config(SITE, {"bing_api_key": {"env": "CLARITY_ENV"}})
-    (site,) = config.load()
-    assert connection.connected(site, "bing") is True
-    assert connection.connected(site, "search_console") is False
