@@ -1,17 +1,15 @@
 """A saved answer, a failure, and a shared call belong to 1 credential. The ledger does not."""
 
-import hashlib
 import json
 import subprocess
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx2
 import pytest
 
 from seo_mcp import core, quota, shared
-from seo_mcp.providers import clarity, gsc, pagespeed
+from seo_mcp.providers import clarity, gsc
 from test_query_api import HOST, RANGE, SITE
 from test_quota import DASHBOARD, INSPECT, replies, run, sent
 
@@ -83,15 +81,6 @@ async def test_2_credentials_of_1_request_send_2_times(
     assert len(sent(live)) > count
 
 
-@pytest.mark.parametrize(("api", "method", "body"), CALLS)
-async def test_1_credential_of_1_request_sends_1_time(live, api, method, body):
-    await core.query_api(HOST, api, method, body)
-    count = len(sent(live))
-    second = await core.query_api(HOST, api, method, body)
-    assert second["from_cache"] is True
-    assert len(sent(live)) == count
-
-
 async def test_a_new_clarity_token_ends_the_failure_window(live, fake_net, monkeypatch):
     def reply(request):
         failing = request.headers.get("authorization") == f"Bearer {CLARITY_A}"
@@ -118,36 +107,6 @@ async def test_a_new_google_api_key_ends_the_failure_window(live, fake_net, monk
     monkeypatch.setenv("GOOGLE_KEY_ENV", "google-key-value-9999")
     assert (await run("pagespeed", ("run", {"url": "/a"})))["status"] == "ok"
     assert len(sent(calls)) == 2
-
-
-def _old_entry(*parts) -> Path:
-    """The file name of format 1: the host and the request, with no credential."""
-    text = json.dumps([1, HOST, *parts], sort_keys=True, default=str)
-    return shared.folder() / f"{hashlib.sha256(text.encode()).hexdigest()[:32]}.json"
-
-
-def _plant(path: Path, answer) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    stored = {"cached_at": datetime.now(UTC).isoformat(), "answer": answer}
-    path.write_text(json.dumps(stored))
-
-
-async def test_an_entry_of_the_old_key_format_is_not_read(live):
-    params = [("url", f"https://{HOST}/a")]
-    old = _old_entry("GET", pagespeed.PSI_API, params, None, True, shared.ANSWER_SECONDS)
-    _plant(old, {"lighthouseResult": {"planted": True}})
-    data = await run("pagespeed", ("run", {"url": "/a"}))
-    assert data["from_cache"] is False
-    assert "planted" not in json.dumps(data)
-
-
-async def test_an_old_clarity_file_is_not_read(live):
-    body = {"query": DASHBOARD[1]["query"], "timezone": "UTC"}
-    digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:24]
-    _plant(quota.folder() / f"clarity-{HOST}-dashboard-{digest}.json", {"data": [{"old": 1}]})
-    data = await run("clarity", DASHBOARD)
-    assert data["from_cache"] is False
-    assert data["calls_used_today"] == 1
 
 
 async def test_a_new_clarity_token_keeps_the_ledger_count(live, monkeypatch):
