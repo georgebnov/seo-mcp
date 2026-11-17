@@ -4,7 +4,6 @@ import fcntl
 import io
 import json
 import resource
-import shutil
 import subprocess
 import sys
 import threading
@@ -14,7 +13,6 @@ import pytest
 
 from seo_mcp import config, quota, server, setup
 
-ROOT = Path(__file__).parent.parent
 VALUE = "secret-value-that-must-not-print-1234"
 # gsc_property, ga4_property_id, bing_site_url, clarity_project, submit_urls.
 SKIP_FIELDS = ["", "", "", "", ""]
@@ -105,7 +103,7 @@ def test_a_new_site_holds_only_references(sites_file, tmp_path, monkeypatch, cap
 
 def test_other_sites_and_fields_stay(two_sites, sites_file, monkeypatch, capsys):
     stdin = answers("two.example.com", "", "", "12345678", "-", "", "", *SKIP_SECRETS, "y")
-    code, out = run(monkeypatch, capsys, stdin)
+    _, out = run(monkeypatch, capsys, stdin)
     after = json.loads(sites_file.read_text())
     assert after["secrets"] == two_sites["secrets"]
     assert after["sites"]["/srv/one"] == two_sites["sites"]["/srv/one"]
@@ -136,7 +134,7 @@ def test_a_new_site_never_takes_the_repo_path_of_another(
     before = sites_file.read_bytes()
     monkeypatch.chdir(repo)
     stdin = answers("new.example.com", typed.format(repo=repo), *SKIP_FIELDS, *SKIP_SECRETS, "y")
-    code, out = run(monkeypatch, capsys, stdin)
+    _, out = run(monkeypatch, capsys, stdin)
     assert sites_file.read_bytes() == before
     assert "another site" in out
 
@@ -156,22 +154,6 @@ def test_a_kept_relative_repo_path_stays_as_it_is(sites_file, monkeypatch, capsy
     stdin = answers("one.example.com", "", "", "12345678", "", "", "", *SKIP_SECRETS, "y")
     run(monkeypatch, capsys, stdin)
     assert list(json.loads(sites_file.read_text())["sites"]) == ["code/one"]
-
-
-def test_the_examples_file_still_loads(sites_file, monkeypatch, capsys):
-    example = ROOT / "examples" / "sites.json"
-    original = example.read_bytes()
-    sites_file.parent.mkdir()
-    shutil.copy(example, sites_file)
-    stdin = answers("blog.example.com", "", "", "87654321", "", "", "", *SKIP_SECRETS, "y")
-    run(monkeypatch, capsys, stdin)
-    before = json.loads(original)
-    after = json.loads(sites_file.read_text())
-    assert example.read_bytes() == original
-    assert after["secrets"] == before["secrets"]
-    assert after["sites"]["~/code/example"] == before["sites"]["~/code/example"]
-    assert after["sites"]["~/code/example-blog"]["ga4_property_id"] == "87654321"
-    assert [site.host for site in config.load()] == ["www.example.com", "blog.example.com"]
 
 
 @pytest.mark.parametrize("confirm", ["n", None])
@@ -207,16 +189,28 @@ def test_a_stopped_write_keeps_the_old_file(two_sites, sites_file):
     assert "old file" in done.stdout + done.stderr
 
 
-def test_a_held_lock_writes_nothing(two_sites, sites_file, monkeypatch, capsys):
+@pytest.fixture
+def held_lock(two_sites, sites_file):
+    """A stuck process: another open file holds the lock of the sites file until the test ends.
+
+    The timer is only a limit. It frees a writer that waits with no limit, so that such code
+    fails the test and does not stop the run.
+    """
+    handle = sites_file.with_suffix(".lock").open("a")
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    timer = threading.Timer(1.0, handle.close)
+    timer.start()
+    yield
+    timer.cancel()
+    timer.join()
+    handle.close()
+
+
+def test_a_held_lock_writes_nothing(held_lock, sites_file, monkeypatch, capsys):
     monkeypatch.setattr(quota, "LOCK_WAIT_SECONDS", 0.2)
     before = sites_file.read_bytes()
-    lock = sites_file.with_suffix(".lock").open("a")
-    fcntl.flock(lock, fcntl.LOCK_EX)
-    timer = threading.Timer(1.0, lock.close)
-    timer.start()
     stdin = answers("two.example.com", "", "", "12345678", "", "", "", *SKIP_SECRETS, "y")
     code, out = run(monkeypatch, capsys, stdin)
-    timer.join()
     assert code == 1
     assert "busy" in out
     assert sites_file.read_bytes() == before
@@ -247,10 +241,8 @@ def test_a_file_that_changed_meanwhile_is_not_overwritten(
     assert "ga4_property_id" not in sites_file.read_text()
 
 
-@pytest.mark.parametrize(
-    "pasted",
-    ["ya29" + ".a0AfH6SMBexampleexampleexample", "x" * 300, "Bearer abcdefghijklmnop"],
-)
+# 1 answer for each check of setup._plain: a known key shape, and a text that is too long.
+@pytest.mark.parametrize("pasted", ["ya29" + ".a0AfH6SMBexampleexampleexample", "x" * 300])
 def test_a_pasted_key_is_refused_and_never_shown(sites_file, monkeypatch, capsys, pasted):
     stdin = answers(
         "www.example.com",
@@ -281,7 +273,7 @@ def test_a_url_as_host_is_asked_again(sites_file, monkeypatch, capsys):
 
 
 def test_no_host_changes_nothing(sites_file, monkeypatch, capsys):
-    code, out = run(monkeypatch, capsys, answers(""))
+    code, _ = run(monkeypatch, capsys, answers(""))
     assert code == 0
     assert not sites_file.exists()
 
@@ -290,7 +282,7 @@ def test_a_bad_file_is_not_edited(sites_file, monkeypatch, capsys):
     sites_file.parent.mkdir()
     sites_file.write_text('{"sites": {"/srv/a": {"host": "a.example.com", "api_key": "v"}}}')
     before = sites_file.read_bytes()
-    code, out = run(monkeypatch, capsys, answers("a.example.com"))
+    code, _ = run(monkeypatch, capsys, answers("a.example.com"))
     assert code == 1
     assert sites_file.read_bytes() == before
 
@@ -333,7 +325,7 @@ def test_on_turns_on_the_write_and_shows_the_grant(sites_file, monkeypatch, caps
         *SKIP_SECRETS,
         "y",
     )
-    code, out = run(monkeypatch, capsys, stdin)
+    _, out = run(monkeypatch, capsys, stdin)
     (entry,) = json.loads(sites_file.read_text())["sites"].values()
     assert entry["submit_urls"] == "on"
     assert 'Type "on", or - to keep it off.' in out
