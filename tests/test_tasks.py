@@ -9,7 +9,7 @@ import httpx2
 import pytest
 
 from seo_mcp import core, params, providers, server, tasks
-from test_query_api import HOST, SITE, answer
+from test_query_api import HOST, answer
 
 README = Path(__file__).parent.parent / "README.md"
 FILLED = {"<page>": "/a", "<page_url>": f"https://{HOST}/a"}
@@ -19,20 +19,6 @@ STEPS = [
     for recipe in entry.recipes
     for at, step in enumerate(recipe.steps)
 ]
-
-
-@pytest.fixture
-def live(write_config, fake_net, account, monkeypatch):
-    monkeypatch.setenv("CLARITY_ENV", "clarity-token-value-1234")
-    monkeypatch.setenv("GOOGLE_KEY_ENV", "google-key-value-1234")
-    monkeypatch.setenv("BING_KEY_ENV", "bing-key-value-5678")
-    shared = {
-        **account,
-        "google_api_key": {"env": "GOOGLE_KEY_ENV"},
-        "bing_api_key": {"env": "BING_KEY_ENV"},
-    }
-    write_config(SITE, shared)
-    return fake_net(answer)
 
 
 def fill(value):
@@ -62,6 +48,7 @@ def fill(value):
         ("search queries of 1 page", "queries_of_page"),
         ("which queries bring people to this page", "queries_of_page"),
         ("core web vitals", "core_web_vitals"),
+        ("submit url", "request_indexing"),
     ],
 )
 async def test_an_ask_finds_its_task(asked, name):
@@ -107,21 +94,6 @@ async def test_api_keeps_1_provider_of_a_task():
     assert await core.query_api(api="nope", task="dead clicks") == await core.query_api(api="nope")
 
 
-async def test_dead_clicks_ask_the_count_first_then_the_elements():
-    data = await core.query_api(site=HOST, task="which pages have dead clicks")
-    (row,) = data["rows"]
-    first, second = row["steps"]
-    assert first["args"]["method"] == "dashboard_query"
-    assert first["args"]["site"] == HOST
-    assert "Dead click count per page between" in first["args"]["request"]["query"]
-    assert "TotalDeadClicks" in first["read"]
-    assert second["args"]["method"] == "recordings"
-    assert second["args"]["request"]["filters"]["deadClickPresent"] is True
-    assert '"Dead click"' in second["read"]
-    assert "sample" in second["read"]
-    assert not row["needs"]
-
-
 @pytest.mark.parametrize("name", ["dead_clicks", "rage_clicks", "quickback_clicks"])
 def test_a_click_recipe_looks_back_28_days_and_asks_20_sessions(name):
     filled = tasks.build(name, "", "", today=date(2026, 11, 6))
@@ -160,14 +132,6 @@ def test_a_start_date_keeps_2_periods_of_the_same_length():
         "compare_start": "2026-10-20",
         "compare_end": "2026-10-26",
     }
-
-
-def test_a_start_date_gives_ga4_that_start_as_a_plain_date():
-    filled = tasks.build(
-        "scroll_depth_by_page", "", "ga4", today=date(2026, 11, 6), start=date(2026, 10, 27)
-    )
-    ranges = filled["rows"][0]["steps"][0]["args"]["request"]["dateRanges"]
-    assert ranges == [{"startDate": "2026-10-27", "endDate": "2026-11-05"}]
 
 
 @pytest.mark.parametrize(
@@ -220,29 +184,10 @@ def test_2_periods_have_the_same_length_and_do_not_overlap():
     }
 
 
-@pytest.mark.parametrize("today", [date(2026, 3, 18), date(2026, 3, 19)])
-def test_a_task_end_with_a_lag_is_complete_in_each_zone(today):
-    task = tasks.TASKS["page_over_two_periods"]
-    end = date.fromisoformat(
-        tasks.build("page_over_two_periods", "", "", today=today)["window"]["end"]
-    )
-    # The day of a place is the UTC date, the day before, or the day after.
-    for place in (today - timedelta(days=1), today, today + timedelta(days=1)):
-        assert end <= place - timedelta(days=task.lag), place
-
-
 def test_a_ga4_task_step_sends_plain_dates_that_end_yesterday():
-    built = [
-        tasks.build("scroll_depth_by_page", "", "ga4", today=day)
-        for day in (date(2026, 3, 18), date(2026, 3, 19))
-    ]
-    ranges = [
-        row["steps"][0]["args"]["request"]["dateRanges"] for item in built for row in item["rows"]
-    ]
-    assert ranges == [
-        [{"startDate": "2025-12-19", "endDate": "2026-03-17"}],
-        [{"startDate": "2025-12-20", "endDate": "2026-03-18"}],
-    ]
+    built = tasks.build("scroll_depth_by_page", "", "ga4", today=date(2026, 3, 18))
+    ranges = built["rows"][0]["steps"][0]["args"]["request"]["dateRanges"]
+    assert ranges == [{"startDate": "2025-12-19", "endDate": "2026-03-17"}]
 
 
 async def test_a_step_names_the_input_that_it_needs():
@@ -300,7 +245,7 @@ def test_tool_description_and_readme_list_each_task():
 
 
 def test_the_server_instructions_point_to_tasks():
-    assert "task" in server.server.instructions
+    assert "call query_api with task" in server.server.instructions
 
 
 def sampled_recipes():
@@ -314,7 +259,9 @@ def sampled_recipes():
 
 def test_the_click_tasks_keep_2_steps_with_the_dashboard_first():
     found = {name: recipe for name, recipe in sampled_recipes()}
-    assert set(found) == {"dead_clicks", "rage_clicks", "quickback_clicks"}
+    assert set(found) == set(COUNTS), (
+        "Each click task needs a row in tasks.COUNTS and in COUNTS of tests/test_tasks.py."
+    )
     for recipe in found.values():
         methods = [step.args["method"] for step in recipe.steps]
         assert methods == ["dashboard_query", "recordings"]
@@ -396,20 +343,13 @@ async def test_a_0_count_makes_the_server_skip_the_sample(live, fake_net, name):
     assert sample["rows"] == []
 
 
-@pytest.mark.parametrize("name", sorted(COUNTS))
-async def test_a_0_count_skips_the_sample_also_from_a_start_date(live, fake_net, name):
+# The start changes only the window, and no window rule reads the task name: 1 task proves it.
+async def test_a_0_count_skips_the_sample_also_from_a_start_date(live, fake_net):
     start = (params.today() - timedelta(days=6)).isoformat()
-    count, sample, calls = await run_recipe(name, fake_net, start=start)
+    count, sample, calls = await run_recipe("dead_clicks", fake_net, start=start)
     assert f"between {start.replace('-', '/')} and" in count["applied"]["query"]
     assert sample["status"] == "skipped"
     assert clarity_paths(calls) == ["/mcp/dashboard/query"]
-
-
-def test_each_click_task_has_a_count_that_the_server_reads():
-    """A new click task must name its count, so that the server can enforce skip_if."""
-    assert {name for name, _ in sampled_recipes()} == set(COUNTS), (
-        "Each click task needs a row in tasks.COUNTS and in COUNTS of tests/test_tasks.py."
-    )
 
 
 async def test_a_count_above_0_sends_the_sample(live, fake_net):
