@@ -3,6 +3,11 @@ on:
   pull_request:
   push:
     branches: [main]
+# A new push to a PR cancels the old run of that PR. A run on main has a unique group, so it
+# always runs to the end.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   check:
     runs-on: ubuntu-latest
