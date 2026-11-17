@@ -6,8 +6,6 @@ from datetime import UTC, datetime
 
 import httpx2
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 
 from seo_mcp import config, connection, core, quota, setup
 from seo_mcp.providers import _google, indexing
@@ -24,16 +22,10 @@ PREFIX = {"gsc_property": "https://www.example.com/jobs/", "submit_urls": "on"}
 
 
 @pytest.fixture
-def owner(tmp_path):
+def owner(tmp_path, private_pem):
     """A service account of a Cloud project, as Google writes its JSON key."""
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    pem = key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    ).decode()
     path = tmp_path / "owner.json"
-    account = {"private_key": pem, "private_key_id": "fake-key-id", "client_email": EMAIL}
+    account = {"private_key": private_pem, "private_key_id": "fake-key-id", "client_email": EMAIL}
     path.write_text(json.dumps(account))
     _google._tokens.clear()
     return {"google_service_account": {"file": str(path)}}

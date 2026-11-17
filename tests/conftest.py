@@ -40,18 +40,27 @@ def write_config(tmp_path, monkeypatch, repo):
     return write
 
 
-@pytest.fixture
-def account(tmp_path):
+@pytest.fixture(scope="session")
+def private_pem() -> str:
+    """1 RSA key for the session. A new key takes tens of milliseconds, in hundreds of tests."""
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    pem = key.private_bytes(
+    return key.private_bytes(
         serialization.Encoding.PEM,
         serialization.PrivateFormat.PKCS8,
         serialization.NoEncryption(),
     ).decode()
+
+
+@pytest.fixture
+def account(tmp_path, private_pem):
     path = tmp_path / "account.json"
     path.write_text(
         json.dumps(
-            {"private_key": pem, "private_key_id": "fake-key-id", "client_email": "a@example.com"}
+            {
+                "private_key": private_pem,
+                "private_key_id": "fake-key-id",
+                "client_email": "a@example.com",
+            }
         )
     )
     _google._tokens.clear()
